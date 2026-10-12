@@ -1208,17 +1208,21 @@
             }
             // tier -> concrete values (user TUNE overrides win)
             function resolveProfile(pf){
-                const rate=String(snap(pf.nativeRate,[22050,44100,48000]));
                 // Speed scales with the device but is clamped: never above CYC_MAX (games run too fast / waste CPU),
                 // never below CYC_MIN (games too slow). Fixed cycles = same game speed on every device.
-                const CYC_MIN=10000, CYC_MAX=30000;
-                const cyc=Math.min(CYC_MAX,Math.max(CYC_MIN,Math.round(pf.score*80/1000)*1000));
+                // 고정 사이클은 '원본 속도'에 가깝게: 386~486 초기 기종 수준(약 6000~10000)으로 제한한다.
+                // (예전 10000~30000 은 대부분의 게임이 원본보다 빠르게 돌았음. 더 느리거나 빠르게는 TUNE cycles=N)
+                const CYC_MIN=6000, CYC_MAX=10000;
+                const cyc=Math.min(CYC_MAX,Math.max(CYC_MIN,Math.round(pf.score*30/1000)*1000));
+                // 오디오(mixer)는 js-dos 8 기본값(44100Hz / 1024 / 20ms)을 그대로 사용한다.
+                // 기기별로 rate/blocksize/prebuffer 를 바꾸면 js-dos 의 오디오 큐와 어긋나
+                // 소리가 늘어지거나 끊기고 음정이 이상해지므로 TUNE 으로 직접 지정할 때만 덮어쓴다.
                 const T={
-                    high:{cpu:'pentium', block:'2048', pre:'150'},
-                    mid: {cpu:'486',     block:'4096', pre:'200'},
-                    low: {cpu:'486',     block:'4096', pre:'250'}
+                    high:{cpu:'486'},
+                    mid: {cpu:'486'},
+                    low: {cpu:'486'}
                 }[pf.tier];
-                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:rate,block:T.block,pre:T.pre};
+                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:'44100',block:'1024',pre:'20'};
             }
             const effective=(pf)=>{
                 const a=resolveProfile(pf), e={};
