@@ -1743,6 +1743,9 @@
             }
 
             // ===== 키 매핑: B 폴더(Street Fighter2)는 방향키 → I J K L 로 변환해서 게임에 전달 =====
+            // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
+            // a = Wolfenstein 3D: OPL2(AdLib) 게임이라 OPL3 자동 모드에서 음악이 높게 들려 OPL2 로 고정
+            const GAME_DEFAULTS={ a:{opl:'opl2'} };
             let keyRemap=null;
             const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             const remapKey=e=>{
@@ -1791,6 +1794,9 @@
                     else if(kind.boot) runLine='boot '+list.map(q).join(' ');
                     else { runLine='imgmount a '+list.map(q).join(' ')+' -t floppy\na:'; out(tx('imgMountA'), 'cyan'); }
                 }
+                const gd=(top&&GAME_DEFAULTS[top.toLowerCase()])||{};
+                const snd={};
+                for(const k of ['sb','opl','oplemu']) snd[k]=(tune[k]!==TUNE_DEF[k])?tune[k]:(gd[k]||tune[k]);
                 const prof=await calibrate(false), eff=effective(prof);
                 out('Auto-tuned for this device: '+prof.tier+' (cycles='+eff.cycles+', '+eff.rate+'Hz)','cyan');
                 const conf=`[sdl]
@@ -1812,14 +1818,14 @@ prebuffer=${eff.pre}
 mpu401=intelligent
 mididevice=${tune.midi}
 [sblaster]
-sbtype=${tune.sb}
+sbtype=${snd.sb}
 sbbase=220
 irq=7
 dma=1
 hdma=5
 sbmix=true
-oplmode=${tune.opl}
-oplemu=${tune.oplemu}
+oplmode=${snd.opl}
+oplemu=${snd.oplemu}
 [gus]
 gus=false
 [speaker]
