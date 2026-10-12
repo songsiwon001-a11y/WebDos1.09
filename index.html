@@ -1222,7 +1222,11 @@
                     mid: {cpu:'486'},
                     low: {cpu:'486'}
                 }[pf.tier];
-                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:'44100',block:'1024',pre:'20'};
+                // 소리가 '높게' 들리는 원인: 에뮬레이터 샘플레이트(예: 44100)와 브라우저 오디오 장치(예: 48000)가 다르면
+                // 재생 속도가 어긋나 음정이 올라간다. 그래서 rate 는 실제 AudioContext 값에 맞추고(매번 새로 측정),
+                // blocksize/prebuffer 만 js-dos 기본값으로 둔다.
+                const rate=String(snap(nativeRate(),[22050,44100,48000]));
+                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:rate,block:'1024',pre:'20'};
             }
             const effective=(pf)=>{
                 const a=resolveProfile(pf), e={};
