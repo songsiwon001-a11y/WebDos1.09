@@ -1746,21 +1746,43 @@
             // ===== 키 매핑: B 폴더(Street Fighter2)는 방향키 → I J K L 로 변환해서 게임에 전달 =====
             // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
             // a = Wolfenstein 3D: OPL2(AdLib) 게임이라 OPL3 자동 모드에서 음악이 높게 들려 OPL2 로 고정
-            const GAME_DEFAULTS={ a:{opl:'opl2'} };
+            // b = Street Fighter II: 386/486 급 기종용 DOS 포팅. 전 기기 공통 속도(10000)로는 프레임이 느려져서
+            //     486DX2-66 수준(고정 사이클 25000)에 맞추고, 동적 코어 + SB16 + OPL3 로 사운드/속도를 안정화한다.
+            const GAME_DEFAULTS={
+                // a = Wolfenstein 3D: 386/486 시절 실모드 게임. 15000 사이클이면 70Hz 타이머 기준으로 부드럽고 원본에 가깝다.
+                //     OPL2(AdLib) 음악 + SB16 디지털 효과음. OPL3 자동 모드에서는 음악이 높게 들려 opl2 로 고정.
+                a:{cpu:'486', cycles:'fixed 15000', core:'dynamic', sb:'sb16', opl:'opl2', oplemu:'default'},
+                b:{cpu:'486', cycles:'fixed 25000', core:'dynamic', sb:'sb16', opl:'opl3', oplemu:'default'}
+            };
             // js-dos 가 만드는 AudioContext 는 장치 기본 샘플레이트(예: 192000)를 따라가 음정이 틀어진다.
             // 생성 시 sampleRate 를 에뮬레이터 rate 로 지정해, 장치와 다를 때는 브라우저가 리샘플링하도록 한다.
             const BaseAC=window.AudioContext||window.webkitAudioContext;
+            // - 라이브러리(js-dos)가 로드되기 전에 먼저 설치해, 라이브러리가 원본 AudioContext 를 잡아두는 경우를 막는다.
+            // - 한 번만 설치하고 rate 는 변수로 갱신한다 (RUN 할 때마다 클래스가 겹쳐 씌워지지 않음).
+            // - 만들어진 컨텍스트를 기록했다가 게임 종료 시 닫아, 이전 실행의 소리가 겹치거나 남는 현상을 막는다.
+            let forcedRate=0, acInstalled=false;
+            const liveAC=new Set();
+            function closeAudio(){
+                for(const c of liveAC){ try{ c.close(); }catch(e){} }
+                liveAC.clear();
+            }
             function forceAudioRate(rate){
                 if(!BaseAC || !(rate>0)) return;
+                forcedRate=rate;
+                if(acInstalled) return;
+                acInstalled=true;
                 const C=class extends BaseAC{
                     constructor(o){
                         const opt=Object.assign({},o||{});
-                        if(opt.sampleRate==null) opt.sampleRate=rate;
+                        if(opt.sampleRate==null) opt.sampleRate=forcedRate;
                         try{ super(opt); }catch(e){ super(o); }
+                        liveAC.add(this);
+                        try{ if(this.state==='suspended') this.resume().catch(()=>{}); }catch(e){}
                     }
                 };
                 window.AudioContext=C; window.webkitAudioContext=C;
             }
+            forceAudioRate(48000);
             let keyRemap=null;
             const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             const remapKey=e=>{
@@ -1813,13 +1835,16 @@
                 const snd={};
                 for(const k of ['sb','opl','oplemu']) snd[k]=(tune[k]!==TUNE_DEF[k])?tune[k]:(gd[k]||tune[k]);
                 const prof=await calibrate(false), eff=effective(prof);
+                // 폴더별 프로필: 사용자가 TUNE 으로 직접 지정하지 않은(auto) 항목만 게임 전용 값으로 덮어씀
+                for(const k of ['cpu','cycles']) if(tune[k]==='auto' && gd[k]) eff[k]=gd[k];
+                const coreMode=(tune.core==='auto' && gd.core) ? gd.core : tune.core;
                 out('Auto-tuned for this device: '+prof.tier+' (cycles='+eff.cycles+', '+eff.rate+'Hz)','cyan');
                 const conf=`[sdl]
 autolock=false
 [dosbox]
 captures=capture
 [cpu]
-core=${tune.core}
+core=${coreMode}
 cputype=${eff.cpu}
 cycles=${eff.cycles}
 cycleup=1000
@@ -1868,6 +1893,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 stopping=true;
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
+                    closeAudio();
                     $('dos').innerHTML=''; player=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.focus();
                 }finally{ stopping=false; }
