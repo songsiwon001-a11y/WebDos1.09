@@ -1877,10 +1877,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 try{
                     // v7 은 .jsdos 번들(zip)의 URL 을 받는다: 파일들 + .jsdos/dosbox.conf
-                    const zip=new JSZip();
-                    for(const v of sel) zip.file(rel(v.p), v.d.slice(), {binary:true, compression:'STORE'});
-                    zip.file('.jsdos/dosbox.conf', confFinal);
-                    const blob=await zip.generateAsync({type:'blob', compression:'STORE'});
+                    const zdata=buildZip([
+                        ...sel.map(v=>({name:rel(v.p), data:v.d})),
+                        {name:'.jsdos/dosbox.conf', data:new TextEncoder().encode(confFinal)}
+                    ]);
+                    const blob=new Blob([zdata],{type:'application/zip'});
                     if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
                     bundleURL=URL.createObjectURL(blob);
                     installWorkerShim();
@@ -1913,6 +1914,44 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     return new NativeWorker(url,opts);
                 };
                 window.Worker.prototype=NativeWorker.prototype;
+            }
+
+            // 최소 ZIP 작성기 (무압축 STORE, 폴더 엔트리 포함). js-dos v7 의 libzip 과 호환되도록 JSZip 대신 사용.
+            const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; } return t; })();
+            function crc32(d) { let c = 0xFFFFFFFF; for (let i = 0; i < d.length; i++) c = crcTable[(c ^ d[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+            function buildZip(files) { // files: [{name:'a/b.txt', data:Uint8Array}]
+                const enc = new TextEncoder();
+                const ents = [], seen = new Set();
+                const addDir = n => { if (!n || seen.has(n)) return; seen.add(n); const i = n.lastIndexOf('/'); if (i > 0) addDir(n.slice(0, i)); ents.push({ name: n + '/', data: new Uint8Array(0), dir: true }); };
+                const clean = files.map(f => ({ name: String(f.name).replace(/\\/g, '/').replace(/^\/+/, ''), data: f.data }));
+                for (const f of clean) { const i = f.name.lastIndexOf('/'); if (i > 0) addDir(f.name.slice(0, i)); }
+                for (const f of clean) ents.push({ name: f.name, data: f.data, dir: false });
+                const time = 0, date = ((2020 - 1980) << 9) | (1 << 5) | 1;
+                const parts = [], cds = []; let off = 0;
+                for (const e of ents) {
+                    const nb = enc.encode(e.name), crc = e.dir ? 0 : crc32(e.data), sz = e.data.length;
+                    const flags = /[^\x00-\x7f]/.test(e.name) ? 0x0800 : 0;
+                    const lh = new DataView(new ArrayBuffer(30));
+                    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, flags, true); lh.setUint16(8, 0, true);
+                    lh.setUint16(10, time, true); lh.setUint16(12, date, true); lh.setUint32(14, crc, true); lh.setUint32(18, sz, true); lh.setUint32(22, sz, true);
+                    lh.setUint16(26, nb.length, true); lh.setUint16(28, 0, true);
+                    parts.push(new Uint8Array(lh.buffer), nb, e.data);
+                    const ch = new DataView(new ArrayBuffer(46));
+                    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, flags, true); ch.setUint16(10, 0, true);
+                    ch.setUint16(12, time, true); ch.setUint16(14, date, true); ch.setUint32(16, crc, true); ch.setUint32(20, sz, true); ch.setUint32(24, sz, true);
+                    ch.setUint16(28, nb.length, true); ch.setUint16(30, 0, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+                    ch.setUint32(38, e.dir ? 0x10 : 0, true); ch.setUint32(42, off, true);
+                    cds.push(new Uint8Array(ch.buffer), nb);
+                    off += 30 + nb.length + sz;
+                }
+                let cdSize = 0; for (const c of cds) cdSize += c.length;
+                const eo = new DataView(new ArrayBuffer(22));
+                eo.setUint32(0, 0x06054b50, true); eo.setUint16(4, 0, true); eo.setUint16(6, 0, true); eo.setUint16(8, ents.length, true); eo.setUint16(10, ents.length, true);
+                eo.setUint32(12, cdSize, true); eo.setUint32(16, off, true); eo.setUint16(20, 0, true);
+                const all = [...parts, ...cds, new Uint8Array(eo.buffer)];
+                let total = 0; for (const p of all) total += p.length;
+                const out = new Uint8Array(total); let o = 0; for (const p of all) { out.set(p, o); o += p.length; }
+                return out;
             }
 
             let stopping=false;
