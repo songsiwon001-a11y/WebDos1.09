@@ -57,6 +57,27 @@
     <input type="file" id="fd" webkitdirectory directory multiple hidden>
     
     <script>
+        // EmulatorJS(DOSBox Pure) 는 스레드가 필요 → SharedArrayBuffer → 교차 출처 격리(COOP/COEP)가 필요하다.
+        // 정적 호스팅은 헤더를 못 바꾸므로, 같은 폴더의 coi-serviceworker.js 가 헤더를 붙여 준다 (처음 한 번 자동 새로고침).
+        (function () {
+            if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
+            if (!(window.isSecureContext)) return;
+            var tried = false;
+            try { tried = sessionStorage.getItem('webdos.coi') === '1'; } catch (e) {}
+            navigator.serviceWorker.register('coi-serviceworker.js').then(function (reg) {
+                if (tried) return;
+                try { sessionStorage.setItem('webdos.coi', '1'); } catch (e) {}
+                if (reg.active && !navigator.serviceWorker.controller) { location.reload(); return; }
+                reg.addEventListener('updatefound', function () {
+                    var w = reg.installing;
+                    if (w) w.addEventListener('statechange', function () { if (w.state === 'activated') location.reload(); });
+                });
+                if (reg.installing || reg.waiting) return;
+                if (!navigator.serviceWorker.controller) location.reload();
+            }).catch(function (e) { console.warn('coi-serviceworker:', e); });
+        })();
+    
+
         (function() {
             const i18n = {
                 en: {
@@ -1869,9 +1890,10 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
                     bundleURL=URL.createObjectURL(blob);
                     const vol=Math.max(0,Math.min(1,(parseInt(loadSetting('volume')||'100',10)||100)/100));
+                    if(!window.crossOriginIsolated) out('Warning: page is not cross-origin isolated (threads unavailable). Place coi-serviceworker.js next to webdos.html and reload.','yellow');
                     const html='<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'
                         +'EJS_player="#game";EJS_core="dos";EJS_pathtodata='+JSON.stringify(EJS_DATA)+';EJS_gameUrl='+JSON.stringify(bundleURL)+';EJS_gameName="game";'
-                        +'EJS_startOnLoaded=true;EJS_threads=false;EJS_volume='+vol+';EJS_color="#55ff55";'
+                        +'EJS_startOnLoaded=true;EJS_threads=true;EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js"><\/script></body></html>';
                     const fr=document.createElement('iframe');
                     fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
