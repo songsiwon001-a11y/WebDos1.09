@@ -1059,7 +1059,7 @@
                 const nonSys=/non.?system|not a bootable|invalid system|no system|no operating system/i.test(bs);
                 return {k:'fd',boot:jump && !nonSys};
             }
-            let diskCount=0, diskIdx=1, curCI=null;
+            let diskCount=0, diskIdx=1, curCI=null, bundleURL=null;
             const sleep=ms=>new Promise(r=>setTimeout(r,ms));
             function updateSwapLabel(){ try{ $('sw').textContent=tx('nextDisk')+(diskCount>1?' ('+diskIdx+'/'+diskCount+')':''); }catch(e){} }
 
@@ -1713,27 +1713,10 @@
                 document.head.appendChild(e);
             });
 
-            // js-dos 6.22 (DOSBox 0.74 기반, 워커/번들 zip 없이 fs.createFile 로 파일을 직접 넣는 단순한 구조)
-            const SRC=[
-                {n:'jsDelivr 6.22',js:'https://cdn.jsdelivr.net/npm/js-dos@6.22.60/dist/js-dos.js',wasm:'https://cdn.jsdelivr.net/npm/js-dos@6.22.60/dist/wdosbox.js'},
-                {n:'js-dos.com 6.22',js:'https://js-dos.com/6.22/current/js-dos.js',wasm:'https://js-dos.com/6.22/current/wdosbox.js'}
-            ];
-            let dosP=null, dosSrc=null;
-
-            function ensureDos(){
-                if(dosSrc && typeof window.Dos === 'function') return Promise.resolve(dosSrc);
-                return dosP || (dosP = (async()=>{
-                    const errs=[];
-                    for(const s of SRC){
-                        try{
-                            await loadTag(s.js);
-                            if(typeof window.Dos !== 'function') throw new Error(s.n + ': ' + tr('dosNotFound'));
-                            dosSrc = s; return s;
-                        }catch(e){errs.push(e.message)}
-                    }
-                    dosP=null; throw new Error(errs.join('\n') || tr('dosNotFound'));
-                })());
-            }
+            // EmulatorJS (libretro DOSBox Pure 코어). RUN 할 때마다 iframe 안에서 로드하므로 전역 상태가 남지 않는다.
+            const EJS_DATA='https://cdn.emulatorjs.org/stable/data/';
+            let dosP=null, dosSrc={n:'EmulatorJS'};
+            function ensureDos(){ return Promise.resolve(dosSrc); }
 
             // ===== 키 매핑: B 폴더(Street Fighter2)는 방향키 → I J K L 로 변환해서 게임에 전달 =====
             // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
@@ -1777,15 +1760,18 @@
             forceAudioRate(0);
             let keyRemap=null;
             const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
+            let gameFrame=null;
+            const gameDoc=()=>{ try{ return gameFrame && gameFrame.contentDocument; }catch(e){ return null; } };
             const remapKey=e=>{
                 if(!keyRemap || e.isTrusted===false) return;
                 const m=keyRemap[e.key]; if(!m) return;
                 if($('game').style.display!=='block') return;
                 e.preventDefault(); e.stopImmediatePropagation();
-                const ev=new KeyboardEvent(e.type,{key:m[0],code:m[1],bubbles:true,cancelable:true,repeat:e.repeat,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,altKey:e.altKey,metaKey:e.metaKey});
+                const d=gameDoc(); if(!d) return;
+                const win=d.defaultView;
+                const ev=new win.KeyboardEvent(e.type,{key:m[0],code:m[1],bubbles:true,cancelable:true,repeat:e.repeat,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,altKey:e.altKey,metaKey:e.metaKey});
                 for(const k of ['keyCode','which','charCode']) Object.defineProperty(ev,k,{get:()=>k==='charCode'?0:m[2]});
-                const ae=document.activeElement, host=$('dos');
-                const target=(ae && ae!==document.body && host.contains(ae)) ? ae : (host.querySelector('canvas')||host);
+                const target=d.activeElement && d.activeElement!==d.body ? d.activeElement : (d.querySelector('canvas')||d.body);
                 target.dispatchEvent(ev);
             };
             window.addEventListener('keydown',remapKey,true);
@@ -1874,28 +1860,33 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 $('dos').innerHTML=''; $('dos').appendChild(host); $('game').style.display='block';
                 $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 try{
-                    const canvas=document.createElement('canvas');
-                    canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;outline:0';
-                    host.appendChild(canvas);
-                    let rt=null;
-                    await new Promise((res,rej)=>{
-                        const p=window.Dos(canvas,{
-                            wdosboxUrl:dosSrc.wasm,
-                            cycles:eff.cycles,
-                            autolock:false,
-                            onerror:m=>rej(new Error(String(m))),
-                            log:()=>{}
-                        });
-                        p.ready((fs,main)=>{ rt={fs,main}; res(); });
-                        if(p && typeof p.then==='function') p.then(null,rej);
-                    });
-                    const mb2=sel.reduce((n,v)=>n+v.d.length,0)/1048576;
-                    out('  '+sel.length+' file(s), '+mb2.toFixed(2)+' MB -> virtual C:','yellow');
-                    for(const v of sel) rt.fs.createFile(rel(v.p), v.d);
-                    rt.fs.createFile('dosbox.conf', confFinal);
-                    const ci=await rt.main(['-conf','dosbox.conf']);
-                    curCI=ci;
-                    player={stop:async()=>{ try{ ci && ci.exit && ci.exit(); }catch(e){} }};
+                    // DOSBox Pure 는 zip 안의 파일을 C: 로 자동 마운트하고, 루트의 dosbox.conf 를 읽는다.
+                    const zip=new JSZip();
+                    for(const v of sel) zip.file(rel(v.p), v.d, {binary:true});
+                    zip.file('dosbox.conf', confFinal);
+                    const blob=await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:1}});
+                    out('  '+sel.length+' file(s), '+(blob.size/1048576).toFixed(2)+' MB bundle','yellow');
+                    if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
+                    bundleURL=URL.createObjectURL(blob);
+                    const vol=Math.max(0,Math.min(1,(parseInt(loadSetting('volume')||'100',10)||100)/100));
+                    const html='<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'
+                        +'EJS_player="#game";EJS_core="dos";EJS_pathtodata='+JSON.stringify(EJS_DATA)+';EJS_gameUrl='+JSON.stringify(bundleURL)+';EJS_gameName="game";'
+                        +'EJS_startOnLoaded=true;EJS_threads=false;EJS_volume='+vol+';EJS_color="#55ff55";'
+                        +'<\/script><script src="'+EJS_DATA+'loader.js"><\/script></body></html>';
+                    const fr=document.createElement('iframe');
+                    fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
+                    fr.setAttribute('allow','autoplay; fullscreen; gamepad');
+                    gameFrame=fr;
+                    fr.onload=()=>{ try{
+                        const w=fr.contentWindow;
+                        w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
+                        w.addEventListener('keydown',ev=>{ if(ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
+                        w.focus();
+                    }catch(e){} };
+                    fr.srcdoc=html;
+                    host.appendChild(fr);
+                    player={stop:async()=>{ try{ fr.remove(); }catch(e){} }};
+                    $('sw').style.display='none';
                 }catch(e){$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
             }
 
@@ -1907,43 +1898,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
-                    $('dos').innerHTML=''; player=null; curCI=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
+                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.focus();
                 }finally{ stopping=false; }
             }
             $('x').onclick=stopGame;
 
             // 분할 디스크 교체 (DOSBox 단축키 Ctrl+F4 를 대신 눌러줌: 브라우저가 Ctrl+F4 를 가로채는 경우 대비)
-            async function swapDisk(){
-                if(diskCount<2 || $('game').style.display!=='block' || !player) return;
-                const ci=curCI;
-                if(ci && typeof ci.simulateKeyEvent==='function'){
-                    // js-dos 6 : DOM keyCode (Ctrl=17, F4=115)
-                    ci.simulateKeyEvent(17,true); await sleep(40);
-                    ci.simulateKeyEvent(115,true); await sleep(80);
-                    ci.simulateKeyEvent(115,false); await sleep(40);
-                    ci.simulateKeyEvent(17,false);
-                } else if(ci && typeof ci.sendKeyEvent==='function'){
-                    // js-dos(GLFW) 키코드: 왼쪽 Ctrl=341, F4=293
-                    ci.sendKeyEvent(341,true); await sleep(40);
-                    ci.sendKeyEvent(293,true); await sleep(80);
-                    ci.sendKeyEvent(293,false); await sleep(40);
-                    ci.sendKeyEvent(341,false);
-                } else {
-                    const host=$('dos'), tgt=(host.querySelector('canvas')||host);
-                    const fire=(type,key,code,kc,ctrl)=>{
-                        const ev=new KeyboardEvent(type,{key,code,bubbles:true,cancelable:true,ctrlKey:ctrl});
-                        for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>kc});
-                        tgt.dispatchEvent(ev);
-                    };
-                    fire('keydown','Control','ControlLeft',17,true); await sleep(40);
-                    fire('keydown','F4','F4',115,true); await sleep(80);
-                    fire('keyup','F4','F4',115,true); await sleep(40);
-                    fire('keyup','Control','ControlLeft',17,false);
-                }
-                diskIdx = diskIdx % diskCount + 1;
-                updateSwapLabel();
-            }
+            async function swapDisk(){ /* EmulatorJS(DOSBox Pure): 디스크 교체는 에뮬레이터 메뉴에서 */ }
             $('sw').onmousedown=e=>e.preventDefault();
             $('sw').onclick=swapDisk;
 
