@@ -7,6 +7,9 @@
     <meta name="description" content="MS-DOS를 JS를 이용해 웹상에 구현한 프로젝트입니다." />
     <link rel="icon" href="image.png">
     <meta name="google-site-verification" content="xjENZEcS7wwhbRYeovTgvsJRhXLjyZ6HD1A89KB16A0" />
+    <!-- EmulatorJS(DOSBox Pure)는 스레드가 필요 → SharedArrayBuffer → 교차 출처 격리(COOP/COEP) 필요.
+         정적 호스팅은 헤더를 못 바꾸므로 같은 폴더의 coi-serviceworker.js 가 대신 헤더를 붙인다(처음 한 번 자동 새로고침). -->
+    <script src="coi-serviceworker.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.js"></script>
     <style>
         html, body { height: 100%; margin: 0; background: #000; }
@@ -57,27 +60,6 @@
     <input type="file" id="fd" webkitdirectory directory multiple hidden>
     
     <script>
-        // EmulatorJS(DOSBox Pure) 는 스레드가 필요 → SharedArrayBuffer → 교차 출처 격리(COOP/COEP)가 필요하다.
-        // 정적 호스팅은 헤더를 못 바꾸므로, 같은 폴더의 coi-serviceworker.js 가 헤더를 붙여 준다 (처음 한 번 자동 새로고침).
-        (function () {
-            if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
-            if (!(window.isSecureContext)) return;
-            var tried = false;
-            try { tried = sessionStorage.getItem('webdos.coi') === '1'; } catch (e) {}
-            navigator.serviceWorker.register('coi-serviceworker.js').then(function (reg) {
-                if (tried) return;
-                try { sessionStorage.setItem('webdos.coi', '1'); } catch (e) {}
-                if (reg.active && !navigator.serviceWorker.controller) { location.reload(); return; }
-                reg.addEventListener('updatefound', function () {
-                    var w = reg.installing;
-                    if (w) w.addEventListener('statechange', function () { if (w.state === 'activated') location.reload(); });
-                });
-                if (reg.installing || reg.waiting) return;
-                if (!navigator.serviceWorker.controller) location.reload();
-            }).catch(function (e) { console.warn('coi-serviceworker:', e); });
-        })();
-    
-
         (function() {
             const i18n = {
                 en: {
