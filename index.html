@@ -1795,7 +1795,7 @@
                 const isImg=IMG_RE.test(inner);
                 const dosPath=base(inner);
                 const q=p=>'"'+rel(p).replace(/\//g,'\\')+'"';
-                let pre='c:\n', runLine=dosPath, useCd=true;
+                let pre='mount c .\nc:\n', runLine=dosPath, useCd=true;
                 diskCount=0; diskIdx=1;
                 if(isImg){
                     useCd=false;
