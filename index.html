@@ -1059,7 +1059,7 @@
                 const nonSys=/non.?system|not a bootable|invalid system|no system|no operating system/i.test(bs);
                 return {k:'fd',boot:jump && !nonSys};
             }
-            let diskCount=0, diskIdx=1;
+            let diskCount=0, diskIdx=1, curCI=null, bundleURL=null;
             const sleep=ms=>new Promise(r=>setTimeout(r,ms));
             function updateSwapLabel(){ try{ $('sw').textContent=tx('nextDisk')+(diskCount>1?' ('+diskIdx+'/'+diskCount+')':''); }catch(e){} }
 
@@ -1227,7 +1227,7 @@
                 // blocksize/prebuffer 만 js-dos 기본값으로 둔다.
                 // 장치 샘플레이트(Windows 설정이 192000 등이어도)와 무관하게 에뮬레이터는 48000 으로 고정하고,
                 // 브라우저 AudioContext 를 같은 값으로 만들어(아래 forceAudioRate) 브라우저가 장치에 맞게 리샘플링하게 한다.
-                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:'48000',block:'1024',pre:'20'};
+                return {cpu:T.cpu,cycles:'fixed '+cyc,rate:'44100',block:'1024',pre:'20'};
             }
             const effective=(pf)=>{
                 const a=resolveProfile(pf), e={};
@@ -1713,9 +1713,10 @@
                 document.head.appendChild(e);
             });
 
+            // js-dos v7 (DOSBox 0.74 기반). js-dos@7.5.0/dist 에 js-dos.js, js-dos.css, wdosbox.js/.wasm 이 함께 들어 있음
             const SRC=[
-                {n:'v8.js-dos.com',js:'https://v8.js-dos.com/latest/js-dos.js',css:'https://v8.js-dos.com/latest/js-dos.css',pre:''},
-                {n:'jsDelivr',js:'https://cdn.jsdelivr.net/npm/js-dos@8/dist/js-dos.js',css:'https://cdn.jsdelivr.net/npm/js-dos@8/dist/js-dos.css',pre:'https://cdn.jsdelivr.net/npm/emulators@8/dist/'}
+                {n:'jsDelivr v7',js:'https://cdn.jsdelivr.net/npm/js-dos@7.5.0/dist/js-dos.js',css:'https://cdn.jsdelivr.net/npm/js-dos@7.5.0/dist/js-dos.css',pre:'https://cdn.jsdelivr.net/npm/js-dos@7.5.0/dist/'},
+                {n:'unpkg v7',js:'https://unpkg.com/js-dos@7.5.0/dist/js-dos.js',css:'https://unpkg.com/js-dos@7.5.0/dist/js-dos.css',pre:'https://unpkg.com/js-dos@7.5.0/dist/'}
             ];
             let dosP=null, dosSrc=null;
 
@@ -1727,13 +1728,6 @@
                         try{
                             await loadTag(s.css,true).catch(()=>{});
                             await loadTag(s.js);
-                            if(typeof window.Dos !== 'function'){
-                                try {
-                                    const m = await import(s.js);
-                                    const D = m.Dos || m.default;
-                                    if(typeof D === 'function') window.Dos = D;
-                                } catch(e) {}
-                            }
                             if(typeof window.Dos !== 'function') throw new Error(s.n + ': ' + tr('dosNotFound'));
                             if(s.pre && window.emulators) window.emulators.pathPrefix = s.pre;
                             dosSrc = s; return s;
@@ -1767,14 +1761,14 @@
                 liveAC.clear();
             }
             function forceAudioRate(rate){
-                if(!BaseAC || !(rate>0)) return;
-                forcedRate=rate;
+                if(!BaseAC) return;
+                forcedRate=rate>0?rate:0;
                 if(acInstalled) return;
                 acInstalled=true;
                 const C=class extends BaseAC{
                     constructor(o){
                         const opt=Object.assign({},o||{});
-                        if(opt.sampleRate==null) opt.sampleRate=forcedRate;
+                        if(opt.sampleRate==null && forcedRate>0) opt.sampleRate=forcedRate;
                         try{ super(opt); }catch(e){ super(o); }
                         liveAC.add(this);
                         try{ if(this.state==='suspended') this.resume().catch(()=>{}); }catch(e){}
@@ -1782,7 +1776,7 @@
                 };
                 window.AudioContext=C; window.webkitAudioContext=C;
             }
-            forceAudioRate(48000);
+            forceAudioRate(0);
             let keyRemap=null;
             const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             const remapKey=e=>{
@@ -1871,19 +1865,30 @@ gus=false
 [speaker]
 pcspeaker=true
 tandy=off
-disney=off
+disney=false
 [autoexec]
 @echo off
 ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
 `;
                 const confFinal = tune.plain==='on' ? conf.replace(/\[cpu\][\s\S]*?\[autoexec\]/,'[autoexec]') : conf;
                 if(tune.plain==='on') out('PLAIN mode: DOSBox default cpu/mixer/sound settings','yellow');
-                forceAudioRate(parseInt(eff.rate,10));
                 const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
                 $('dos').innerHTML=''; $('dos').appendChild(host); $('game').style.display='block';
                 $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 try{
-                    player = await window.Dos(host,{dosboxConf:confFinal,initFs:sel.map(v=>({path:rel(v.p),contents:v.d.slice()})),autoStart:true,workerThread:(!inClaude && tune.worker!=='off'),...(dosSrc.pre?{pathPrefix:dosSrc.pre,pathSuffix:''}:{})});
+                    // v7 은 .jsdos 번들(zip)의 URL 을 받는다: 파일들 + .jsdos/dosbox.conf
+                    const zip=new JSZip();
+                    for(const v of sel) zip.file(rel(v.p), v.d.slice(), {binary:true, compression:'STORE'});
+                    zip.file('.jsdos/dosbox.conf', confFinal);
+                    const blob=await zip.generateAsync({type:'blob', compression:'STORE'});
+                    if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
+                    bundleURL=URL.createObjectURL(blob);
+                    player = window.Dos(host,{
+                        autolock:false,
+                        noSideBar:true, noFullscreen:true, noSocialLinks:true,
+                        workerThread:(!inClaude && tune.worker!=='off')
+                    });
+                    curCI = await player.run(bundleURL);
                 }catch(e){$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
             }
 
@@ -1894,7 +1899,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
-                    $('dos').innerHTML=''; player=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
+                    $('dos').innerHTML=''; player=null; curCI=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.focus();
                 }finally{ stopping=false; }
             }
@@ -1903,11 +1908,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             // 분할 디스크 교체 (DOSBox 단축키 Ctrl+F4 를 대신 눌러줌: 브라우저가 Ctrl+F4 를 가로채는 경우 대비)
             async function swapDisk(){
                 if(diskCount<2 || $('game').style.display!=='block' || !player) return;
-                let ci=null;
-                try{
-                    ci = typeof player.ci==='function' ? await player.ci() : await player.ci;
-                    if(!ci && player.layers) ci = player.layers.ci || null;
-                }catch(e){ ci=null; }
+                const ci=curCI;
                 if(ci && typeof ci.sendKeyEvent==='function'){
                     // js-dos(GLFW) 키코드: 왼쪽 Ctrl=341, F4=293
                     ci.sendKeyEvent(341,true); await sleep(40);
