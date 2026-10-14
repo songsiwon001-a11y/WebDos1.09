@@ -1167,7 +1167,7 @@
                 out('');
             }
 
-            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'on',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
+            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'off',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
             const tune=Object.assign({},TUNE_DEF);
             try{ Object.assign(tune, JSON.parse(loadSetting('tune')||'{}')); }catch(e){}
 
@@ -1883,12 +1883,26 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     const blob=await zip.generateAsync({type:'blob', compression:'STORE'});
                     if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
                     bundleURL=URL.createObjectURL(blob);
-                    player = window.Dos(host,{
-                        autolock:false,
-                        noSideBar:true, noFullscreen:true, noSocialLinks:true,
-                        workerThread:(!inClaude && tune.worker!=='off')
-                    });
-                    curCI = await player.run(bundleURL);
+                    // CDN 의 wdosbox.js 는 다른 출처라 Worker 로 만들 수 없다(SecurityError) → 기본은 직접 실행.
+                    // TUNE worker=on 은 wdosbox 파일을 같은 도메인에 두었을 때만 쓸 것. 실패하면 자동으로 직접 실행으로 재시도.
+                    const startPlayer=async useWorker=>{
+                        const hostEl=document.createElement('div'); hostEl.style.cssText='position:absolute;inset:0';
+                        $('dos').innerHTML=''; $('dos').appendChild(hostEl);
+                        player = window.Dos(hostEl,{
+                            autolock:false,
+                            noSideBar:true, noFullscreen:true, noSocialLinks:true,
+                            workerThread:useWorker
+                        });
+                        curCI = await player.run(bundleURL);
+                    };
+                    const wantWorker=(!inClaude && tune.worker==='on');
+                    try{ await startPlayer(wantWorker); }
+                    catch(err){
+                        if(!wantWorker) throw err;
+                        try{ if(player && player.stop) await player.stop(); }catch(e2){}
+                        out('Worker failed, retrying without worker...','yellow');
+                        await startPlayer(false);
+                    }
                 }catch(e){$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
             }
 
