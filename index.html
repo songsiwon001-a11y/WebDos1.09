@@ -417,7 +417,7 @@
                     TREE: "TREE - Graphically displays directory structure.",
                     TUNE: "TUNE [cpu=|cycles=|rate=|block=|pre=|worker=] - Adjusts emulator speed/audio settings (saved).",
                     TYPE: "TYPE filename - Displays text file contents.",
-                    LOAD: "LOAD A-Z [-v] - Loads files from a GitHub folder (a-z except c).",
+                    LOAD: "LOAD A-Z [-v] [-f] - Loads files from a GitHub folder (a-z except c).",
                     UPLOAD: "UPLOAD [-f] - Uploads files or directory zip.",
                     VER: "VER - Displays DOS version.",
                     VERIFY: "VERIFY - Verifies file writing.",
@@ -512,7 +512,7 @@
                     TITLE: "TITLE - 창 제목을 설정합니다.",
                     TREE: "TREE - 디렉토리 구조를 그래픽으로 표시합니다.",
                     TYPE: "TYPE 파일명 - 텍스트 파일의 내용을 출력합니다.",
-                    LOAD: "LOAD A-Z [-v] - 깃허브 폴더(c 제외 a~z)의 파일을 불러옵니다.",
+                    LOAD: "LOAD A-Z [-v] [-f] - 깃허브 폴더(c 제외 a~z)의 파일을 불러옵니다.",
                     UPLOAD: "UPLOAD [-f] - 파일 또는 폴더 zip 선택창을 엽니다.",
                     VER: "VER - WEB-DOS 버전을 표시합니다.",
                     VERIFY: "VERIFY - 파일 기록 검증 여부를 설정합니다.",
@@ -607,7 +607,7 @@
                     TITLE: "TITLE - ウィンドウタイトルを設定します。",
                     TREE: "TREE - ディレクトリ構造をグラフィカルに表示します。",
                     TYPE: "TYPE ファイル名 - テキストファイルの内容を表示します。",
-                    LOAD: "LOAD A-Z [-v] - GitHubフォルダ(cを除くa～z)のファイルを読み込みます。",
+                    LOAD: "LOAD A-Z [-v] [-f] - GitHubフォルダ(cを除くa～z)のファイルを読み込みます。",
                     UPLOAD: "UPLOAD [-f] - ファイルまたはフォルダZIPをアップロードします。",
                     VER: "VER - WEB-DOSのバージョンを表示します。",
                     VERIFY: "VERIFY - ファイル書き込みの検証を設定します。",
@@ -702,7 +702,7 @@
                     TITLE: "TITLE - 设置命令提示符窗口的窗口标题。",
                     TREE: "TREE - 以图形方式显示驱动器或路径的目录结构。",
                     TYPE: "TYPE 文件名 - 显示文本文件的内容。",
-                    LOAD: "LOAD A-Z [-v] - 从 GitHub 文件夹(除 c 外的 a~z)加载文件。",
+                    LOAD: "LOAD A-Z [-v] [-f] - 从 GitHub 文件夹(除 c 外的 a~z)加载文件。",
                     UPLOAD: "UPLOAD [-f] - 打开文件或文件夹 zip 上传窗口。",
                     VER: "VER - 显示 WEB-DOS 版本。",
                     VERIFY: "VERIFY - 告诉系统是否验证文件已正确写入。",
@@ -2071,6 +2071,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 en: {
                     usage: 'Usage: LOAD A [-v]   (A-Z except C)',
                     scan: '  scanning folder...', fetching: '  downloading...',
+                    already: 'Already loaded. Use LOAD <letter> -F to reload.',
                     reserved: 'Access is denied.',
                     local: 'The device is not ready.',
                     notFound: d => 'The system cannot find the path specified.',
@@ -2083,6 +2084,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 kr: {
                     usage: '사용법: LOAD A [-v]   (C를 제외한 A~Z)',
                     scan: '  폴더 검색 중...', fetching: '  다운로드 중...',
+                    already: '이미 불러온 폴더입니다. 다시 받으려면 LOAD 문자 -F 를 사용하세요.',
                     reserved: '액세스가 거부되었습니다.',
                     local: '장치가 준비되지 않았습니다.',
                     notFound: d => '지정된 경로를 찾을 수 없습니다.',
@@ -2095,6 +2097,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 jp: {
                     usage: '使い方: LOAD A [-v]   (Cを除くA～Z)',
                     scan: '  フォルダを検索中...', fetching: '  ダウンロード中...',
+                    already: '既に読み込み済みです。再読み込みは LOAD 文字 -F を使用してください。',
                     reserved: 'アクセスが拒否されました。',
                     local: 'デバイスの準備ができていません。',
                     notFound: d => '指定されたパスが見つかりません。',
@@ -2107,6 +2110,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 cn: {
                     usage: '用法: LOAD A [-v]   (除 C 外的 A~Z)',
                     scan: '  正在搜索文件夹...', fetching: '  下载中...',
+                    already: '已加载。如需重新加载，请使用 LOAD 字母 -F。',
                     reserved: '拒绝访问。',
                     local: '设备未准备好。',
                     notFound: d => '系统找不到指定的路径。',
@@ -2298,12 +2302,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             }
             cmds.load = async function (a) {
                 verbose = a.some(x => /^[-\/]v$/i.test(x));
+                const force = a.some(x => /^[-\/]f$/i.test(x));
                 let L = (a.find(x => !/^[-\/]/.test(x)) || '').replace(/[:\\\/]+$/, '').toLowerCase();
                 if (!L && cwd.length && /^[a-z]$/i.test(cwd[0])) L = cwd[0].toLowerCase();
                 if (!L || !/^[a-z]$/.test(L)) return out(lm('usage'), 'err');
                 if (L === 'c') return out(lm('reserved'), 'err');
                 if (location.protocol === 'file:') return out(lm('local'), 'err');
                 if (loading) return;
+                if (!force) { for (const k of files.keys()) if (k.startsWith(L + '/')) return out(lm('already'), 'yellow'); }
                 loading = true; ghErr = null;
                 out('');
                 const bar = O.lastChild;
@@ -2312,7 +2318,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try {
                     dbg('base: ' + pageBase());
                     st(lm('scan'));
-                    const hit = await discover(L);
+                    const hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
                     if (!hit) {
                         rm();
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
@@ -2324,20 +2330,20 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     progCb = null;
                     if (!list.length) { rm(); return out(lm('notFound', L), 'err'); }
 
-                    for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
-
-                    const total = list.length;
+                    const total = list.length, fresh = [];
                     let idx = 0, done = 0;
                     const worker = async () => {
                         while (idx < total) {
                             const it = list[idx++];
                             const data = await it.get();
-                            addFile(L + '/' + it.path, data);
+                            fresh.push([it.path, data]);
                             done++;
                             st(lm('progress', done, total));
                         }
                     };
                     await Promise.all(Array.from({ length: Math.min(6, total) }, worker));
+                    for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
+                    for (const [pp, d] of fresh) addFile(L + '/' + pp, d);
                     rm();
 
                     out(total + tr('uploadComplete'), 'ok');
