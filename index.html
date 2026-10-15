@@ -10,7 +10,9 @@
     <!-- EmulatorJS(DOSBox Pure)는 스레드가 필요 → SharedArrayBuffer → 교차 출처 격리(COOP/COEP) 필요.
          정적 호스팅은 헤더를 못 바꾸므로 같은 폴더의 coi-serviceworker.js 가 대신 헤더를 붙인다(처음 한 번 자동 새로고침). -->
     <script src="coi-serviceworker.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.js"></script>
+    <!-- fflate: JSZip 보다 훨씬 가볍고 빠른 압축 라이브러리 (워커에서 비동기로 처리 → 저사양 기기에서도 화면이 안 멈춤) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/umd/index.js"></script>
+    <script>window.fflate||document.write('<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"><\/script>');</script>
     <style>
         html, body { height: 100%; margin: 0; background: #000; }
         #t { height: 100%; overflow-y: auto; padding: 10px 14px; box-sizing: border-box; color: #aaa; font: 16px/1.3 "Perfect DOS VGA 437", "Consolas", "D2Coding", monospace; white-space: pre-wrap; word-break: break-all; }
@@ -66,7 +68,7 @@
                     helpHeader: "For more information on a specific command, type HELP command-name.",
                     docClaude: "(Claude Preview)",
                     workerLoad: "Worker: ",
-                    jszipLoad: "JSZip: ",
+                    jszipLoad: "fflate: ",
                     dosLoad: "js-dos loaded OK (",
                     verInfo: "WEB-DOS [Version 1.09]\n(c) RiceJamJam Studio. All rights reserved.",
                     fmtDone: "All files have been formatted and deleted.",
@@ -132,7 +134,7 @@
                     helpHeader: "특정 명령어에 대한 자세한 내용이 필요하면 HELP 명령어 이름을 입력하십시오.",
                     docClaude: "(클로드 미리보기)",
                     workerLoad: "Worker: ",
-                    jszipLoad: "JSZip: ",
+                    jszipLoad: "fflate: ",
                     dosLoad: "js-dos 로드 OK (",
                     verInfo: "WEB-DOS [Version 1.09]\n(c) RiceJamJam Studio. All rights reserved.",
                     fmtDone: "모든 파일이 삭제되었습니다.",
@@ -198,7 +200,7 @@
                     helpHeader: "特定のコマンドに関する詳細情報が必要な場合は、HELP コマンド名 を入力してください。",
                     docClaude: "(プレビュー)",
                     workerLoad: "Worker: ",
-                    jszipLoad: "JSZip: ",
+                    jszipLoad: "fflate: ",
                     dosLoad: "js-dos読み込みOK (",
                     verInfo: "WEB-DOS [Version 1.09]\n(c) RiceJamJam Studio. All rights reserved.",
                     fmtDone: "すべてのファイルが削除されました。",
@@ -264,7 +266,7 @@
                     helpHeader: "有关某个命令的详细信息，请键入 HELP 命令名。",
                     docClaude: "(预览)",
                     workerLoad: "Worker: ",
-                    jszipLoad: "JSZip: ",
+                    jszipLoad: "fflate: ",
                     dosLoad: "js-dos 加载成功 (",
                     verInfo: "WEB-DOS [Version 1.09]\n(c) RiceJamJam Studio. All rights reserved.",
                     fmtDone: "所有文件已被删除。",
@@ -1064,6 +1066,17 @@
             }
             let diskCount=0, diskIdx=1, curCI=null, bundleURL=null;
             const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+            // ===== ZIP 헬퍼 (fflate 워커 비동기, 실패 시 동기 방식으로 대체) =====
+            const Z={
+                unzip:data=>new Promise((ok,no)=>{
+                    const sync=()=>{ try{ ok(fflate.unzipSync(data)); }catch(e){ no(e); } };
+                    try{ fflate.unzip(data,(e,r)=>e?sync():ok(r)); }catch(e){ sync(); }
+                }),
+                zip:obj=>new Promise((ok,no)=>{
+                    const sync=()=>{ try{ ok(fflate.zipSync(obj,{level:0})); }catch(e){ no(e); } };
+                    try{ fflate.zip(obj,{level:0},(e,r)=>e?sync():ok(r)); }catch(e){ sync(); }
+                })
+            };
             function updateSwapLabel(){ try{ $('sw').textContent=tx('nextDisk')+(diskCount>1?' ('+diskIdx+'/'+diskCount+')':''); }catch(e){} }
 
             function playBeep(freq=800, duration=100) {
@@ -1586,7 +1599,7 @@
                 ipconfig,
                 doctor(){
                     out('Host: ' + location.protocol + '//' + location.hostname + (inClaude ? '  ' + tr('docClaude') : ''));
-                    out(tr('workerLoad') + (typeof Worker) + '   ' + tr('jszipLoad') + typeof JSZip + '   Dos: ' + (typeof window.Dos !== 'undefined' ? typeof window.Dos : 'undefined'));
+                    out(tr('workerLoad') + (typeof Worker) + '   ' + tr('jszipLoad') + typeof fflate + '   Dos: ' + (typeof window.Dos !== 'undefined' ? typeof window.Dos : 'undefined'));
                     ensureDos().then(s=>out(tr('dosLoad') + s.n + ')', 'ok')).catch(e=>out(e.message||'Error', 'err'));
                 },
                 mem(){
@@ -1864,10 +1877,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 try{
                     // DOSBox Pure 는 zip 안의 파일을 C: 로 자동 마운트하고, 루트의 dosbox.conf 를 읽는다.
-                    const zip=new JSZip();
-                    for(const v of sel) zip.file(rel(v.p), v.d, {binary:true});
-                    zip.file('dosbox.conf', confFinal);
-                    const blob=await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:1}});
+                    // 압축 없이(level 0) 묶어서 CPU/메모리 부담을 최소화한다.
+                    const zobj={};
+                    for(const v of sel) zobj[rel(v.p)]=v.d;
+                    zobj['dosbox.conf']=fflate.strToU8(confFinal);
+                    const blob=new Blob([await Z.zip(zobj)],{type:'application/zip'});
                     out('  '+sel.length+' file(s), '+(blob.size/1048576).toFixed(2)+' MB bundle','yellow');
                     if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
                     bundleURL=URL.createObjectURL(blob);
@@ -1949,15 +1963,15 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                         const f = item.file;
                         const root = f.name.replace(/\.[^.]+$/,'');
                         try {
-                            const z = await JSZip.loadAsync(f);
-                            const ents = Object.values(z.files).filter(e => !e.dir && !/^__MACOSX\/|(^|\/)\.DS_Store$/.test(e.name));
+                            const z = await Z.unzip(new Uint8Array(await f.arrayBuffer()));
+                            const ents = Object.keys(z).filter(k => !k.endsWith('/') && !/^__MACOSX\/|(^|\/)\.DS_Store$/.test(k)).map(k => ({ name: k, data: z[k] }));
                             const tops = new Set(ents.map(e => e.name.split('/')[0]));
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             for (const e of ents) {
                                 let nm = e.name;
                                 if (strip) nm = nm.split('/').slice(1).join('/');
                                 const targetPath = pre + (strip ? '' : root + '/') + nm;
-                                addFile(targetPath, await e.async('uint8array'));
+                                addFile(targetPath, e.data);
                                 uploadedNames.push(targetPath);
                                 n++;
                             }
@@ -2078,12 +2092,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 for (const it of list) {
                     if (!it.path.includes('/') && isZip(it.path)) {
                         try {
-                            const z = await JSZip.loadAsync(await it.get());
-                            const ents = Object.values(z.files).filter(e => !e.dir && !skipName(e.name));
+                            const z = await Z.unzip(await it.get());
+                            const ents = Object.keys(z).filter(k => !k.endsWith('/') && !skipName(k)).map(k => ({ name: k, data: z[k] }));
                             const tops = new Set(ents.map(e => e.name.split('/')[0]));
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             dbg('unzip ' + it.path + ' (' + ents.length + ' files)');
-                            for (const e of ents) res.push({ path: strip ? e.name.split('/').slice(1).join('/') : e.name, get: () => e.async('uint8array') });
+                            for (const e of ents) res.push({ path: strip ? e.name.split('/').slice(1).join('/') : e.name, get: async () => e.data });
                             continue;
                         } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); continue; }
                     }
