@@ -1641,7 +1641,17 @@
                         if(pick.length>1){ out(tr('multiFileMatch'), 'err'); pick.forEach(v=>out('  RUN '+v.p.replace(/\//g,'\\'))); return; }
                         f=pick[0];
                     }
+                    // HTML 앱을 EXE 인 척 실행: RUN typing.exe → typing.html (진짜 .exe 가 없을 때만)
+                    if(!f){
+                        const nm2=arg.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com|bat)$/i,'');
+                        const hh=[...files.values()].filter(v=>/\.html?$/i.test(v.p) && base(v.p).toLowerCase().replace(/\.html?$/i,'')===nm2);
+                        const cur2=lc(cwd), near2=hh.filter(v=>par(v.p.toLowerCase()).startsWith(cur2));
+                        const pick2=near2.length?near2:hh;
+                        if(pick2.length>1){ out(tr('multiFileMatch'), 'err'); pick2.forEach(v=>out('  RUN '+v.p.replace(/\//g,'\\'))); return; }
+                        if(pick2.length===1) return launchHtml(pick2[0].p);
+                    }
                     if(!f) return out(arg.toUpperCase()+': '+tr('fileNotFoundErr'), 'err');
+                    if(/\.html?$/i.test(f.p)) return launchHtml(f.p);
                     if(!/\.(exe|com|bat)$/i.test(f.p) && !IMG_RE.test(f.p)) return out(tr('invFormat'), 'err');
                     launch(f.p, diskSet(f.p));
                 }
@@ -1779,6 +1789,32 @@
             };
             window.addEventListener('keydown',remapKey,true);
             window.addEventListener('keyup',remapKey,true);
+
+            // ===== HTML 앱 실행 (EXE 처럼 전체화면 오버레이로 띄움, DOS 게임과 동일한 종료 방식) =====
+            function launchHtml(path){
+                const f=files.get(path.toLowerCase());
+                if(!f) return out(tr('fileNotFound'),'err');
+                keyRemap=null; diskCount=0; diskIdx=1;
+                const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
+                $('dos').innerHTML=''; $('dos').appendChild(host);
+                $('game').style.display='block'; $('sw').style.display='none';
+                try{
+                    let src=new TextDecoder('utf-8').decode(f.d);
+                    // 같은 폴더의 상대 경로 리소스는 지원하지 않으므로 단일 파일 HTML 기준
+                    const fr=document.createElement('iframe');
+                    fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
+                    fr.setAttribute('allow','autoplay; fullscreen; clipboard-write');
+                    gameFrame=fr;
+                    fr.onload=()=>{ try{
+                        const w=fr.contentWindow;
+                        w.addEventListener('keydown',ev=>{ if(ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
+                        w.focus();
+                    }catch(e){} };
+                    fr.srcdoc=src;
+                    host.appendChild(fr);
+                    player={stop:async()=>{ try{ fr.remove(); }catch(e){} }};
+                }catch(e){ $('game').style.display='none'; out('Error: '+(e&&e.message||e),'err'); }
+            }
 
             async function launch(path, set){
                 try{ await ensureDos(); }catch(e){
