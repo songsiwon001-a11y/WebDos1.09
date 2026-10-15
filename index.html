@@ -2118,11 +2118,18 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             const skipName = n => /(^|\/)(\.gitkeep|\.gitignore|\.DS_Store|Thumbs\.db)$/i.test(n) || /^__MACOSX\//.test(n);
             const isZip = n => /\.(zip|jsdos)$/i.test(n);
             // 커스텀 도메인/로컬에서 GitHub 자동 탐색을 쓰려면 'owner/repo' 를 적으세요 (github.io 에서는 비워도 됨)
-            const GH_REPO = 'ktxsubway-bit/WebDos';
+            const GH_REPO = 'songsiwon001-a11y/WebDos1.09';
             const GH_BRANCHES = ['main', 'master', 'HEAD'];
+            // 현재 주소(owner.github.io/<repo>/)에서 알아낸 저장소를 먼저, 그다음 GH_REPO 를 후보로 쓴다
+            const ghRepos = () => {
+                const r = [], segs = location.pathname.split('/').filter(Boolean);
+                if (/\.github\.io$/i.test(location.hostname) && segs.length && (segs.length > 1 || !/\.html?$/i.test(segs[0]))) r.push(location.hostname.split('.')[0] + '/' + segs[0]);
+                if (GH_REPO && !r.some(x => x.toLowerCase() === GH_REPO.toLowerCase())) r.push(GH_REPO);
+                return r;
+            };
             setTimeout(() => { try { Object.keys(KNOWN).forEach(k => addDir(k)); } catch (e) {} }, 0);
             // 폴더별 알려진 ZIP 이름 (여기에 추가하면 API 없이도 바로 찾음)
-            const KNOWN = { a: ['w3d.zip'], b: ['Street Fighter2.zip'], d: ['심시티2000.zip'] };
+            const KNOWN = { a: ['w3d.zip'], b: ['Street Fighter2.zip'], d: ['심시티2000.zip'], e: ['typing.html'] };
             let loading = false, ghErr = null, verbose = false;
             const dbg = m => { if (verbose) out('  ' + m, 'yellow'); };
             const pageBase = () => {
@@ -2134,9 +2141,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
 
             const getter = (dir, rel) => async () => {
                 const tries = [U(dir + '/' + encPath(rel))];
-                if (GH_REPO) for (const b of GH_BRANCHES.filter(x => x !== 'HEAD')) {
-                    tries.push('https://raw.githubusercontent.com/' + GH_REPO + '/' + b + '/' + encPath(dir + '/' + rel));
-                    tries.push('https://cdn.jsdelivr.net/gh/' + GH_REPO + '@' + b + '/' + encPath(dir + '/' + rel));
+                for (const rp of ghRepos()) for (const b of GH_BRANCHES.filter(x => x !== 'HEAD')) {
+                    tries.push('https://raw.githubusercontent.com/' + rp + '/' + b + '/' + encPath(dir + '/' + rel));
+                    tries.push('https://cdn.jsdelivr.net/gh/' + rp + '@' + b + '/' + encPath(dir + '/' + rel));
                 }
                 let last = 0;
                 for (const u of tries) {
@@ -2189,7 +2196,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                         const r = await fetch(U(dir + '/' + encPath(nm)), { cache: 'no-cache' });
                         dbg('GET ' + dir + '/' + nm + ' → ' + r.status);
                         if (r.ok) return [{ path: nm, get: getter(dir, nm) }];
-                        if (GH_REPO && (KNOWN[L] || []).includes(nm)) {
+                        if (ghRepos().length && (KNOWN[L] || []).includes(nm)) {
                             const g = getter(dir, nm);
                             try { const data = await g(); return [{ path: nm, get: async () => data }]; } catch (e) {}
                         }
@@ -2216,13 +2223,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 const h = location.hostname, segs = location.pathname.split('/').filter(Boolean);
                 const isFile = x => /\.[a-z0-9]+$/i.test(x);
                 const cands = [];
-                if (GH_REPO) {
+                if (/\.github\.io$/i.test(h) && segs.length && (segs.length > 1 || !/\.html?$/i.test(segs[0]))) {
+                    cands.push({ owner: h.split('.')[0], repo: segs[0], rest: segs.slice(1) });
+                }
+                if (GH_REPO && !cands.some(c => (c.owner + '/' + c.repo).toLowerCase() === GH_REPO.toLowerCase())) {
                     const [o, rp] = GH_REPO.split('/');
                     cands.push({ owner: o, repo: rp, rest: [] });
-                } else if (/\.github\.io$/i.test(h)) {
-                    const o = h.split('.')[0];
-                    if (segs.length && !isFile(segs[0])) cands.push({ owner: o, repo: segs[0], rest: segs.slice(1) });
-                    cands.push({ owner: o, repo: h, rest: segs });
                 }
                 for (const c of cands) {
                     const rest = c.rest.slice();
@@ -2249,10 +2255,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             }
 
             async function srcJsd(letter) {
-                if (!GH_REPO) return null;
-                for (const b of GH_BRANCHES.filter(x => x !== 'HEAD')) {
-                    for (const u of ['https://data.jsdelivr.com/v1/packages/gh/' + GH_REPO + '@' + b + '?structure=flat',
-                                     'https://data.jsdelivr.com/v1/package/gh/' + GH_REPO + '@' + b + '/flat']) {
+                for (const RP of ghRepos()) for (const b of GH_BRANCHES.filter(x => x !== 'HEAD')) {
+                    for (const u of ['https://data.jsdelivr.com/v1/packages/gh/' + RP + '@' + b + '?structure=flat',
+                                     'https://data.jsdelivr.com/v1/package/gh/' + RP + '@' + b + '/flat']) {
                         try {
                             const r = await fetch(u);
                             dbg('LIST ' + u.split('/')[5] + '@' + b + ' → ' + r.status);
