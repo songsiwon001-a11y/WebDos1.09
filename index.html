@@ -1885,12 +1885,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                         const w=fr.contentWindow;
                         w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
                         w.addEventListener('keydown',ev=>{ if(ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
+                        w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
                         w.focus();
                     }catch(e){} };
                     fr.srcdoc=html;
                     host.appendChild(fr);
                     player={stop:async()=>{ try{ fr.remove(); }catch(e){} }};
-                    $('sw').style.display='none';
+                    $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 }catch(e){$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
             }
 
@@ -1909,9 +1910,50 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             $('x').onclick=stopGame;
 
             // 분할 디스크 교체 (DOSBox 단축키 Ctrl+F4 를 대신 눌러줌: 브라우저가 Ctrl+F4 를 가로채는 경우 대비)
-            async function swapDisk(){ /* EmulatorJS(DOSBox Pure): 디스크 교체는 에뮬레이터 메뉴에서 */ }
+            function sendKeyToGame(key, code, kc, mods){
+                const d=gameDoc(); if(!d) return false;
+                const win=d.defaultView;
+                const target=d.querySelector('canvas')||d.body;
+                for(const type of ['keydown','keyup']){
+                    const ev=new win.KeyboardEvent(type,Object.assign({key,code,bubbles:true,cancelable:true},mods||{}));
+                    for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>kc});
+                    target.dispatchEvent(ev);
+                    try{ d.dispatchEvent(ev.constructor===win.KeyboardEvent?new win.KeyboardEvent(type,Object.assign({key,code,bubbles:true},mods||{})):ev); }catch(e){}
+                }
+                return true;
+            }
+            // 에뮬레이터가 디스크 교체 API 를 노출하면 그것을 먼저 쓰고, 없으면 Ctrl+F4 로 대체
+            async function swapDisk(){
+                if(diskCount<2 || $('game').style.display!=='block') return;
+                const next=diskIdx>=diskCount?1:diskIdx+1;
+                let done=false;
+                try{
+                    const w=gameFrame && gameFrame.contentWindow;
+                    const em=w && w.EJS_emulator;
+                    const fn=em && em.gameManager && em.gameManager.functions;
+                    if(fn){
+                        for(const name of ['setDiskIndex','setCurrentDisk','swapDisk','changeDisk']){
+                            if(typeof fn[name]==='function'){ fn[name](next-1); done=true; break; }
+                        }
+                    }
+                }catch(e){}
+                if(!done){
+                    // DOSBox 의 디스크 교체 단축키
+                    sendKeyToGame('F4','F4',115,{ctrlKey:true});
+                }
+                diskIdx=next;
+                updateSwapLabel();
+                out('  Disk '+diskIdx+'/'+diskCount,'cyan');
+                try{ gameFrame.contentWindow.focus(); }catch(e){}
+            }
             $('sw').onmousedown=e=>e.preventDefault();
             $('sw').onclick=swapDisk;
+            // 게임 실행 중 Ctrl+F4 / Ctrl+] 로도 교체 (브라우저가 Ctrl+F4 로 탭을 닫으려 하므로 가로챔)
+            window.addEventListener('keydown',e=>{
+                if(diskCount>1 && $('game').style.display==='block' && e.ctrlKey && (e.key==='F4'||e.key===']')){
+                    e.preventDefault(); e.stopPropagation(); swapDisk();
+                }
+            },true);
 
             async function ingest(list){
                 let n = 0; 
