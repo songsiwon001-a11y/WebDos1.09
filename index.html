@@ -1756,8 +1756,7 @@
             let dosP=null, dosSrc={n:'EmulatorJS'};
             function ensureDos(){ return Promise.resolve(dosSrc); }
 
-            // ===== 키 매핑: B 폴더(Street Fighter2)는 방향키 → I J K L 로 변환해서 게임에 전달 =====
-            // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
+                        // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
             // a = Wolfenstein 3D: OPL2(AdLib) 게임이라 OPL3 자동 모드에서 음악이 높게 들려 OPL2 로 고정
             // b = Street Fighter II: 386/486 급 기종용 DOS 포팅. 전 기기 공통 속도(10000)로는 프레임이 느려져서
             //     486DX2-66 수준(고정 사이클 25000)에 맞추고, 동적 코어 + SB16 + OPL3 로 사운드/속도를 안정화한다.
@@ -1796,24 +1795,19 @@
                 window.AudioContext=C; window.webkitAudioContext=C;
             }
             forceAudioRate(0);
-            let keyRemap=null;
-            const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             let gameFrame=null;
             const gameDoc=()=>{ try{ return gameFrame && gameFrame.contentDocument; }catch(e){ return null; } };
-            const remapKey=e=>{
-                if(!keyRemap || e.isTrusted===false) return;
-                const m=keyRemap[e.key]; if(!m) return;
-                if($('game').style.display!=='block') return;
-                e.preventDefault(); e.stopImmediatePropagation();
-                const d=gameDoc(); if(!d) return;
-                const win=d.defaultView;
-                const ev=new win.KeyboardEvent(e.type,{key:m[0],code:m[1],bubbles:true,cancelable:true,repeat:e.repeat,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,altKey:e.altKey,metaKey:e.metaKey});
-                for(const k of ['keyCode','which','charCode']) Object.defineProperty(ev,k,{get:()=>k==='charCode'?0:m[2]});
-                const target=d.activeElement && d.activeElement!==d.body ? d.activeElement : (d.querySelector('canvas')||d.body);
-                target.dispatchEvent(ev);
-            };
-            window.addEventListener('keydown',remapKey,true);
-            window.addEventListener('keyup',remapKey,true);
+            // 게임 실행 중에는 키 입력이 항상 게임(iframe)으로 가도록 포커스를 유지한다.
+            // 포커스가 부모 문서에 남아 있으면 일부 키(특히 2P 키)가 게임에 전달되지 않고 사라진다.
+            const refocusGame=()=>{ try{ if($('game').style.display==='block' && gameFrame && gameFrame.contentWindow) gameFrame.contentWindow.focus(); }catch(e){} };
+            window.addEventListener('keydown',e=>{
+                if($('game').style.display!=='block' || e.isTrusted===false) return;
+                const w=gameFrame && gameFrame.contentWindow;
+                if(w && document.activeElement===gameFrame) return;
+                refocusGame();
+            },true);
+            window.addEventListener('focus',refocusGame);
+            document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refocusGame(); });
 
             // ===== 모바일 터치 컨트롤: 가상 패드 입력을 게임에 '키보드 입력'으로 전달 (모든 DOS 게임 공통) =====
             const touchDev=(navigator.maxTouchPoints||0)>0 && (window.matchMedia?matchMedia('(pointer:coarse)').matches:true);
@@ -1826,8 +1820,6 @@
             const padHeld=new Set();
             function padSend(type,key,code,kc){
                 const d=gameDoc(); if(!d) return;
-                const m=keyRemap && keyRemap[key];            // B 폴더(IJKL 매핑)도 동일하게 적용
-                if(m){ key=m[0]; code=m[1]; kc=m[2]; }
                 const win=d.defaultView;
                 const ev=new win.KeyboardEvent(type,{key,code,bubbles:true,cancelable:true});
                 for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>kc});
@@ -1911,7 +1903,7 @@
             function launchHtml(path){
                 const f=files.get(path.toLowerCase());
                 if(!f) return out(tr('fileNotFound'),'err');
-                keyRemap=null; diskCount=0; diskIdx=1;
+                diskCount=0; diskIdx=1;
                 const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
                 $('dos').innerHTML=''; $('dos').appendChild(host);
                 $('game').style.display='block'; $('sw').style.display='none';
@@ -1941,7 +1933,6 @@
                 }
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
-                keyRemap = (top && top.toLowerCase()==='b') ? IJKL : null;
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
                 const rel=p=>top?p.slice(top.length+1):p, inner=rel(path);
                 const dirp=inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')).replace(/\//g,'\\'):'';
@@ -2039,7 +2030,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     gameFrame=fr;
                     fr.onload=()=>{ try{
                         const w=fr.contentWindow;
-                        w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
                         if(touchDev){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
                         w.addEventListener('keydown',ev=>{ if(ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
                         w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
@@ -2061,7 +2051,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
-                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; keyRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
+                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.removeAttribute('inputmode'); I.focus();
                 }finally{ stopping=false; }
             }
