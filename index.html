@@ -1813,6 +1813,25 @@
             window.addEventListener('focus',refocusGame);
             document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refocusGame(); });
 
+            // ===== 스트리트파이터2(B 폴더) 한정: 2P 공격키 { } 를 : " 키로도 입력 =====
+            // ; 키(: ) → [ 키({), ' 키(") → ] 키(}).  | (\ 키)는 그대로 둔다. 방향키 등 다른 키는 건드리지 않는다.
+            const SF_KEYS={Semicolon:['[','{','BracketLeft',219], Quote:[']','}','BracketRight',221]};
+            let kbRemap=null;
+            const remapKey=e=>{
+                if(!kbRemap || e.isTrusted===false) return;
+                const m=kbRemap[e.code]; if(!m) return;
+                if($('game').style.display!=='block') return;
+                e.preventDefault(); e.stopImmediatePropagation();
+                const d=gameDoc(); if(!d) return;
+                const win=d.defaultView;
+                const ev=new win.KeyboardEvent(e.type,{key:e.shiftKey?m[1]:m[0],code:m[2],bubbles:true,cancelable:true,repeat:e.repeat,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,altKey:e.altKey,metaKey:e.metaKey});
+                for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>m[3]});
+                const target=d.activeElement && d.activeElement!==d.body ? d.activeElement : (d.querySelector('canvas')||d.body);
+                target.dispatchEvent(ev);
+            };
+            window.addEventListener('keydown',remapKey,true);
+            window.addEventListener('keyup',remapKey,true);
+
             // ===== 모바일 터치 컨트롤: 가상 패드 입력을 게임에 '키보드 입력'으로 전달 (모든 DOS 게임 공통) =====
             const touchDev=(navigator.maxTouchPoints||0)>0 && (window.matchMedia?matchMedia('(pointer:coarse)').matches:true);
             const PK={
@@ -1909,7 +1928,7 @@
             function launchHtml(path){
                 const f=files.get(path.toLowerCase());
                 if(!f) return out(tr('fileNotFound'),'err');
-                padRemap=null; diskCount=0; diskIdx=1;
+                padRemap=null; kbRemap=null; diskCount=0; diskIdx=1;
                 const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
                 $('dos').innerHTML=''; $('dos').appendChild(host);
                 $('game').style.display='block'; $('sw').style.display='none';
@@ -1941,6 +1960,7 @@
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
                 padRemap = (top && top.toLowerCase()==='b') ? IJKL : null;
+                kbRemap = (top && top.toLowerCase()==='b') ? SF_KEYS : null;
                 const rel=p=>top?p.slice(top.length+1):p, inner=rel(path);
                 const dirp=inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')).replace(/\//g,'\\'):'';
                 const mb=sel.reduce((n,v)=>n+v.d.length,0)/1048576;
@@ -2038,6 +2058,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                     fr.onload=()=>{ try{
                         const w=fr.contentWindow;
                         if(touchDev){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
+                        w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
                         w.addEventListener('keydown',ev=>{ if(ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
                         w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
                         w.focus();
@@ -2058,7 +2079,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
-                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; padRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
+                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; padRemap=null; kbRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.removeAttribute('inputmode'); I.focus();
                 }finally{ stopping=false; }
             }
@@ -2413,9 +2434,10 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
             }
 
             // cd 로 a~z(c 제외) 폴더에 들어가면 아직 안 불러온 경우 자동으로 LOAD 실행
-            function autoLoad() {
+            async function autoLoad() {
                 const L = cwd.length ? String(cwd[0]).toLowerCase() : '';
-                if (!/^[abd-z]$/.test(L) || loading || location.protocol === 'file:') return;
+                if (!/^[abd-z]$/.test(L) || location.protocol === 'file:') return;
+                while (loading) await sleep(100);
                 for (const k of files.keys()) if (k.startsWith(L + '/')) return;
                 return cmds.load([L]);
             }
@@ -2427,7 +2449,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 if (!L || !/^[a-z]$/.test(L)) return out(lm('usage'), 'err');
                 if (L === 'c') return out(lm('reserved'), 'err');
                 if (location.protocol === 'file:') return out(lm('local'), 'err');
-                if (loading) return;
+                while (loading) await sleep(100);
                 if (!force) { for (const k of files.keys()) if (k.startsWith(L + '/')) return out(lm('already'), 'yellow'); }
                 loading = true; ghErr = null;
                 out('');
@@ -2497,22 +2519,34 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 ingest(all);
             };
 
-            I.onkeydown=async e=>{
+            // 명령은 입력창을 잠그지 않고 대기열(cmdChain)에 넣어 순서대로 실행한다.
+            // (예전에는 CD/LOAD 가 끝날 때까지 입력창을 disabled 로 잠가서, 느린 기기에서 그 사이에 친 RUN 등이 사라졌다.)
+            let cmdChain=Promise.resolve();
+            async function execLine(l){
+                try{
+                    const [c,...a]=l.split(/\s+/);
+                    if(/^[a-z]:$/i.test(c) && !a.length){
+                        const r=cmds.cd([c[0].toLowerCase()==='c' ? 'c:' : '\\'+c[0]]);
+                        if(r&&typeof r.then==='function') await r;
+                    } else {
+                        const fn=cmds[c.toLowerCase()];
+                        if(fn){
+                            const r=fn(a);
+                            if(r&&typeof r.then==='function') await r;
+                        } else out("'"+c+"'"+tr('notCommand'),'err');
+                    }
+                }catch(e){ out('Error: '+(e&&e.message||e),'err'); }
+                prompt(); T.scrollTop=T.scrollHeight;
+            }
+            I.onkeydown=e=>{
                 if(e.key==='Enter'){
                     const l=I.value.trim();
                     out($('pr').textContent+I.value);
                     I.value='';
                     if(l){
                         hist.push(l); hi=hist.length;
-                        const [c,...a]=l.split(/\s+/);
-                        if(/^[a-z]:$/i.test(c) && !a.length){ const r=cmds.cd([c[0].toLowerCase()==='c' ? 'c:' : '\\'+c[0]]); if(r&&r.then){ I.disabled=true; try{ await r; }finally{ I.disabled=false; I.focus(); } } prompt(); T.scrollTop=T.scrollHeight; return; }
-                        const fn=cmds[c.toLowerCase()];
-                        if(fn){
-                            const r=fn(a);
-                            if(r&&typeof r.then==='function'&&(fn===cmds.ipconfig||fn===cmds.cd||fn===cmds.chdir||fn===cmds.pushd||fn===cmds.load)){ I.disabled=true; try{ await r; }finally{ I.disabled=false; I.focus(); } }
-                        } else out("'"+c+"'"+tr('notCommand'),'err');
-                    }
-                    prompt(); T.scrollTop=T.scrollHeight;
+                        cmdChain=cmdChain.then(()=>execLine(l));
+                    } else { prompt(); T.scrollTop=T.scrollHeight; }
                 }else if(e.key==='ArrowUp'){
                     if(hi>0) I.value=hist[--hi];
                     e.preventDefault();
