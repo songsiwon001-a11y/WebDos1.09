@@ -1795,6 +1795,10 @@
                 window.AudioContext=C; window.webkitAudioContext=C;
             }
             forceAudioRate(0);
+            // 모바일 터치 패드 전용: B 폴더(Street Fighter2)는 방향키 대신 I J K L 을 입력으로 쓰므로 패드 방향 입력만 변환한다.
+            // (물리 키보드 입력은 변환하지 않는다)
+            let padRemap=null;
+            const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             let gameFrame=null;
             const gameDoc=()=>{ try{ return gameFrame && gameFrame.contentDocument; }catch(e){ return null; } };
             // 게임 실행 중에는 키 입력이 항상 게임(iframe)으로 가도록 포커스를 유지한다.
@@ -1820,6 +1824,8 @@
             const padHeld=new Set();
             function padSend(type,key,code,kc){
                 const d=gameDoc(); if(!d) return;
+                const m=padRemap && padRemap[key];
+                if(m){ key=m[0]; code=m[1]; kc=m[2]; }
                 const win=d.defaultView;
                 const ev=new win.KeyboardEvent(type,{key,code,bubbles:true,cancelable:true});
                 for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>kc});
@@ -1903,7 +1909,7 @@
             function launchHtml(path){
                 const f=files.get(path.toLowerCase());
                 if(!f) return out(tr('fileNotFound'),'err');
-                diskCount=0; diskIdx=1;
+                padRemap=null; diskCount=0; diskIdx=1;
                 const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
                 $('dos').innerHTML=''; $('dos').appendChild(host);
                 $('game').style.display='block'; $('sw').style.display='none';
@@ -1934,6 +1940,7 @@
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
+                padRemap = (top && top.toLowerCase()==='b') ? IJKL : null;
                 const rel=p=>top?p.slice(top.length+1):p, inner=rel(path);
                 const dirp=inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')).replace(/\//g,'\\'):'';
                 const mb=sel.reduce((n,v)=>n+v.d.length,0)/1048576;
@@ -2051,7 +2058,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
-                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
+                    $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; padRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
                     out(tr('gameClosed')); I.removeAttribute('inputmode'); I.focus();
                 }finally{ stopping=false; }
             }
