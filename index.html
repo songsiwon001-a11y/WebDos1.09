@@ -2464,7 +2464,10 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (GH_REPO && !r.some(x => x.toLowerCase() === GH_REPO.toLowerCase())) r.push(GH_REPO);
                 return r;
             };
-            let loading = false, ghErr = null, verbose = false;
+            let loading = 0, ghErr = null, verbose = false;   // loading: 0 = 잠금 없음, 그 외 = 잠금을 건 시각(ms)
+            const LOAD_LOCK_MS = 120000;                        // 이 시간이 지나면 멈춘 잠금으로 보고 무시
+            const triedFolders = new Set();                     // 자동 탐색에서 못 찾은 폴더 (cd 할 때마다 재검색 방지)
+            const lockBusy = () => loading && Date.now() - loading < LOAD_LOCK_MS;
             const dbg = m => { if (verbose) out('  ' + m, 'yellow'); };
             const pageBase = () => {
                 let pth = location.pathname;
@@ -2493,7 +2496,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 const rd = r.body.getReader(), chunks = [];
                 let got = 0;
                 for (;;) {
-                    const { done, value } = await rd.read();
+                    // 본문 수신이 20초 이상 멈추면 포기 (잠금이 영원히 남는 것 방지)
+                    let tm;
+                    const { done, value } = await Promise.race([
+                        rd.read(),
+                        new Promise((_, no) => { tm = setTimeout(() => no(new Error('download stalled: ' + name)), 20000); })
+                    ]).catch(e => { try { rd.cancel(); } catch (_) {} throw e; }).finally(() => clearTimeout(tm));
                     if (done) break;
                     chunks.push(value); got += value.length;
                     if (progCb) progCb(name, got, total);
@@ -2630,8 +2638,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             async function autoLoad() {
                 const L = cwd.length ? String(cwd[0]).toLowerCase() : '';
                 if (!/^[abd-z]$/.test(L) || location.protocol === 'file:') return;
-                while (loading) await sleep(100);
-                for (const k of files.keys()) if (k.startsWith(L + '/')) return;
+                // 이미 불러온 폴더는 로딩 잠금과 상관없이 바로 통과
+                const has = () => { for (const k of files.keys()) if (k.startsWith(L + '/')) return true; return false; };
+                if (has() || triedFolders.has(L)) return;
+                while (lockBusy()) await sleep(100);
+                if (has()) return;   // 기다리는 동안 로드됐을 수 있음
                 return cmds.load([L]);
             }
             cmds.load = async function (a) {
@@ -2642,9 +2653,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (!L || !/^[a-z]$/.test(L)) return out(lm('usage'), 'err');
                 if (L === 'c') return out(lm('reserved'), 'err');
                 if (location.protocol === 'file:') return out(lm('local'), 'err');
-                while (loading) await sleep(100);
+                while (lockBusy()) await sleep(100);
                 if (!force) { for (const k of files.keys()) if (k.startsWith(L + '/')) return out(lm('already'), 'yellow'); }
-                loading = true; ghErr = null;
+                const myLock = loading = Date.now(); ghErr = null;
                 out('');
                 const bar = O.lastChild;
                 const st = t => { if (bar) bar.textContent = t; };
@@ -2657,13 +2668,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if (!hit || !hit.list.length) {
                         rm();
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
+                        triedFolders.add(L);
                         return out(lm('notFound', L), 'err');
                     }
                     st(lm('fetching'));
                     progCb = (n, g, t) => st('  ' + n + '  ' + (g / 1048576).toFixed(1) + (t ? ' / ' + (t / 1048576).toFixed(1) : '') + ' MB');
                     const list = await expandZips(hit.list);
                     progCb = null;
-                    if (!list.length) { rm(); return out(lm('notFound', L), 'err'); }
+                    if (!list.length) { rm(); triedFolders.add(L); return out(lm('notFound', L), 'err'); }
 
                     const total = list.length, fresh = [];
                     let idx = 0, done = 0;
@@ -2679,6 +2691,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     await Promise.all(Array.from({ length: Math.min(6, total) }, worker));
                     for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
                     for (const [pp, d] of fresh) addFile(L + '/' + pp, d);
+                    triedFolders.delete(L);
                     rm();
 
                     out(total + tr('uploadComplete'), 'ok');
@@ -2689,7 +2702,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 } catch (e) {
                     rm();
                     out('Error: ' + (e && e.message || e), 'err');
-                } finally { progCb = null; loading = false; }
+                } finally { progCb = null; if (loading === myLock) loading = 0; }
             };
             // =================================================================================
 
