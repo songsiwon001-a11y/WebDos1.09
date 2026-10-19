@@ -2653,7 +2653,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     dbg('base: ' + pageBase());
                     st(lm('scan'));
                     const hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
-                    if (hit) hit.list = hit.list.filter(it => /\.zip$/i.test(it.path));   // zip 파일만 받는다 (json 등 기타 파일 제외)
+                    if (hit) hit.list = hit.list.filter(it => /\.(zip|jsdos|html?)$/i.test(it.path));   // zip/jsdos 와 HTML 앱만 받는다 (json 등 기타 파일 제외)
                     if (!hit || !hit.list.length) {
                         rm();
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
