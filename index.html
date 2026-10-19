@@ -6,7 +6,7 @@
     <title>WEB-DOS [Version 1.09]</title>
     <meta name="description" content="MS-DOS를 JS를 이용해 웹상에 구현한 프로젝트입니다." />
     <link rel="icon" href="image.png">
-    <meta name="google-site-verification" content="AC7gJcy-zFF9OJWpQJZ__yTkLTS5XR82oeT0JQN2l60" />
+    <meta name="google-site-verification" content="xjENZEcS7wwhbRYeovTgvsJRhXLjyZ6HD1A89KB16A0" />
     <!-- EmulatorJS(DOSBox Pure)는 스레드가 필요 → SharedArrayBuffer → 교차 출처 격리(COOP/COEP) 필요.
          정적 호스팅은 헤더를 못 바꾸므로 같은 폴더의 coi-serviceworker.js 가 대신 헤더를 붙인다(처음 한 번 자동 새로고침). -->
     <!-- DOS 느낌의 픽셀 글꼴: Neo둥근모 Code (고정폭, 한글/영문/일부 한자·가나 지원) -->
@@ -2056,27 +2056,62 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(my!==launchSeq) return;
                     const vol=Math.max(0,Math.min(1,(parseInt(loadSetting('volume')||'100',10)||100)/100));
                     if(!window.crossOriginIsolated) out('Warning: page is not cross-origin isolated (threads unavailable). Place coi-serviceworker.js next to webdos.html and reload.','yellow');
-                    const html='<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+(exitWatch?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
+                    // 스레드는 교차 출처 격리가 된 경우에만 사용 (아니면 EmulatorJS 가 로딩 중 멈춰 검은 화면이 된다)
+                    const useThreads=!!window.crossOriginIsolated;
+                    const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+(exitWatch?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
                         +'EJS_player="#game";EJS_core="dos";EJS_pathtodata='+JSON.stringify(EJS_DATA)+';EJS_gameUrl='+JSON.stringify(bundleURL)+';EJS_gameName="game";'
-                        +'EJS_startOnLoaded=true;EJS_threads=true;'+(touchDev?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
-                        +'<\/script><script src="'+EJS_DATA+'loader.js"><\/script></body></html>';
-                    const fr=document.createElement('iframe');
-                    fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
-                    fr.setAttribute('allow','autoplay; fullscreen; gamepad');
-                    gameFrame=fr;
-                    fr.onload=()=>{ try{
-                        const w=fr.contentWindow;
-                        if(touchDev){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
-                        w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
-                        w.addEventListener('keydown',ev=>{ if(manualExit&&ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
-                        w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
-                        w.focus();
-                    }catch(e){} };
-                    fr.srcdoc=html;
-                    host.appendChild(fr);
+                        +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(touchDev?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
+                        +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
+                    const EM={
+                        en:{load:'Loading EmulatorJS...',retry:(n,m)=>'Loading failed. Retrying ('+n+'/'+m+')...',fail:'EmulatorJS failed to load. Check your internet connection / adblocker and try RUN again.'},
+                        kr:{load:'EmulatorJS 로딩 중...',retry:(n,m)=>'로딩에 실패했습니다. 다시 시도합니다 ('+n+'/'+m+')...',fail:'EmulatorJS 를 불러오지 못했습니다. 인터넷/광고차단을 확인하고 다시 RUN 하세요.'},
+                        jp:{load:'EmulatorJS 読み込み中...',retry:(n,m)=>'読み込みに失敗しました。再試行します ('+n+'/'+m+')...',fail:'EmulatorJS を読み込めませんでした。ネットワーク/広告ブロックを確認して、もう一度 RUN してください。'},
+                        cn:{load:'正在加载 EmulatorJS...',retry:(n,m)=>'加载失败，正在重试 ('+n+'/'+m+')...',fail:'EmulatorJS 加载失败。请检查网络/广告拦截后重新 RUN。'}
+                    };
+                    const em=EM[currentLang]||EM.en;
+                    const status=document.createElement('div');
+                    status.style.cssText='position:absolute;left:10px;bottom:8px;z-index:5;color:#5f5;font:14px "NeoDunggeunmo Code",monospace;pointer-events:none;text-shadow:0 0 3px #000';
+                    host.appendChild(status);
+                    const MAX_RETRY=2, NO_LOADER_MS=20000, NOT_READY_MS=45000;
+                    let attempt=0, wd=null;
+                    const mount=()=>{
+                        if(wd){ clearInterval(wd); wd=null; }
+                        if(gameFrame){ try{ gameFrame.remove(); }catch(e){} }
+                        const fr=document.createElement('iframe');
+                        fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
+                        fr.setAttribute('allow','autoplay; fullscreen; gamepad; cross-origin-isolated');
+                        gameFrame=fr;
+                        fr.onload=()=>{ try{
+                            const w=fr.contentWindow;
+                            if(touchDev){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
+                            w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
+                            w.addEventListener('keydown',ev=>{ if(manualExit&&ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
+                            w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
+                            w.focus();
+                        }catch(e){} };
+                        fr.srcdoc=buildHtml();
+                        host.insertBefore(fr,status);
+                        status.textContent=attempt?em.retry(attempt,MAX_RETRY):em.load;
+                        // 로딩 감시: 로더 스크립트 실패 / 에뮬레이터가 시간 안에 시작되지 않으면 자동 재시도 (검은 화면 방지)
+                        const t0=Date.now();
+                        wd=setInterval(()=>{
+                            if(gameFrame!==fr || my!==launchSeq || $('game').style.display!=='block'){ clearInterval(wd); wd=null; status.remove(); return; }
+                            let w=null, emu=null, failed=false, hasCanvas=false;
+                            try{ w=fr.contentWindow; emu=w.EJS_emulator; failed=!!w.__ejsFail; const cv=w.document.querySelector('canvas'); hasCanvas=!!(cv&&cv.width>0&&cv.height>0); }catch(e){}
+                            const ready=!!(emu && (emu.started || emu.gameManager));
+                            if(ready){ clearInterval(wd); wd=null; status.remove(); return; }
+                            const el=Date.now()-t0;
+                            const dead=failed || (!emu && el>NO_LOADER_MS) || (emu && !hasCanvas && el>NOT_READY_MS);
+                            if(!dead) return;
+                            clearInterval(wd); wd=null;
+                            if(attempt<MAX_RETRY){ attempt++; mount(); }
+                            else { status.remove(); out(em.fail,'err'); stopGame(); }
+                        },1000);
+                        if(exitWatch) watchGameExit(fr);
+                    };
+                    mount();
                     hideSplash(); blurTerminal(); showPad();
-                    player={stop:async()=>{ try{ fr.remove(); }catch(e){} }};
-                    if(exitWatch) watchGameExit(fr);
+                    player={stop:async()=>{ if(wd){ clearInterval(wd); wd=null; } try{ status.remove(); }catch(e){} try{ if(gameFrame) gameFrame.remove(); }catch(e){} }};
                     $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 }catch(e){hideSplash();$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
             }
