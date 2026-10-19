@@ -1031,47 +1031,6 @@
             const fmt=n=>n.toLocaleString('en-US');
 
             // ===== 디스크 이미지 지원 (플로피 / 하드디스크 / CD, 분할 디스크 세트) =====
-            // 아케이드 롬 zip(FBA/FBNeo/MAME 등)인지 판별: DOS 실행 파일/이미지/HTML/JS 가 하나도 없으면 롬 zip 으로 보고 풀지 않는다
-            const isRomZip=ents=>ents.length>0 && !ents.some(e=>/\.(exe|com|bat|img|ima|vfd|dsk|flp|iso|cue|html?|js)$/i.test(e.name));
-            const ARC_CORES={auto:'fbalpha2012_cps1',fba:'fbalpha2012_cps1',cps1:'fbalpha2012_cps1',cps2:'fbalpha2012_cps2',neogeo:'fbalpha2012_neogeo',fbneo:'fbneo',mame:'mame2003_plus'};
-            // 아케이드(EmulatorJS) 키 배치: 1P = I J K L 이동, A S D 약/중/강 펀치, Z X C 약/중/강 킥, 5 코인, Enter 시작
-            //                               2P = 방향키 이동, [ ] \ 펀치, ; ' / 킥, 6 코인, 2 시작
-            // (EmulatorJS 컨트롤 번호: 0=B 1=Y 2=SELECT 3=START 4~7=상하좌우 8=A 9=X 10=L 11=R, FBA 격투 배치: Y X L = 펀치, B A R = 킥)
-            const ARC_PAD={0:'BUTTON_2',1:'BUTTON_4',2:'SELECT',3:'START',4:'DPAD_UP',5:'DPAD_DOWN',6:'DPAD_LEFT',7:'DPAD_RIGHT',8:'BUTTON_1',9:'BUTTON_3',10:'LEFT_TOP_SHOULDER',11:'RIGHT_TOP_SHOULDER'};
-            const arcPlayer=k=>{
-                const o={};
-                for(const i in ARC_PAD) o[i]={value:k[i]||'',value2:ARC_PAD[i]};
-                // 기본값과 겹쳐 오작동하지 않도록 나머지 키보드 배치는 비운다 (스틱은 게임패드 전용으로 유지)
-                [[12,'LEFT_BOTTOM_SHOULDER'],[13,'RIGHT_BOTTOM_SHOULDER'],[14,'LEFT_STICK'],[15,'RIGHT_STICK'],[16,'LEFT_STICK_X:+1'],[17,'LEFT_STICK_X:-1'],[18,'LEFT_STICK_Y:+1'],[19,'LEFT_STICK_Y:-1'],[20,'RIGHT_STICK_X:+1'],[21,'RIGHT_STICK_X:-1'],[22,'RIGHT_STICK_Y:+1'],[23,'RIGHT_STICK_Y:-1']].forEach(([i,v2])=>{ o[i]={value:'',value2:v2}; });
-                for(let i=24;i<=29;i++) o[i]={value:''};
-                return o;
-            };
-            const ARC_CONTROLS={
-                0:arcPlayer({0:'z',1:'a',2:'5',3:'enter',4:'i',5:'k',6:'j',7:'l',8:'x',9:'s',10:'d',11:'c'}),
-                1:arcPlayer({0:'b',1:'t',2:'6',3:'2',4:'up arrow',5:'down arrow',6:'left arrow',7:'right arrow',8:'h',9:'y',10:'u',11:'g'}),
-                2:{},3:{}
-            };
-            // 2P 공격키 { } \ ; ' / 는 실제 키 위치(e.code) 기준으로 위 2P 전용 글자 키(t y u / g h b)로 바꿔서 게임에 전달한다
-            const ARC_KEYS={
-                BracketLeft:['t','T','KeyT',84], BracketRight:['y','Y','KeyY',89], Backslash:['u','U','KeyU',85],
-                Semicolon:['g','G','KeyG',71], Quote:['h','H','KeyH',72], Slash:['b','B','KeyB',66]
-            };
-            // 아케이드 롬 시작 후 자동으로 코인(1P 코인키 5)을 n개 넣는다. 부팅이 끝날 때까지 잠시 기다렸다가 한 개씩 누른다.
-            async function autoCoin(fr, n){
-                if(!(n>0)) return;
-                await sleep(4000);
-                for(let i=0;i<n;i++){
-                    if(gameFrame!==fr || $('game').style.display!=='block') return;
-                    const d=gameDoc(); if(!d) return;
-                    const win=d.defaultView, target=d.querySelector('canvas')||d.body;
-                    for(const type of ['keydown','keyup']){
-                        const ev=new win.KeyboardEvent(type,{key:'5',code:'Digit5',bubbles:true,cancelable:true});
-                        for(const k of ['keyCode','which']) Object.defineProperty(ev,k,{get:()=>53});
-                        target.dispatchEvent(ev);
-                        await sleep(type==='keydown'?90:160);
-                    }
-                }
-            }
             const IMG_RE=/\.(img|ima|vfd|dsk|flp|iso|cue)$/i;
             const NUM_RE=/^(.*?)(\d+)(\D*)$/;
             // 같은 폴더에서 이름의 마지막 숫자만 다른 이미지 묶음(Disk1.img, Disk2.img ...)을 번호순으로 반환
@@ -1227,7 +1186,7 @@
                 out('');
             }
 
-            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'off',arcade:'auto',coins:'10',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
+            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'off',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
             const tune=Object.assign({},TUNE_DEF);
             try{ Object.assign(tune, JSON.parse(loadSetting('tune')||'{}')); }catch(e){}
 
@@ -1687,7 +1646,7 @@
                     }
                     const arg=a.join(' ').replace(/^["']|["']$/g,'').trim();
                     if(!arg) return out(tr('runUsage'), 'err');
-                    const hasExt=/\.[a-z0-9]{1,4}$/i.test(arg), exts=hasExt?['']:['.exe','.com','.bat','.zip','.img','.ima','.vfd','.dsk','.flp','.iso','.cue'];
+                    const hasExt=/\.[a-z0-9]{1,4}$/i.test(arg), exts=hasExt?['']:['.exe','.com','.bat','.img','.ima','.vfd','.dsk','.flp','.iso','.cue'];
                     let f=null; const p=resolve(arg);
                     for(const e of exts){ f=files.get(lc(p)+e); if(f) break; }
                     if(!f){
@@ -1709,7 +1668,7 @@
                     }
                     if(!f) return out(arg.toUpperCase()+': '+tr('fileNotFoundErr'), 'err');
                     if(/\.html?$/i.test(f.p)) return launchHtml(f.p);
-                    if(!/\.(exe|com|bat|zip)$/i.test(f.p) && !IMG_RE.test(f.p)) return out(tr('invFormat'), 'err');
+                    if(!/\.(exe|com|bat)$/i.test(f.p) && !IMG_RE.test(f.p)) return out(tr('invFormat'), 'err');
                     launch(f.p, diskSet(f.p));
                 }
             };
@@ -1719,14 +1678,12 @@
                     try{ const c=JSON.parse(loadSetting('calib')||'null'); if(c){ const e=effective(c);
                         out('DEVICE tier='+c.tier+' score='+c.score+' ('+c.mops+' Mops, cores='+c.cores+(c.mobile?', mobile':'')+', audio='+c.nativeRate+'Hz)','yellow');
                         out('USING  cpu='+e.cpu+'  cycles='+e.cycles+'  rate='+e.rate+'  block='+e.block+'  pre='+e.pre,'ok'); } }catch(e){}
-                    out('TUNE  cpu='+tune.cpu+'  cycles='+tune.cycles+'  rate='+tune.rate+'  block='+tune.block+'  pre='+tune.pre+'  worker='+tune.worker+'  arcade='+tune.arcade+'  coins='+tune.coins+'  midi='+tune.midi+'  sb='+tune.sb+'  opl='+tune.opl+'  oplemu='+tune.oplemu+'  core='+tune.core+'  plain='+tune.plain,'cyan');
+                    out('TUNE  cpu='+tune.cpu+'  cycles='+tune.cycles+'  rate='+tune.rate+'  block='+tune.block+'  pre='+tune.pre+'  worker='+tune.worker+'  midi='+tune.midi+'  sb='+tune.sb+'  opl='+tune.opl+'  oplemu='+tune.oplemu+'  core='+tune.core+'  plain='+tune.plain,'cyan');
                 };
                 if(!a.length){
                     show();
                     out('TUNE cpu=auto|386|486|pentium|pentium_slow  cycles=auto|max|20000|fixed_20000','hi');
                     out('TUNE rate=11025|22050|44100|48000  block=1024|2048|4096  pre=10..500  worker=on|off','hi');
-                    out('TUNE arcade=auto|fba|cps1|cps2|neogeo|fbneo|mame   (core for arcade ROM .zip files; auto = FBA 2012 CPS1)','hi');
-                    out('TUNE coins=0..30   (credits auto-inserted when an arcade ROM starts; default 10)','hi');
                     out('TUNE plain=on   (DOSBox defaults only: no cpu/mixer/sound overrides - closest to dos.zone)','hi');
                     out('TUNE midi=default|none  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
                     out('TUNE CALIBRATE (re-measure this device)   TUNE RESET (back to auto)   [applies on next RUN]','hi');
@@ -1743,8 +1700,6 @@
                     block:v=>v==='auto'||['256','512','1024','2048','4096','8192'].includes(v),
                     pre:v=>v==='auto'||(/^\d{1,3}$/.test(v)&&+v>=10&&+v<=500),
                     worker:v=>/^(on|off)$/i.test(v),
-                    arcade:v=>/^(auto|fba|fbneo|cps1|cps2|neogeo|mame)$/i.test(v),
-                    coins:v=>/^\d{1,2}$/.test(v)&&+v<=30,
                     midi:v=>/^(default|none)$/i.test(v),
                     sb:v=>/^(sb16|sbpro2|sbpro1|sb2|sb1|none)$/i.test(v),
                     opl:v=>/^(auto|opl2|dualopl2|opl3|none)$/i.test(v),
@@ -2006,11 +1961,10 @@
                     return;
                 }
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
-                const isArcade=/\.zip$/i.test(path);
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
-                padRemap = (!isArcade && top && top.toLowerCase()==='b') ? IJKL : null;
-                kbRemap = isArcade ? ARC_KEYS : ((top && top.toLowerCase()==='b') ? SF_KEYS : null);
+                padRemap = (top && top.toLowerCase()==='b') ? IJKL : null;
+                kbRemap = (top && top.toLowerCase()==='b') ? SF_KEYS : null;
                 const rel=p=>top?p.slice(top.length+1):p, inner=rel(path);
                 const dirp=inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')).replace(/\//g,'\\'):'';
                 const mb=sel.reduce((n,v)=>n+v.d.length,0)/1048576;
@@ -2018,7 +1972,7 @@
                 const dosPath=base(inner);
                 const q=p=>'"'+rel(p).replace(/\//g,'\\')+'"';
                 let pre='mount c .\nc:\n', runLine=dosPath, useCd=true, tail='', exitWatch=false;
-                if(!isImg && !isArcade){ if(/\.bat$/i.test(dosPath)) runLine='call '+dosPath; tail='\nc:\\WDEXIT.COM'; exitWatch=true; }
+                if(!isImg){ if(/\.bat$/i.test(dosPath)) runLine='call '+dosPath; tail='\nc:\\WDEXIT.COM'; exitWatch=true; }
                 diskCount=0; diskIdx=1;
                 if(isImg){
                     useCd=false;
@@ -2088,18 +2042,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 try{
                     // DOSBox Pure 는 zip 안의 파일을 C: 로 자동 마운트하고, 루트의 dosbox.conf 를 읽는다.
-                    let blob;
-                    if(isArcade){ blob=new Blob([files.get(path.toLowerCase()).d],{type:'application/zip'}); }
-                    else {
                     const zip=new JSZip();
                     for(const v of sel) zip.file(rel(v.p), v.d, {binary:true});
                     zip.file('dosbox.conf', confFinal);
                     // 게임이 끝나면 autoexec 의 다음 줄에서 실행되는 신호용 프로그램: 화면 전체를 마젠타(255,0,255)로 채우고 대기한다.
                     // (게임 내 '종료'로 DOSBox Pure 시작 메뉴로 빠지지 않고, WEB-DOS 가 이 화면을 감지해 홈으로 돌아온다)
                     if(exitWatch) zip.file('WDEXIT.COM', new Uint8Array([0xB8,0x13,0x00,0xCD,0x10,0xBA,0xC8,0x03,0x30,0xC0,0xEE,0x42,0xB0,0x3F,0xEE,0x30,0xC0,0xEE,0xB0,0x3F,0xEE,0xFB,0xF4,0xEB,0xFD]), {binary:true});
-                    blob=await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:1}});
-                    }
-                    out('  '+(isArcade?1:sel.length)+' file(s), '+(blob.size/1048576).toFixed(2)+' MB bundle','yellow');
+                    const blob=await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:1}});
+                    out('  '+sel.length+' file(s), '+(blob.size/1048576).toFixed(2)+' MB bundle','yellow');
                     if(bundleURL){ try{ URL.revokeObjectURL(bundleURL); }catch(e){} }
                     bundleURL=URL.createObjectURL(blob);
                     await waitSplash(splashT0);
@@ -2108,22 +2058,15 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(!window.crossOriginIsolated) out('Warning: page is not cross-origin isolated (threads unavailable). Place coi-serviceworker.js next to webdos.html and reload.','yellow');
                     // 스레드는 교차 출처 격리가 된 경우에만 사용 (아니면 EmulatorJS 가 로딩 중 멈춰 검은 화면이 된다)
                     const useThreads=!!window.crossOriginIsolated;
-                    const romName=base(path).replace(/\.zip$/i,'');
-                    const emuCore=isArcade?(ARC_CORES[tune.arcade]||ARC_CORES.auto):'dos';
-                    if(isArcade) out('Arcade ROM: '+romName+'  core='+emuCore,'cyan');
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+(exitWatch?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
-                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';EJS_gameUrl='+JSON.stringify(isArcade?bundleURL+'#/'+romName+'.zip':bundleURL)+';EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
-                        +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(touchDev&&!isArcade?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
+                        +'EJS_player="#game";EJS_core="dos";EJS_pathtodata='+JSON.stringify(EJS_DATA)+';EJS_gameUrl='+JSON.stringify(bundleURL)+';EJS_gameName="game";'
+                        +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(touchDev?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
                     const EM={
                         en:{load:'Loading EmulatorJS...',retry:(n,m)=>'Loading failed. Retrying ('+n+'/'+m+')...',fail:'EmulatorJS failed to load. Check your internet connection / adblocker and try RUN again.'},
                         kr:{load:'EmulatorJS 로딩 중...',retry:(n,m)=>'로딩에 실패했습니다. 다시 시도합니다 ('+n+'/'+m+')...',fail:'EmulatorJS 를 불러오지 못했습니다. 인터넷/광고차단을 확인하고 다시 RUN 하세요.'},
                         jp:{load:'EmulatorJS 読み込み中...',retry:(n,m)=>'読み込みに失敗しました。再試行します ('+n+'/'+m+')...',fail:'EmulatorJS を読み込めませんでした。ネットワーク/広告ブロックを確認して、もう一度 RUN してください。'},
                         cn:{load:'正在加载 EmulatorJS...',retry:(n,m)=>'加载失败，正在重试 ('+n+'/'+m+')...',fail:'EmulatorJS 加载失败。请检查网络/广告拦截后重新 RUN。'}
-                    };
-                    const ARC_HINT={
-                        en:'1P: I J K L move | A S D punch | Z X C kick | 5 coin | Enter start\n2P: arrows move | [ ] \\ punch | ; \' / kick | 6 coin | 2 start',
-                        kr:'1P: I J K L 이동 | A S D 펀치 | Z X C 킥 | 5 코인 | Enter 시작\n2P: 방향키 이동 | [ ] \\ 펀치 | ; \' / 킥 | 6 코인 | 2 시작'
                     };
                     const em=EM[currentLang]||EM.en;
                     const status=document.createElement('div');
@@ -2140,7 +2083,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         gameFrame=fr;
                         fr.onload=()=>{ try{
                             const w=fr.contentWindow;
-                            if(touchDev&&!isArcade){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
+                            if(touchDev){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
                             w.addEventListener('keydown',remapKey,true); w.addEventListener('keyup',remapKey,true);
                             w.addEventListener('keydown',ev=>{ if(manualExit&&ev.key==='End'&&$('game').style.display==='block'){ ev.preventDefault(); stopGame(); } },true);
                             w.addEventListener('keydown',ev=>{ if(diskCount>1 && ev.isTrusted && ev.ctrlKey && (ev.key==='F4'||ev.key===']')){ ev.preventDefault(); ev.stopImmediatePropagation(); swapDisk(); } },true);
@@ -2156,16 +2099,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             let w=null, emu=null, failed=false, hasCanvas=false;
                             try{ w=fr.contentWindow; emu=w.EJS_emulator; failed=!!w.__ejsFail; const cv=w.document.querySelector('canvas'); hasCanvas=!!(cv&&cv.width>0&&cv.height>0); }catch(e){}
                             const ready=!!(emu && (emu.started || emu.gameManager));
-                            if(ready){
-                                clearInterval(wd); wd=null;
-                                if(isArcade){
-                                    status.style.whiteSpace='pre';
-                                    status.textContent=(currentLang==='kr'?ARC_HINT.kr:ARC_HINT.en);
-                                    setTimeout(()=>{ try{ status.remove(); }catch(e){} },9000);
-                                    autoCoin(fr, parseInt(tune.coins,10)||0);
-                                } else status.remove();
-                                return;
-                            }
+                            if(ready){ clearInterval(wd); wd=null; status.remove(); return; }
                             const el=Date.now()-t0;
                             const dead=failed || (!emu && el>NO_LOADER_MS) || (emu && !hasCanvas && el>NOT_READY_MS);
                             if(!dead) return;
@@ -2176,7 +2110,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         if(exitWatch) watchGameExit(fr);
                     };
                     mount();
-                    hideSplash(); blurTerminal(); if(!isArcade) showPad();
+                    hideSplash(); blurTerminal(); showPad();
                     player={stop:async()=>{ if(wd){ clearInterval(wd); wd=null; } try{ status.remove(); }catch(e){} try{ if(gameFrame) gameFrame.remove(); }catch(e){} }};
                     $('sw').style.display=diskCount>1?'block':'none'; updateSwapLabel();
                 }catch(e){hideSplash();$('game').style.display='none';out('Error: '+(e&&e.message||e),'err')}
@@ -2298,14 +2232,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         try {
                             const z = await JSZip.loadAsync(f);
                             const ents = Object.values(z.files).filter(e => !e.dir && !/^__MACOSX\/|(^|\/)\.DS_Store$/.test(e.name));
-                            if (isRomZip(ents)) {
-                                const tp = pre + f.name;
-                                addFile(tp, new Uint8Array(await f.arrayBuffer()));
-                                uploadedNames.push(tp);
-                                n++;
-                                out(`  ${f.name} (ROM)`, 'ok');
-                                continue;
-                            }
                             const tops = new Set(ents.map(e => e.name.split('/')[0]));
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             for (const e of ents) {
@@ -2477,7 +2403,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         try {
                             const z = await JSZip.loadAsync(await it.get());
                             const ents = Object.values(z.files).filter(e => !e.dir && !skipName(e.name));
-                            if (isRomZip(ents)) { dbg('ROM zip kept: ' + it.path); return [it]; }
                             const tops = new Set(ents.map(e => e.name.split('/')[0]));
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             dbg('unzip ' + it.path + ' (' + ents.length + ' files)');
@@ -2665,7 +2590,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 arg=String(arg).replace(/^["']|["']$/g,'').trim();
                 if(!arg) return false;
                 const hasExt=/\.[a-z0-9]{1,4}$/i.test(arg);
-                const exts=hasExt?['']:['.exe','.com','.bat','.zip','.img','.ima','.vfd','.dsk','.flp','.iso','.cue'];
+                const exts=hasExt?['']:['.exe','.com','.bat','.img','.ima','.vfd','.dsk','.flp','.iso','.cue'];
                 const p=resolve(arg);
                 for(const e of exts){ if(files.get(lc(p)+e)) return true; }
                 const nm=arg.split(/[\\/]/).pop().toLowerCase();
