@@ -2526,15 +2526,18 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             async function expandZips(list) {
                 const parts = await Promise.all(list.map(async it => {
                     if (!it.path.includes('/') && isZip(it.path)) {
+                        let buf = null;
                         try {
-                            const z = await JSZip.loadAsync(await it.get());
+                            buf = await it.get();   // zip 은 한 번만 받는다 (롬 zip 이면 이 데이터를 그대로 쓴다)
+                            const z = await JSZip.loadAsync(buf);
                             const ents = Object.values(z.files).filter(e => !e.dir && !skipName(e.name));
-                            if (isRomZip(ents)) { dbg('ROM zip kept: ' + it.path); return [it]; }
+                            // 실행 파일(exe/com/bat)·디스크 이미지·HTML/JS 가 없으면 아케이드 롬 이미지: 안의 파일을 꺼내지 않고 zip 자체를 그대로 보관
+                            if (isRomZip(ents)) { dbg('ROM zip kept as-is: ' + it.path); return [{ path: it.path, get: async () => buf }]; }
                             const tops = new Set(ents.map(e => e.name.split('/')[0]));
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             dbg('unzip ' + it.path + ' (' + ents.length + ' files)');
                             return ents.map(e => ({ path: strip ? e.name.split('/').slice(1).join('/') : e.name, get: () => e.async('uint8array') }));
-                        } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); return []; }
+                        } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); return buf ? [{ path: it.path, get: async () => buf }] : []; }
                     }
                     return [it];
                 }));
