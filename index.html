@@ -1082,7 +1082,7 @@
             // 아케이드 롬 시작 후 자동으로 코인(1P 코인키 5)을 n개 넣는다. 부팅이 끝날 때까지 잠시 기다렸다가 한 개씩 누른다.
             async function autoCoin(fr, n){
                 if(!(n>0)) return;
-                await sleep(4000);
+                await sleep(15000);
                 for(let i=0;i<n;i++){
                     if(gameFrame!==fr || $('game').style.display!=='block') return;
                     const d=gameDoc(); if(!d) return;
@@ -1265,9 +1265,10 @@
                 out('');
             }
 
-            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'off',arcade:'auto',coins:'10',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
+            const TUNE_DEF={cpu:'auto',cycles:'auto',rate:'auto',block:'auto',pre:'auto',worker:'off',arcade:'auto',coins:'9',midi:'default',sb:'sb16',opl:'auto',oplemu:'default',core:'auto',plain:'off'};
             const tune=Object.assign({},TUNE_DEF);
             try{ Object.assign(tune, JSON.parse(loadSetting('tune')||'{}')); }catch(e){}
+            if(tune.coins==='10') tune.coins='9';   // 예전 기본값(10)을 새 기본값(9)으로
 
             // ===== Device auto-profile =====
             const CALIB_VER=2;
@@ -1785,7 +1786,7 @@
                     out('TUNE cpu=auto|386|486|pentium|pentium_slow  cycles=auto|max|20000|fixed_20000','hi');
                     out('TUNE rate=11025|22050|44100|48000  block=1024|2048|4096  pre=10..500  worker=on|off','hi');
                     out('TUNE arcade=auto|fba|cps1|cps2|neogeo|fbneo|mame   (core for arcade ROM .zip files; auto = tries compatible cores one by one and remembers the one that works)','hi');
-                    out('TUNE coins=0..30   (credits auto-inserted when an arcade ROM starts; default 10)','hi');
+                    out('TUNE coins=0..30   (credits auto-inserted when an arcade ROM starts; default 9)','hi');
                     out('TUNE plain=on   (DOSBox defaults only: no cpu/mixer/sound overrides - closest to dos.zone)','hi');
                     out('TUNE midi=default|none  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
                     out('TUNE CALIBRATE (re-measure this device)   TUNE RESET (back to auto)   [applies on next RUN]','hi');
