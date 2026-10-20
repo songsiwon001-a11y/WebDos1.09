@@ -2573,7 +2573,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (GH_REPO && !r.some(x => x.toLowerCase() === GH_REPO.toLowerCase())) r.push(GH_REPO);
                 return r;
             };
-            const MAX_TRY = 3;                                  // 폴더 탐색/다운로드 최대 시도 횟수
+            const MAX_TRY = 10;                                 // 폴더 탐색/다운로드 최대 시도 횟수
             let loading = 0, ghErr = null, verbose = false;   // loading: 0 = 잠금 없음, 그 외 = 잠금을 건 시각(ms)
             const LOAD_LOCK_MS = 120000;                        // 이 시간이 지나면 멈춘 잠금으로 보고 무시
             // 자동 탐색에서 못 찾은 폴더: 같은 폴더를 연달아 cd 할 때만 잠깐(10초) 재검색을 막는다.
@@ -2840,7 +2840,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         const okArr = await Promise.all(hit.list.map(probeExists));
                         const gone = hit.list.filter((_, i) => !okArr[i]);
                         if (gone.length) {
-                            gone.forEach(it => out('  ' + it.path + ': ' + lm('missing'), 'yellow'));
                             hit.list = hit.list.filter((_, i) => okArr[i]);
                             const alt = await discoverAlt(L);
                             if (alt) {
@@ -2915,11 +2914,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     }
                     if (!list.length || !fresh || !fresh.length) {
                         rm();
-                        skipped.forEach(n => out('  ' + n + ': ' + lm('missing'), 'yellow'));
                         triedFolders.add(L);
                         return out(lm('notFound', L), 'err');
                     }
-                    skipped.forEach(n => out('  ' + n + ': ' + lm('missing'), 'yellow'));
                     list = fresh.map(f => ({ path: f[0] }));
                     const total = list.length;
                     for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
