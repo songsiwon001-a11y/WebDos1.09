@@ -2442,7 +2442,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     badChoice: n => 'Invalid choice. Enter a number from 1 to ' + n + ' (Q = cancel).',
                     cancelled: 'Load cancelled.',
                     selected: nm => 'Selected: ' + nm,
-                    multiFile: n => n + ' files match. Choose one to run:'
+                    multiFile: n => n + ' files match. Choose one to run:',
+                    retry: (n, m) => '  failed - retrying (' + n + '/' + m + ')...'
                 },
                 kr: {
                     usage: '사용법: LOAD A [-v]   (C를 제외한 A~Z)',
@@ -2461,7 +2462,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     badChoice: n => '잘못된 선택입니다. 1~' + n + ' 사이의 번호를 입력하세요 (Q = 취소).',
                     cancelled: '불러오기를 취소했습니다.',
                     selected: nm => '선택됨: ' + nm,
-                    multiFile: n => '일치하는 파일이 ' + n + '개 있습니다. 실행할 파일을 선택하세요:'
+                    multiFile: n => '일치하는 파일이 ' + n + '개 있습니다. 실행할 파일을 선택하세요:',
+                    retry: (n, m) => '  실패 - 다시 시도합니다 (' + n + '/' + m + ')...'
                 },
                 jp: {
                     usage: '使い方: LOAD A [-v]   (Cを除くA～Z)',
@@ -2480,7 +2482,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     badChoice: n => '無効な選択です。1～' + n + ' の番号を入力してください (Q = キャンセル)。',
                     cancelled: '読み込みをキャンセルしました。',
                     selected: nm => '選択: ' + nm,
-                    multiFile: n => '一致するファイルが ' + n + ' 個あります。実行するファイルを選んでください:'
+                    multiFile: n => '一致するファイルが ' + n + ' 個あります。実行するファイルを選んでください:',
+                    retry: (n, m) => '  失敗 - 再試行します (' + n + '/' + m + ')...'
                 },
                 cn: {
                     usage: '用法: LOAD A [-v]   (除 C 外的 A~Z)',
@@ -2499,7 +2502,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     badChoice: n => '选择无效。请输入 1 到 ' + n + ' 之间的编号 (Q = 取消)。',
                     cancelled: '已取消加载。',
                     selected: nm => '已选择: ' + nm,
-                    multiFile: n => '有 ' + n + ' 个文件匹配。请选择要运行的文件:'
+                    multiFile: n => '有 ' + n + ' 个文件匹配。请选择要运行的文件:',
+                    retry: (n, m) => '  失败 - 正在重试 (' + n + '/' + m + ')...'
                 }
             };
             const lm = (k, ...a) => { const s = (LM[currentLang] && LM[currentLang][k]) || LM.en[k]; return typeof s === 'function' ? s(...a) : s; };
@@ -2516,6 +2520,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (GH_REPO && !r.some(x => x.toLowerCase() === GH_REPO.toLowerCase())) r.push(GH_REPO);
                 return r;
             };
+            const MAX_TRY = 3;                                  // 폴더 탐색/다운로드 최대 시도 횟수
             let loading = 0, ghErr = null, verbose = false;   // loading: 0 = 잠금 없음, 그 외 = 잠금을 건 시각(ms)
             const LOAD_LOCK_MS = 120000;                        // 이 시간이 지나면 멈춘 잠금으로 보고 무시
             // 자동 탐색에서 못 찾은 폴더: 같은 폴더를 연달아 cd 할 때만 잠깐(10초) 재검색을 막는다.
@@ -2599,7 +2604,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             dbg('unzip ' + it.path + ' (' + ents.length + ' files)');
                             return ents.map(e => ({ path: strip ? e.name.split('/').slice(1).join('/') : e.name, get: () => e.async('uint8array') }));
-                        } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); return buf ? [{ path: it.path, get: async () => buf }] : []; }
+                        } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); if (!buf) throw e; return [{ path: it.path, get: async () => buf }]; }
                     }
                     return [it];
                 }));
@@ -2691,11 +2696,17 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // cd 로 a~z(c 제외) 폴더에 들어가면 아직 안 불러온 경우 자동으로 LOAD 실행
             async function autoLoad() {
                 const L = cwd.length ? String(cwd[0]).toLowerCase() : '';
-                if (!/^[abd-z]$/.test(L) || location.protocol === 'file:') return;
+                if (!/^[abd-z]$/.test(L)) return;
+                if (location.protocol === 'file:') return out(lm('local'), 'err');
                 // 이미 불러온 폴더는 로딩 잠금과 상관없이 바로 통과
                 const has = () => { for (const k of files.keys()) if (k.startsWith(L + '/')) return true; return false; };
-                if (has() || triedFolders.has(L)) return;
-                while (lockBusy()) await sleep(100);
+                if (has()) return;
+                // 직전에 실패한 폴더라도 cd 는 조용히 건너뛰지 않고 항상 다시 시도한다 (예전에는 이 때문에 LOAD 를 직접 쳐야 했다)
+                triedFolders.delete(L);
+                if (lockBusy()) {
+                    out('  ...', 'yellow');
+                    while (lockBusy()) await sleep(100);
+                }
                 if (has()) return;   // 기다리는 동안 로드됐을 수 있음
                 return cmds.load([L]);
             }
@@ -2741,8 +2752,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 try {
                     dbg('base: ' + pageBase());
                     st(lm('scan'));
-                    let hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
-                    if (!hit) { await sleep(400); hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]); }   // 한 번 더 시도
+                    // 실패하면 최대 3번까지 시도
+                    let hit = null;
+                    for (let t = 1; t <= MAX_TRY && !hit; t++) {
+                        if (t > 1) { st(lm('retry', t, MAX_TRY)); await sleep(600 * (t - 1)); }
+                        hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
+                    }
                     if (hit) hit.list = hit.list.filter(it => /\.(zip|jsdos|html?)$/i.test(it.path));   // zip/jsdos 와 HTML 앱만 받는다 (json 등 기타 파일 제외)
                     if (!hit || !hit.list.length) {
                         rm();
@@ -2771,23 +2786,36 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         bar = O.lastChild;
                     }
                     st(lm('fetching'));
-                    progCb = (n, g, t) => st('  ' + n + '  ' + (g / 1048576).toFixed(1) + (t ? ' / ' + (t / 1048576).toFixed(1) : '') + ' MB');
-                    const list = await expandZips(hit.list);
-                    progCb = null;
-                    if (!list.length) { rm(); triedFolders.add(L); return out(lm('notFound', L), 'err'); }
-
-                    const total = list.length, fresh = [];
-                    let idx = 0, done = 0;
-                    const worker = async () => {
-                        while (idx < total) {
-                            const it = list[idx++];
-                            const data = await it.get();
-                            fresh.push([it.path, data]);
-                            done++;
-                            st(lm('progress', done, total));
+                    let list = null, fresh = null;
+                    for (let t = 1; t <= MAX_TRY; t++) {
+                        try {
+                            progCb = (n, g, tt) => st('  ' + n + '  ' + (g / 1048576).toFixed(1) + (tt ? ' / ' + (tt / 1048576).toFixed(1) : '') + ' MB');
+                            list = await expandZips(hit.list);
+                            progCb = null;
+                            if (!list.length) break;
+                            fresh = [];
+                            const total = list.length;
+                            let idx = 0, done = 0;
+                            const worker = async () => {
+                                while (idx < total) {
+                                    const it = list[idx++];
+                                    const data = await it.get();
+                                    fresh.push([it.path, data]);
+                                    done++;
+                                    st(lm('progress', done, total));
+                                }
+                            };
+                            await Promise.all(Array.from({ length: Math.min(6, total) }, worker));
+                            break;
+                        } catch (e) {
+                            progCb = null; fresh = null;
+                            if (t >= MAX_TRY) throw e;
+                            st(lm('retry', t + 1, MAX_TRY));
+                            await sleep(700 * t);
                         }
-                    };
-                    await Promise.all(Array.from({ length: Math.min(6, total) }, worker));
+                    }
+                    if (!list.length) { rm(); triedFolders.add(L); return out(lm('notFound', L), 'err'); }
+                    const total = list.length;
                     for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
                     for (const [pp, d] of fresh) addFile(L + '/' + pp, d);
                     triedFolders.delete(L);
