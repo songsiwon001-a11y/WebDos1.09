@@ -2580,6 +2580,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             };
             const MAX_TRY = 10;                                 // 폴더 탐색/다운로드 최대 시도 횟수
             let lastLoadCancelled = false;
+            let ghBlock = 0;   // GitHub API 가 403/429(호출 한도)를 돌려준 뒤 이 시각까지는 API 를 부르지 않는다
             let loading = 0, ghErr = null, verbose = false;   // loading: 0 = 잠금 없음, 그 외 = 잠금을 건 시각(ms)
             const LOAD_LOCK_MS = 120000;                        // 이 시간이 지나면 멈춘 잠금으로 보고 무시
             // 자동 탐색에서 못 찾은 폴더: 같은 폴더를 연달아 cd 할 때만 잠깐(10초) 재검색을 막는다.
@@ -2727,8 +2728,10 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // 3) GitHub API (트리 한 번에 조회, 브랜치/저장소 후보 병렬)
             async function srcGithub(letter) {
                 const one = (c, ref) => (async () => {
+                    if (Date.now() < ghBlock) return null;   // API 호출 한도에 걸린 동안에는 요청을 보내지 않는다 (한도를 더 쓰지 않게)
                     const r = await fetchT('https://api.github.com/repos/' + c.repo + '/git/trees/' + ref + '?recursive=1', 10000);
                     dbg('API ' + c.repo + '@' + ref + ' → ' + r.status);
+                    if (r.status === 403 || r.status === 429) ghBlock = Date.now() + 600000;
                     if (!r.ok) { ghErr = r.status; return null; }
                     const j = await r.json();
                     const names = (j.tree || []).filter(t => t.type === 'blob' && !skipName(t.path)).map(t => t.path);
@@ -2759,8 +2762,10 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             async function ghContents(repo, path) {
                 const k = repo + '/' + path;
                 if (ghCache[k]) return ghCache[k];
+                if (Date.now() < ghBlock) return null;
                 const r = await fetchT('https://api.github.com/repos/' + repo + '/contents' + (path ? '/' + encPath(path) : ''), 10000);
                 dbg('CONTENTS ' + repo + '/' + path + ' → ' + r.status);
+                if (r.status === 403 || r.status === 429) ghBlock = Date.now() + 600000;
                 if (!r.ok) { ghErr = r.status; return null; }
                 return (ghCache[k] = await r.json());
             }
@@ -2792,18 +2797,30 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 } catch (e) { return true; }
             }
             // 목록 없이 폴더에 실제로 있는 파일들을 찾는다 (디렉터리 인덱스 / GitHub / jsDelivr)
+            // 탐색 결과가 '오래된 목록'이 아닌지 확인한다: 목록의 zip 몇 개를 HEAD 로 확인해서 하나도 없으면 그 결과는 버린다.
+            // (jsDelivr 는 브랜치 목록을 오래 캐시해서, 파일을 옮긴 뒤에도 예전 위치(A/w3d.zip)를 알려줄 수 있다.
+            //  이런 낡은 결과가 먼저 도착해 올바른 결과를 이기던 것이 "찾을 수 없음"의 원인이었다)
+            const verified = p => Promise.resolve(p).then(async h => {
+                if (!h || !h.list || !h.list.length) return null;
+                const sample = h.list.filter(it => isZip(it.path) || /\.html?$/i.test(it.path)).slice(0, 3);
+                if (!sample.length) return h;
+                const ok = await Promise.all(sample.map(probeExists));
+                if (!ok.some(Boolean)) { dbg('stale listing ignored (' + sample.map(s => s.dir + '/' + s.path).join(', ') + ')'); return null; }
+                return h;
+            }).catch(() => null);
+            // 목록 없이 폴더에 실제로 있는 파일들을 찾는다 (디렉터리 인덱스 / GitHub / jsDelivr)
             function discoverAlt(L) {
-                const jobs = [srcContents(L), srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)];
+                const jobs = [srcContents(L), srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)].map(verified);
                 return Promise.race([firstTruthy(jobs), new Promise(r => setTimeout(() => r(null), 15000))]);
             }
-            // 모든 탐색 방법을 동시에 시작해서 가장 먼저 폴더를 찾아낸 결과를 사용
+            // 모든 탐색 방법을 동시에 시작해서, '실제로 존재가 확인된' 첫 결과를 사용
             function discover(L) {
                 const jobs = [];
                 for (const d of [L, L.toUpperCase()]) { jobs.push(srcManifest(d)); jobs.push(srcIndex(d)); }
                 jobs.push(srcContents(L));   // 폴더 안의 zip 을 직접 찾는다 (files.json 불필요)
                 jobs.push(srcGithub(L));
                 jobs.push(srcJsd(L));
-                return firstTruthy(jobs);
+                return firstTruthy(jobs.map(verified));
             }
 
             // cd 로 a~z(c 제외) 폴더에 들어가면 아직 안 불러온 경우 자동으로 LOAD 실행
