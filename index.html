@@ -1091,6 +1091,21 @@
                     }
                 }
             }
+            // 롬셋 이름 추정: 짧은 영숫자 이름이면 그대로, 아니면 zip 안 파일들의 이름 앞부분(첫 '_' '-' '.' 앞)에서 가장 많이 나오는 토큰
+            async function arcRomName(nm, data){
+                if(/^[a-z0-9_]{1,10}$/i.test(nm)) return nm.toLowerCase();
+                const z=await JSZip.loadAsync(data);
+                const cnt=new Map();
+                for(const e of Object.values(z.files)){
+                    if(e.dir) continue;
+                    const b=e.name.split('/').pop().toLowerCase();
+                    const t=b.split(/[_.\-]/)[0];
+                    if(/^[a-z][a-z0-9]{1,9}$/.test(t)) cnt.set(t,(cnt.get(t)||0)+1);
+                }
+                let best=null, bc=0;
+                for(const [t,c] of cnt){ if(c>bc || (c===bc && best && t.length<best.length)){ best=t; bc=c; } }
+                return bc>=2 ? best : nm;
+            }
             const IMG_RE=/\.(img|ima|vfd|dsk|flp|iso|cue)$/i;
             const NUM_RE=/^(.*?)(\d+)(\D*)$/;
             // 같은 폴더에서 이름의 마지막 숫자만 다른 이미지 묶음(Disk1.img, Disk2.img ...)을 번호순으로 반환
@@ -2132,7 +2147,15 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(!window.crossOriginIsolated) out('Warning: page is not cross-origin isolated (threads unavailable). Place coi-serviceworker.js next to webdos.html and reload.','yellow');
                     // 스레드는 교차 출처 격리가 된 경우에만 사용 (아니면 EmulatorJS 가 로딩 중 멈춰 검은 화면이 된다)
                     const useThreads=!!window.crossOriginIsolated;
-                    const romName=base(path).replace(/\.zip$/i,'');
+                    let romName=base(path).replace(/\.zip$/i,'');
+                    // FBNeo/FBA 코어는 zip '파일 이름'으로 롬셋을 찾는다 (sf2.zip 처럼). 이름이 맞지 않으면 'Romset is unknown' 이 뜨므로,
+                    // 이름이 롬셋 이름처럼 보이지 않으면 zip 안의 파일 이름(sf2_xx.xx, sf2-1m.3a ...)에서 롬셋 이름을 추정해 쓴다.
+                    if(isArcade){
+                        try{
+                            const guess=await arcRomName(romName, files.get(path.toLowerCase()).d);
+                            if(guess && guess!==romName){ out('  ROM set name: '+romName+' → '+guess,'yellow'); romName=guess; }
+                        }catch(e){}
+                    }
                     const arcList=isArcade?arcCoresFor(romName):['dos'];
                     let coreIdx=0, emuCore=arcList[0];
                     if(isArcade) window.__arcRom=files.get(path.toLowerCase()).d;
@@ -2716,12 +2739,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 try {
                     dbg('base: ' + pageBase());
                     st(lm('scan'));
-                    const hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
+                    let hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
+                    if (!hit) { await sleep(400); hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]); }   // 한 번 더 시도
                     if (hit) hit.list = hit.list.filter(it => /\.(zip|jsdos|html?)$/i.test(it.path));   // zip/jsdos 와 HTML 앱만 받는다 (json 등 기타 파일 제외)
                     if (!hit || !hit.list.length) {
                         rm();
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
-                        triedFolders.add(L);
+                        else triedFolders.add(L);   // 네트워크 오류일 때는 막지 않고 다음 cd 에서 다시 시도
                         return out(lm('notFound', L), 'err');
                     }
                     // 최상위에 zip/jsdos 가 2개 이상이면 무엇을 불러올지 번호로 선택
