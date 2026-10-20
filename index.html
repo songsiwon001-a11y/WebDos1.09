@@ -2443,8 +2443,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     cancelled: 'Load cancelled.',
                     selected: nm => 'Selected: ' + nm,
                     multiFile: n => n + ' files match. Choose one to run:',
-                    retry: (n, m) => '  failed - retrying (' + n + '/' + m + ')...',
-                    missing: 'not found on server - skipped'
+                    retry: (n, m) => '  failed - retrying (' + n + '/' + m + ')...'
                 },
                 kr: {
                     usage: '사용법: LOAD A [-v]   (C를 제외한 A~Z)',
@@ -2464,8 +2463,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     cancelled: '불러오기를 취소했습니다.',
                     selected: nm => '선택됨: ' + nm,
                     multiFile: n => '일치하는 파일이 ' + n + '개 있습니다. 실행할 파일을 선택하세요:',
-                    retry: (n, m) => '  실패 - 다시 시도합니다 (' + n + '/' + m + ')...',
-                    missing: '서버에 파일이 없어 건너뜀'
+                    retry: (n, m) => '  실패 - 다시 시도합니다 (' + n + '/' + m + ')...'
                 },
                 jp: {
                     usage: '使い方: LOAD A [-v]   (Cを除くA～Z)',
@@ -2485,8 +2483,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     cancelled: '読み込みをキャンセルしました。',
                     selected: nm => '選択: ' + nm,
                     multiFile: n => '一致するファイルが ' + n + ' 個あります。実行するファイルを選んでください:',
-                    retry: (n, m) => '  失敗 - 再試行します (' + n + '/' + m + ')...',
-                    missing: 'サーバーにファイルがないためスキップ'
+                    retry: (n, m) => '  失敗 - 再試行します (' + n + '/' + m + ')...'
                 },
                 cn: {
                     usage: '用法: LOAD A [-v]   (除 C 外的 A~Z)',
@@ -2506,8 +2503,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     cancelled: '已取消加载。',
                     selected: nm => '已选择: ' + nm,
                     multiFile: n => '有 ' + n + ' 个文件匹配。请选择要运行的文件:',
-                    retry: (n, m) => '  失败 - 正在重试 (' + n + '/' + m + ')...',
-                    missing: '服务器上不存在，已跳过'
+                    retry: (n, m) => '  失败 - 正在重试 (' + n + '/' + m + ')...'
                 }
             };
             const lm = (k, ...a) => { const s = (LM[currentLang] && LM[currentLang][k]) || LM.en[k]; return typeof s === 'function' ? s(...a) : s; };
@@ -2581,23 +2577,19 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     tries.push('https://raw.githubusercontent.com/' + rp + '/' + b + '/' + encPath(dir + '/' + rel));
                     tries.push('https://cdn.jsdelivr.net/gh/' + rp + '@' + b + '/' + encPath(dir + '/' + rel));
                 }
-                let last = 0, n404 = 0, other = 0;
+                let last = 0;
                 for (const u of tries) {
                     try {
                         const r = await fetchT(u, 15000);
                         dbg('GET ' + u + ' → ' + r.status);
                         if (r.ok) return await readBody(r, rel);
                         last = r.status;
-                        if (r.status === 404) n404++; else other++;
                     } catch (e) { dbg('GET ' + u + ' → ' + (e.message || e)); }
                 }
-                const err = new Error(rel + ' ' + last);
-                err.missing = n404 > 0 && other === 0;   // 서버가 404(파일 없음)로만 답했으면 재시도해도 소용없다 → 건너뜀
-                throw err;
+                throw new Error(rel + ' ' + last);
             };
 
             // 폴더 최상위의 zip/jsdos 는 (병렬로) 풀어서 내용물로 교체 — zip 이름은 상관없음
-            let skipped = [];
             async function expandZips(list) {
                 const parts = await Promise.all(list.map(async it => {
                     if (!it.path.includes('/') && isZip(it.path)) {
@@ -2612,12 +2604,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             const strip = tops.size === 1 && ents.every(e => e.name.includes('/'));
                             dbg('unzip ' + it.path + ' (' + ents.length + ' files)');
                             return ents.map(e => ({ path: strip ? e.name.split('/').slice(1).join('/') : e.name, get: () => e.async('uint8array') }));
-                        } catch (e) {
-                            if (!buf && e && e.missing) { skipped.push(it.path); return []; }   // files.json 에는 있지만 실제로는 없는 파일
-                            dbg('unzip failed: ' + it.path + ' ' + (e.message || e));
-                            if (!buf) throw e;
-                            return [{ path: it.path, get: async () => buf }];
-                        }
+                        } catch (e) { dbg('unzip failed: ' + it.path + ' ' + (e.message || e)); if (!buf) throw e; return [{ path: it.path, get: async () => buf }]; }
                     }
                     return [it];
                 }));
@@ -2632,7 +2619,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if (!r.ok) return null;
                     const j = await r.json();
                     const arr = (Array.isArray(j) ? j : (j.files || [])).filter(x => typeof x === 'string' && !skipName(x));
-                    return arr.length ? { dir, list: arr.map(x => ({ path: x, dir, get: getter(dir, x) })) } : null;
+                    return arr.length ? { dir, list: arr.map(x => ({ path: x, get: getter(dir, x) })) } : null;
                 } catch (e) { return null; }
             }
 
@@ -2645,7 +2632,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const html = await r.text();
                     const names = [...html.matchAll(/href="([^"?#]+)"/gi)].map(m => decodeURIComponent(m[1]))
                         .filter(h => !h.startsWith('/') && !h.startsWith('..') && !/^[a-z]+:/i.test(h) && !h.endsWith('/') && !skipName(h));
-                    return names.length ? { dir, list: names.map(x => ({ path: x, dir, get: getter(dir, x) })) } : null;
+                    return names.length ? { dir, list: names.map(x => ({ path: x, get: getter(dir, x) })) } : null;
                 } catch (e) { return null; }
             }
 
@@ -2666,7 +2653,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 dbg('folder match: ' + hits.length + ' file(s)');
                 if (!hits.length) return null;
                 const dir = hits[0].slice(c.prefix.length).split('/')[0];
-                return { dir, list: hits.map(x => { const rel = x.slice(c.prefix.length + dir.length + 1); return { path: rel, dir, get: getter(dir, rel) }; }) };
+                return { dir, list: hits.map(x => { const rel = x.slice(c.prefix.length + dir.length + 1); return { path: rel, get: getter(dir, rel) }; }) };
             };
 
             // 3) GitHub API (트리 한 번에 조회, 브랜치/저장소 후보 병렬)
@@ -2697,20 +2684,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 return firstTruthy(ghCands().flatMap(c => ['main', 'master'].map(b => one(c, b))));
             }
 
-            // 목록(files.json 등)에 적혀 있지만 서버에 실제로 없는 파일인지 가볍게 확인 (HEAD). 확인이 안 되면(네트워크 오류 등) 있는 것으로 본다.
-            async function probeExists(it) {
-                if (!it.dir) return true;
-                try {
-                    const r = await fetchT(U(it.dir + '/' + encPath(it.path)), 8000, { method: 'HEAD', cache: 'no-cache' });
-                    dbg('HEAD ' + it.dir + '/' + it.path + ' → ' + r.status);
-                    return r.status !== 404;
-                } catch (e) { return true; }
-            }
-            // 목록 없이 폴더에 실제로 있는 파일들을 찾는다 (디렉터리 인덱스 / GitHub / jsDelivr)
-            function discoverAlt(L) {
-                const jobs = [srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)];
-                return Promise.race([firstTruthy(jobs), new Promise(r => setTimeout(() => r(null), 15000))]);
-            }
             // 모든 탐색 방법을 동시에 시작해서 가장 먼저 폴더를 찾아낸 결과를 사용
             function discover(L) {
                 const jobs = [];
@@ -2786,24 +2759,6 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         hit = await Promise.race([discover(L), new Promise(r => setTimeout(() => r(null), 25000))]);
                     }
                     if (hit) hit.list = hit.list.filter(it => /\.(zip|jsdos|html?)$/i.test(it.path));   // zip/jsdos 와 HTML 앱만 받는다 (json 등 기타 파일 제외)
-                    // 목록에 있는데 서버에 없는 파일은 빼고, 폴더에 실제로 있는 다른 zip 을 찾아 대신 사용한다
-                    if (hit && hit.list.length && hit.list.length <= 60) {
-                        const okArr = await Promise.all(hit.list.map(probeExists));
-                        const gone = hit.list.filter((_, i) => !okArr[i]);
-                        if (gone.length) {
-                            gone.forEach(it => out('  ' + it.path + ': ' + lm('missing'), 'yellow'));
-                            hit.list = hit.list.filter((_, i) => okArr[i]);
-                            const alt = await discoverAlt(L);
-                            if (alt) {
-                                const have = new Set(hit.list.map(x => x.path.toLowerCase()));
-                                const goneSet = new Set(gone.map(x => x.path.toLowerCase()));
-                                for (const it of alt.list.filter(x => /\.(zip|jsdos|html?)$/i.test(x.path))) {
-                                    const k = it.path.toLowerCase();
-                                    if (!have.has(k) && !goneSet.has(k)) { hit.list.push(it); have.add(k); }
-                                }
-                            }
-                        }
-                    }
                     if (!hit || !hit.list.length) {
                         rm();
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
@@ -2835,19 +2790,16 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     for (let t = 1; t <= MAX_TRY; t++) {
                         try {
                             progCb = (n, g, tt) => st('  ' + n + '  ' + (g / 1048576).toFixed(1) + (tt ? ' / ' + (tt / 1048576).toFixed(1) : '') + ' MB');
-                            skipped = [];
                             list = await expandZips(hit.list);
                             progCb = null;
                             if (!list.length) break;
-                            fresh = []; skipped = [];
+                            fresh = [];
                             const total = list.length;
                             let idx = 0, done = 0;
                             const worker = async () => {
                                 while (idx < total) {
                                     const it = list[idx++];
-                                    let data;
-                                    try { data = await it.get(); }
-                                    catch (e) { if (e && e.missing) { skipped.push(it.path); done++; continue; } throw e; }
+                                    const data = await it.get();
                                     fresh.push([it.path, data]);
                                     done++;
                                     st(lm('progress', done, total));
@@ -2862,14 +2814,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             await sleep(700 * t);
                         }
                     }
-                    if (!list.length || !fresh || !fresh.length) {
-                        rm();
-                        skipped.forEach(n => out('  ' + n + ': ' + lm('missing'), 'yellow'));
-                        triedFolders.add(L);
-                        return out(lm('notFound', L), 'err');
-                    }
-                    skipped.forEach(n => out('  ' + n + ': ' + lm('missing'), 'yellow'));
-                    list = fresh.map(f => ({ path: f[0] }));
+                    if (!list.length) { rm(); triedFolders.add(L); return out(lm('notFound', L), 'err'); }
                     const total = list.length;
                     for (const k of [...files.keys()]) if (k.startsWith(L + '/')) files.delete(k);
                     for (const [pp, d] of fresh) addFile(L + '/' + pp, d);
