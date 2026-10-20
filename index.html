@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1036,7 +1037,7 @@
             // 아케이드 롬 → 코어 자동 매칭 (롬 이름 기준, 게임마다 하나씩).
             //  CPS1  → FBA 2012 CPS1 (가볍고 빠름)   CPS2 → FBA 2012 CPS2   그 외(네오지오/CPS3/기타) → FBNeo
             //  특정 게임을 직접 지정하려면 ARC_GAME_CORES 에 '롬이름: 코어' 를 추가하면 가장 우선한다.
-            const ARC_GAME_CORES={ /* 예: sf2: 'fbalpha2012_cps1', kof98: 'fbneo' */ };
+            const ARC_GAME_CORES={sf2:'fbalpha2012_cps1' /* Street Fighter II: FBA CPS1 우선 */};
             const ARC_CPS1=/^(sf2.*|ffight.*|kod.*|knights.*|cawing.*|willow.*|strider.*|ghouls.*|daimakai|dynwar.*|forgottn.*|lostwrld|mtwins.*|chikij|msword.*|nemo.*|unsquad|area88|captcomm.*|varth.*|1941.*|megaman|rockmanj|pnickj|punisher.*|wof.*|dino.*|cadillacs.*|slammast.*|mbombrd.*|pang3.*|qad.*|qtono2.*|3wonders|wonder3|hyperfig|sf2.*)$/i;
             const ARC_CPS2=/^(ssf2.*|sfa.*|sfz.*|xmcota.*|xmvsf.*|msh.*|mvsc.*|vsav.*|vhunt.*|dstlk.*|nwarr.*|megaman2.*|rockman2j|cybots.*|ddtod.*|ddsom.*|avsp.*|armwar.*|batcir.*|1944.*|19xx.*|csclub.*|dimahoo.*|gigawing.*|mmancp2u|progear.*|spf2.*|hsf2.*|sgemf|pzloop2|choko|ecofghtr|uecology|jyangoku|mpang|gmahou|ringdest|qndream|jchan.*)$/i;
             const ARC_CORES={fba:'fbalpha2012_cps1',cps1:'fbalpha2012_cps1',cps2:'fbalpha2012_cps2',neogeo:'fbneo',fbneo:'fbneo',mame:'mame2003_plus'};
@@ -2138,9 +2139,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const arcList=isArcade?arcCoresFor(romName):['dos'];
                     let coreIdx=0, emuCore=arcList[0];
                     if(isArcade) window.__arcRom=files.get(path.toLowerCase()).d;
-                    if(isArcade) out('Arcade ROM: '+romName+'  core='+emuCore,'cyan');
+                    if(isArcade) out('Arcade ROM: '+romName+' ('+((files.get(path.toLowerCase()).d||[]).length||0)+' bytes)  core='+emuCore,'cyan');
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+((exitWatch||isArcade)?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
-                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'(function(){var r=parent.__arcRom;if(!r)throw new Error("Arcade ROM bytes missing");var b=(r instanceof Uint8Array)?r:new Uint8Array(r);var copy=new Uint8Array(b.byteLength);copy.set(b);EJS_gameUrl=new File([copy.buffer],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});})();':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
+                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'(function(){var r=parent.__arcRom;if(!r)throw new Error("Arcade ROM bytes missing");var b=(r instanceof Uint8Array)?r:new Uint8Array(r);var copy=new Uint8Array(b.byteLength);copy.set(b);EJS_gameUrl=URL.createObjectURL(new Blob([copy.buffer],{type:"application/zip"}));})();':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
                         +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(touchDev&&!isArcade?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
                     const EM={
@@ -2494,7 +2495,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             const isZip = n => /\.(zip|jsdos)$/i.test(n);
             // 커스텀 도메인/로컬에서 GitHub 자동 탐색을 쓰려면 'owner/repo' 를 적으세요 (github.io 에서는 비워도 됨)
             const GH_REPO = 'songsiwon001-a11y/WebDos1.09';
-            const GH_BRANCHES = ['main', 'master', 'HEAD'];
+            const GH_BRANCHES = ['main'];
             // 현재 주소(owner.github.io/<repo>/)에서 알아낸 저장소를 먼저, 그다음 GH_REPO 를 후보로 쓴다
             const ghRepos = () => {
                 const r = [], segs = location.pathname.split('/').filter(Boolean);
@@ -2646,8 +2647,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     return pickFolder(names, c, letter);
                 })();
                 const cands = ghCands();
-                const hit = await firstTruthy(cands.flatMap(c => ['main', 'master'].map(ref => one(c, ref))));
-                return hit || firstTruthy(cands.map(c => one(c, 'HEAD')));
+                const hit = await firstTruthy(cands.map(c => one(c, 'main')));
+                return hit;
             }
 
             // 4) jsDelivr 파일 목록 (CDN 이라 API 제한 없음)
@@ -2660,7 +2661,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const names = (j.files || []).map(f => String(f.name || f).replace(/^\//, '')).filter(x => !skipName(x));
                     return pickFolder(names, c, letter);
                 })();
-                return firstTruthy(ghCands().flatMap(c => ['main', 'master'].map(b => one(c, b))));
+                return firstTruthy(ghCands().map(c => one(c, 'main')));
             }
 
             // 모든 탐색 방법을 동시에 시작해서 가장 먼저 폴더를 찾아낸 결과를 사용
