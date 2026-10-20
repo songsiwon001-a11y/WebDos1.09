@@ -1022,7 +1022,8 @@
             };
 
             const prompt=()=> { try { $('pr').textContent='C:\\'+cwd.join('\\').toUpperCase()+'>'; } catch(e){} };
-            const resolve=s=>{s=String(s).replace(/^c:/i,'\\');let p=/^[\\/]/.test(s)?[]:[...cwd];for(const x of s.split(/[\\/]/)){if(!x||x==='.')continue;x==='..'?p.pop():p.push(x)}return p};
+            // 드라이브 문자: c: → 루트, d: → 루트의 d 폴더 (a~z 폴더가 드라이브처럼 동작)
+            const resolve=s=>{s=String(s).replace(/^([a-z]):/i,(m,l)=>l.toLowerCase()==='c'?'\\':'\\'+l+'\\');let p=/^[\\/]/.test(s)?[]:[...cwd];for(const x of s.split(/[\\/]/)){if(!x||x==='.')continue;x==='..'?p.pop():p.push(x)}return p};
             const lc=p=>p.join('/').toLowerCase();
             const addDir=p=>{let a=p.split('/');for(let i=1;i<=a.length;i++)dirs.add(a.slice(0,i).join('/').toLowerCase())};
             const addFile=(p,d)=>{const parts=p.split('/');parts.pop();if(parts.length)addDir(parts.join('/'));files.set(p.toLowerCase(),{p,d})};
@@ -1046,11 +1047,14 @@
                 if(tune.arcade!=='auto' && ARC_CORES[tune.arcade]) return [ARC_CORES[tune.arcade]];   // TUNE 으로 직접 지정한 경우
                 let list;
                 if(ARC_GAME_CORES[n]) list=[ARC_GAME_CORES[n],'fbneo','fbalpha2012_cps1','fbalpha2012_cps2'];
-                else if(ARC_CPS1.test(n)) list=['fbalpha2012_cps1','fbneo','fbalpha2012_cps2'];
-                else if(ARC_CPS2.test(n)) list=['fbalpha2012_cps2','fbneo','fbalpha2012_cps1'];
+                // FBNeo 를 항상 먼저 시도한다. FBA 2012 코어는 구버전 롬셋만 읽기 때문에, 요즘 롬셋을 넣으면 롬을 못 열고
+                // RetroArch 홈 화면만 뜬다 (그 화면도 계속 움직여서 예전 감지 방식은 '정상 실행'으로 착각했다).
+                // 가벼운 FBA 코어가 필요하면 TUNE arcade=cps1 / cps2 로 직접 지정한다.
+                else if(ARC_CPS1.test(n)) list=['fbneo','fbalpha2012_cps1','fbalpha2012_cps2'];
+                else if(ARC_CPS2.test(n)) list=['fbneo','fbalpha2012_cps2','fbalpha2012_cps1'];
                 else list=['fbneo','fbalpha2012_cps1','fbalpha2012_cps2'];
-                const mem=loadSetting('arc.'+n);                                                  // 전에 잘 돌아간 코어가 있으면 맨 앞으로
-                if(mem && list.includes(mem)) list=[mem,...list.filter(c=>c!==mem)];
+                // (예전에는 '화면이 움직인 코어'를 기억했지만 RetroArch 메뉴도 움직이므로 잘못된 코어가 저장될 수 있어 더 이상 기억하지 않는다)
+                saveSetting('arc.'+n,'');   // 이전 버전이 저장해 둔 잘못된 코어 기록 삭제
                 return [...new Set(list)];
             };
             // 아케이드(EmulatorJS) 키 배치: 1P = I J K L 이동, A S D 약/중/강 펀치, Z X C 약/중/강 킥, 5 코인, Enter 시작
@@ -1381,15 +1385,31 @@
                 cd(a){
                     a=a.filter(x=>!/^\/d$/i.test(x));
                     if(!a[0]) return out('C:\\' + cwd.join('\\').toUpperCase());
-                    if(/^c:?[\\/]*$/i.test(a[0]) && !dirs.has('c')){ cwd=[]; return; }
-                    let p=resolve(a[0]);
+                    // 공백이 들어간 경로 / 따옴표 처리 (cd my folder, cd "my folder")
+                    const arg=a.join(' ').trim().replace(/^["']|["']$/g,'');
+                    if(!arg) return out('C:\\' + cwd.join('\\').toUpperCase());
+                    if(/^c:?[\\/]*$/i.test(arg) && !dirs.has('c')){ cwd=[]; return; }
+                    const prevCwd=[...cwd];
+                    let p=resolve(arg);
                     // a~z(c 제외) 한 글자 폴더는 현재 위치와 상관없이 루트에서 찾음 (cd d → cd a)
-                    const dl=a[0].match(/^([abd-z]):?$/i);
+                    const dl=arg.match(/^([abd-z]):?$/i);
                     if(dl && !dirs.has(lc(p))) p=[dl[1].toLowerCase()];
-                    if(p.length===1 && /^[abd-z]$/i.test(p[0])) addDir(p[0]);
+                    // 아직 없는 a~z 폴더(= 이제 GitHub 에서 불러올 폴더)인지 기억해 둔다. 불러오기에 실패하면 되돌리기 위함
+                    let phantom=null;
+                    if(p.length===1 && /^[abd-z]$/i.test(p[0])){
+                        if(!dirs.has(lc(p))) phantom=p[0].toLowerCase();
+                        addDir(p[0]);
+                    }
                     if(!dirs.has(lc(p))) return out(tr('invDir'), 'err');
                     cwd=p.map((x,i)=>{const f=[...dirs].find(d=>d===lc(p.slice(0,i+1)));const o=[...files.values()].map(v=>v.p.split('/')).find(s=>s[i]&&s.slice(0,i+1).join('/').toLowerCase()===f);return o?o[i]:x});
-                    return autoLoad();
+                    return Promise.resolve(autoLoad()).then(()=>{
+                        // 폴더를 불러오지 못했으면(네트워크 오류/없는 폴더/취소) 빈 가짜 폴더에 남지 않고 원래 위치로 돌아간다 (진짜 DOS 처럼)
+                        if(phantom){
+                            let any=false;
+                            for(const k of files.keys()) if(k.startsWith(phantom+'/')){ any=true; break; }
+                            if(!any){ dirs.delete(phantom); cwd=prevCwd; }
+                        }
+                    });
                 },
                 chdir(a){ return cmds.cd(a); },
                 chcp(a){ out(tx('codePage') + (a[0] || '437')); },
@@ -2146,7 +2166,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const vol=Math.max(0,Math.min(1,(parseInt(loadSetting('volume')||'100',10)||100)/100));
                     if(!window.crossOriginIsolated) out('Warning: page is not cross-origin isolated (threads unavailable). Place coi-serviceworker.js next to webdos.html and reload.','yellow');
                     // 스레드는 교차 출처 격리가 된 경우에만 사용 (아니면 EmulatorJS 가 로딩 중 멈춰 검은 화면이 된다)
-                    const useThreads=!!window.crossOriginIsolated;
+                    // 아케이드 코어(FBNeo/FBA/MAME)는 스레드가 필요 없고, 스레드 빌드를 요청하면 로딩이 꼬일 수 있어 DOS 에서만 쓴다
+                    const useThreads=!!window.crossOriginIsolated && !isArcade;
                     let romName=base(path).replace(/\.zip$/i,'');
                     // FBNeo/FBA 코어는 zip '파일 이름'으로 롬셋을 찾는다 (sf2.zip 처럼). 이름이 맞지 않으면 'Romset is unknown' 이 뜨므로,
                     // 이름이 롬셋 이름처럼 보이지 않으면 zip 안의 파일 이름(sf2_xx.xx, sf2-1m.3a ...)에서 롬셋 이름을 추정해 쓴다.
@@ -2159,9 +2180,19 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const arcList=isArcade?arcCoresFor(romName):['dos'];
                     let coreIdx=0, emuCore=arcList[0];
                     if(isArcade) window.__arcRom=files.get(path.toLowerCase()).d;
+                    // 네오지오 게임은 같은 폴더의 neogeo.zip(BIOS)이 있어야 열린다. 없으면 RetroArch 홈 화면만 뜬다.
+                    window.__arcBios=null;
+                    if(isArcade && romName.toLowerCase()!=='neogeo'){
+                        const bk=(top?top.toLowerCase()+'/':'')+'neogeo.zip';
+                        const bf=files.get(bk);
+                        if(bf){ window.__arcBios=bf.d; out('  BIOS: neogeo.zip','yellow'); }
+                    }
+                    window.__arcLog=[];
                     if(isArcade) out('Arcade ROM: '+romName+'  core='+emuCore,'cyan');
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+((exitWatch||isArcade)?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
-                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
+                        // 아케이드: 코어가 찍는 로그를 부모 쪽에 모아 둔다 (롬을 못 열었을 때 원인을 알려주고 다음 코어로 넘어가기 위함)
+                        +(isArcade?'(function(){var L=parent.__arcLog;if(!L)return;["log","info","warn","error"].forEach(function(k){var o=console[k];console[k]=function(){try{L.push(Array.prototype.slice.call(arguments).join(" "));if(L.length>300)L.shift();}catch(e){}return o.apply(console,arguments);};});})();':'')
+                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+(isArcade&&window.__arcBios?'EJS_biosUrl=new File([parent.__arcBios],"neogeo.zip",{type:"application/zip"});':'')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
                         +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(touchDev&&!isArcade?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
                     const EM={
@@ -2187,6 +2218,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         fr.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000';
                         fr.setAttribute('allow','autoplay; fullscreen; gamepad; cross-origin-isolated');
                         gameFrame=fr;
+                        window.__arcLog=[];   // 코어를 바꿔 다시 띄울 때마다 로그를 새로 모은다
                         fr.onload=()=>{ try{
                             const w=fr.contentWindow;
                             if(touchDev&&!isArcade){ try{ const sty=w.document.createElement('style'); sty.textContent='[class*="virtualGamepad"],[class*="vgamepad"]{display:none!important}'; w.document.head.appendChild(sty); }catch(e){} }
@@ -2227,6 +2259,23 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         if(exitWatch) watchGameExit(fr);
                     };
                     // 아케이드: 시작 후 화면이 계속 정지해 있으면(RetroArch 메뉴/검은 화면 등) 롬이 안 열린 것으로 보고 다음 코어로 자동 전환
+                    // 코어가 롬을 열지 못했을 때 남기는 로그 (아주 구체적인 문구만 사용: 평범한 경고 로그로 멀쩡한 게임을 실패 처리하면 안 된다)
+                    const ARC_FAIL=/romset is unknown|unknown romset|failed to load (the )?(content|game)|(content|game) failed to load|could not load (the )?(content|game)|not a valid (rom|romset)/i;
+                    const arcFailLog=()=>{ for(const s of (window.__arcLog||[])) if(ARC_FAIL.test(String(s))) return String(s); return null; };
+                    // 다음 코어로 넘어간다. 마지막 코어까지 실패하면 이유를 알려주고 WEB-DOS 로 돌아온다 (RetroArch 홈 화면에 갇히지 않게)
+                    const nextCore=why=>{
+                        const old=emuCore;
+                        if(why) out('  '+old+': '+why.trim().slice(0,120),'yellow');
+                        if(coreIdx+1<arcList.length){
+                            coreIdx++; emuCore=arcList[coreIdx]; attempt=0;
+                            out('  '+old+' → '+emuCore,'yellow');
+                            mount();
+                        } else {
+                            out('  Cannot open ROM '+romName+' (tried: '+arcList.join(', ')+').','err');
+                            out('  ROM set name / missing parent ROM / missing BIOS(neogeo.zip) 를 확인하세요. 해당 zip 이 FBNeo 롬셋과 맞아야 합니다.','err');
+                            stopGame();
+                        }
+                    };
                     const verifyArcade=async fr=>{
                         await sleep(6000);
                         const c2=document.createElement('canvas'); c2.width=c2.height=32;
@@ -2236,6 +2285,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         // (cps2 등 맞지 않는 코어에서 RetroArch 홈 메뉴가 뜸) 잘 돌던 게임까지 망가지므로 최대 약 45초까지 기다린다.
                         for(let i=0;i<78;i++){
                             if(gameFrame!==fr || my!==launchSeq || $('game').style.display!=='block') return;
+                            const early=arcFailLog(); if(early){ nextCore(early); return; }
                             try{
                                 const cv=fr.contentDocument.querySelector('canvas');
                                 if(cv && cv.width && cv.height){
@@ -2248,14 +2298,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             }catch(e){}
                             await sleep(500);
                         }
-                        if(changed){ saveSetting('arc.'+romName.toLowerCase(), emuCore); return; }
-                        if(coreIdx+1<arcList.length){
-                            const old=emuCore; coreIdx++; emuCore=arcList[coreIdx]; attempt=0;
-                            out('  '+old+' → '+emuCore,'yellow');
-                            mount();
-                        } else {
-                            out('  No compatible core produced a picture for '+romName+' (tried: '+arcList.join(', ')+').','err');
-                        }
+                        // 화면이 움직였더라도 RetroArch 메뉴일 수 있으므로, 코어가 '롬을 못 열었다'는 로그를 남겼다면 실패로 본다
+                        if(changed){ await sleep(2500); if(gameFrame!==fr || my!==launchSeq || $('game').style.display!=='block') return; }
+                        const why=arcFailLog();
+                        if(changed && !why) return;
+                        nextCore(why);
                     };
                     mount();
                     hideSplash(); blurTerminal(); if(!isArcade) showPad();
@@ -2813,7 +2860,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         return out(lm('notFound', L), 'err');
                     }
                     // 최상위에 zip/jsdos 가 2개 이상이면 무엇을 불러올지 번호로 선택
-                    const zipItems = hit.list.filter(it => !it.path.includes('/') && isZip(it.path));
+                    // BIOS zip(neogeo.zip 등)은 선택 목록에서 빼고 항상 함께 불러온다 (게임만 고르면 BIOS 가 없어서 롬이 안 열린다)
+                    const BIOS_RE = /^(neogeo|pgm|ym2608|cchip|nmk004|decocass|isgsm|konamigx|namcoc69|namcoc70|namcoc75|namcos22|skns|stvbios|taitofx1|taitotz|tps|midssio|cvs)\.zip$/i;
+                    const zipItems = hit.list.filter(it => !it.path.includes('/') && isZip(it.path) && !BIOS_RE.test(it.path));
                     if (zipItems.length >= 2) {
                         rm();
                         out(lm('multi', zipItems.length), 'hi');
@@ -2946,7 +2995,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             }
             async function execLine(l){
                 try{
-                    const [c,...a]=l.split(/\s+/);
+                    let [c,...a]=l.split(/\s+/);
+                    // DOS 처럼 공백 없이 붙여 쓴 cd 도 허용: cd.. / cd\ / cd/ / cd.
+                    const cm=/^(cd|chdir)([\\\/.].*)$/i.exec(l);
+                    if(cm && !runnableExists(c)){ c=cm[1]; a=[cm[2].trim()]; }
+                    // d:\폴더 / d:폴더 처럼 드라이브 문자가 붙은 경로만 입력하면 해당 폴더로 이동
+                    else if(/^[a-z]:[^\s]+$/i.test(c) && !a.length && !runnableExists(c)){ a=[c]; c='cd'; }
                     if(/^[a-z]:$/i.test(c) && !a.length){
                         const r=cmds.cd([c[0].toLowerCase()==='c' ? 'c:' : '\\'+c[0]]);
                         if(r&&typeof r.then==='function') await r;
