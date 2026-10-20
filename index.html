@@ -1040,15 +1040,17 @@
             const ARC_CPS1=/^(sf2.*|ffight.*|kod.*|knights.*|cawing.*|willow.*|strider.*|ghouls.*|daimakai|dynwar.*|forgottn.*|lostwrld|mtwins.*|chikij|msword.*|nemo.*|unsquad|area88|captcomm.*|varth.*|1941.*|megaman|rockmanj|pnickj|punisher.*|wof.*|dino.*|cadillacs.*|slammast.*|mbombrd.*|pang3.*|qad.*|qtono2.*|3wonders|wonder3|hyperfig|sf2.*)$/i;
             const ARC_CPS2=/^(ssf2.*|sfa.*|sfz.*|xmcota.*|xmvsf.*|msh.*|mvsc.*|vsav.*|vhunt.*|dstlk.*|nwarr.*|megaman2.*|rockman2j|cybots.*|ddtod.*|ddsom.*|avsp.*|armwar.*|batcir.*|1944.*|19xx.*|csclub.*|dimahoo.*|gigawing.*|mmancp2u|progear.*|spf2.*|hsf2.*|sgemf|pzloop2|choko|ecofghtr|uecology|jyangoku|mpang|gmahou|ringdest|qndream|jchan.*)$/i;
             const ARC_CORES={fba:'fbalpha2012_cps1',cps1:'fbalpha2012_cps1',cps2:'fbalpha2012_cps2',neogeo:'fbneo',fbneo:'fbneo',mame:'mame2003_plus'};
+            // EmulatorJS 배포본마다 포함 코어가 다를 수 있으므로, 실제 ROM 실행 실패 시 여러 계열을 순차 시도한다.
+            const ARC_FALLBACK=['fbalpha2012_cps1','fbalpha2012_cps2','fbneo','mame2003_plus','mame2003'];
             // 롬 하나에 시도해 볼 코어 목록 (앞에서부터 하나씩 시도하고, 실제로 화면이 움직이는 코어를 롬 이름별로 기억한다)
             const arcCoresFor=name=>{
                 const n=String(name).toLowerCase();
-                if(tune.arcade!=='auto' && ARC_CORES[tune.arcade]) return [ARC_CORES[tune.arcade]];   // TUNE 으로 직접 지정한 경우
+                if(tune.arcade!=='auto' && ARC_CORES[tune.arcade]) return [ARC_CORES[tune.arcade],...ARC_FALLBACK.filter(c=>c!==ARC_CORES[tune.arcade])]; // 지정 코어 우선, 실패 시 자동 대체
                 let list;
-                if(ARC_GAME_CORES[n]) list=[ARC_GAME_CORES[n],'fbneo','fbalpha2012_cps1','fbalpha2012_cps2'];
-                else if(ARC_CPS1.test(n)) list=['fbalpha2012_cps1','fbneo','fbalpha2012_cps2'];
-                else if(ARC_CPS2.test(n)) list=['fbalpha2012_cps2','fbneo','fbalpha2012_cps1'];
-                else list=['fbneo','fbalpha2012_cps1','fbalpha2012_cps2'];
+                if(ARC_GAME_CORES[n]) list=[ARC_GAME_CORES[n],...ARC_FALLBACK];
+                else if(ARC_CPS1.test(n)) list=['fbalpha2012_cps1','fbneo','fbalpha2012_cps2','mame2003_plus','mame2003'];
+                else if(ARC_CPS2.test(n)) list=['fbalpha2012_cps2','fbneo','fbalpha2012_cps1','mame2003_plus','mame2003'];
+                else list=['fbneo',...ARC_FALLBACK];
                 const mem=loadSetting('arc.'+n);                                                  // 전에 잘 돌아간 코어가 있으면 맨 앞으로
                 if(mem && list.includes(mem)) list=[mem,...list.filter(c=>c!==mem)];
                 return [...new Set(list)];
@@ -2205,14 +2207,20 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     };
                     // 아케이드: 시작 후 화면이 계속 정지해 있으면(RetroArch 메뉴/검은 화면 등) 롬이 안 열린 것으로 보고 다음 코어로 자동 전환
                     const verifyArcade=async fr=>{
-                        await sleep(6000);
+                        await sleep(2500);
                         const c2=document.createElement('canvas'); c2.width=c2.height=32;
                         const x=c2.getContext('2d',{willReadFrequently:true});
-                        let prev=null, changed=false;
-                        for(let i=0;i<14;i++){
+                        let prev=null, changed=false, romError='';
+                        for(let i=0;i<24;i++){
                             if(gameFrame!==fr || my!==launchSeq || $('game').style.display!=='block') return;
                             try{
-                                const cv=fr.contentDocument.querySelector('canvas');
+                                const doc=fr.contentDocument;
+                                const bodyText=(doc && doc.body ? (doc.body.innerText||doc.body.textContent||'') : '').toLowerCase();
+                                if(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom/.test(bodyText)){
+                                    romError=(bodyText.match(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom/)||['ROM rejected'])[0];
+                                    break;
+                                }
+                                const cv=doc && doc.querySelector('canvas');
                                 if(cv && cv.width && cv.height){
                                     x.drawImage(cv,0,0,32,32);
                                     const d=x.getImageData(0,0,32,32).data; let h=0;
@@ -2223,13 +2231,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             }catch(e){}
                             await sleep(500);
                         }
-                        if(changed){ saveSetting('arc.'+romName.toLowerCase(), emuCore); return; }
+                        if(changed && !romError){ saveSetting('arc.'+romName.toLowerCase(), emuCore); out('  Arcade core OK: '+emuCore,'ok'); return; }
                         if(coreIdx+1<arcList.length){
                             const old=emuCore; coreIdx++; emuCore=arcList[coreIdx]; attempt=0;
-                            out('  '+old+' → '+emuCore,'yellow');
+                            out('  '+old+' failed'+(romError?' ('+romError+')':'')+' → trying '+emuCore,'yellow');
+                            status.textContent='Trying arcade core: '+emuCore;
                             mount();
                         } else {
-                            out('  No compatible core produced a picture for '+romName+' (tried: '+arcList.join(', ')+').','err');
+                            out('  No tested core could run '+romName+'. Tried: '+arcList.join(', ')+'. Verify the ROM set/version; core changes cannot repair a mismatched ZIP.','err');
                         }
                     };
                     mount();
