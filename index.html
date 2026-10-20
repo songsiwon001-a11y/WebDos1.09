@@ -2518,7 +2518,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             };
             let loading = 0, ghErr = null, verbose = false;   // loading: 0 = 잠금 없음, 그 외 = 잠금을 건 시각(ms)
             const LOAD_LOCK_MS = 120000;                        // 이 시간이 지나면 멈춘 잠금으로 보고 무시
-            const triedFolders = new Set();                     // 자동 탐색에서 못 찾은 폴더 (cd 할 때마다 재검색 방지)
+            // 자동 탐색에서 못 찾은 폴더: 같은 폴더를 연달아 cd 할 때만 잠깐(10초) 재검색을 막는다.
+            // (예전에는 영구 차단이라, 네트워크가 한 번 느려서 실패하면 이후 cd 로는 다시 불러오지 못했다)
+            const triedFolders = { m: new Map(), add(k) { this.m.set(k, Date.now()); }, delete(k) { this.m.delete(k); }, has(k) { const t = this.m.get(k); return !!t && Date.now() - t < 10000; } };
             const lockBusy = () => loading && Date.now() - loading < LOAD_LOCK_MS;
             const dbg = m => { if (verbose) out('  ' + m, 'yellow'); };
             const pageBase = () => {
@@ -2607,7 +2609,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // 1) <폴더>/files.json (있으면 사용)
             async function srcManifest(dir) {
                 try {
-                    const r = await fetchT(U(dir + '/files.json'), 6000, { cache: 'no-cache' });
+                    const r = await fetchT(U(dir + '/files.json'), 10000, { cache: 'no-cache' });
                     dbg('GET ' + dir + '/files.json → ' + r.status);
                     if (!r.ok) return null;
                     const j = await r.json();
@@ -2619,7 +2621,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // 2) 서버가 폴더 목록(디렉터리 인덱스)을 제공하는 경우 (로컬 서버 등)
             async function srcIndex(dir) {
                 try {
-                    const r = await fetchT(U(dir + '/'), 6000, { cache: 'no-cache' });
+                    const r = await fetchT(U(dir + '/'), 8000, { cache: 'no-cache' });
                     dbg('GET ' + dir + '/ → ' + r.status);
                     if (!r.ok) return null;
                     const html = await r.text();
