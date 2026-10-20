@@ -1041,14 +1041,14 @@
             const ARC_CPS2=/^(ssf2.*|sfa.*|sfz.*|xmcota.*|xmvsf.*|msh.*|mvsc.*|vsav.*|vhunt.*|dstlk.*|nwarr.*|megaman2.*|rockman2j|cybots.*|ddtod.*|ddsom.*|avsp.*|armwar.*|batcir.*|1944.*|19xx.*|csclub.*|dimahoo.*|gigawing.*|mmancp2u|progear.*|spf2.*|hsf2.*|sgemf|pzloop2|choko|ecofghtr|uecology|jyangoku|mpang|gmahou|ringdest|qndream|jchan.*)$/i;
             const ARC_CORES={fba:'fbalpha2012_cps1',cps1:'fbalpha2012_cps1',cps2:'fbalpha2012_cps2',neogeo:'fbneo',fbneo:'fbneo',mame:'mame2003_plus'};
             // EmulatorJS 배포본마다 포함 코어가 다를 수 있으므로, 실제 ROM 실행 실패 시 여러 계열을 순차 시도한다.
-            const ARC_FALLBACK=['fbalpha2012_cps1','fbalpha2012_cps2','fbneo','mame2003_plus','mame2003'];
+            const ARC_FALLBACK=['fbalpha2012_cps1','fbneo','mame2003_plus','mame2003','fbalpha2012_cps2'];
             // 롬 하나에 시도해 볼 코어 목록 (앞에서부터 하나씩 시도하고, 실제로 화면이 움직이는 코어를 롬 이름별로 기억한다)
             const arcCoresFor=name=>{
                 const n=String(name).toLowerCase();
                 if(tune.arcade!=='auto' && ARC_CORES[tune.arcade]) return [ARC_CORES[tune.arcade],...ARC_FALLBACK.filter(c=>c!==ARC_CORES[tune.arcade])]; // 지정 코어 우선, 실패 시 자동 대체
                 let list;
                 if(ARC_GAME_CORES[n]) list=[ARC_GAME_CORES[n],...ARC_FALLBACK];
-                else if(ARC_CPS1.test(n)) list=['fbalpha2012_cps1','fbneo','fbalpha2012_cps2','mame2003_plus','mame2003'];
+                else if(ARC_CPS1.test(n)) list=['fbalpha2012_cps1','fbneo','mame2003_plus','mame2003','fbalpha2012_cps2'];
                 else if(ARC_CPS2.test(n)) list=['fbalpha2012_cps2','fbneo','fbalpha2012_cps1','mame2003_plus','mame2003'];
                 else list=['fbneo',...ARC_FALLBACK];
                 const mem=loadSetting('arc.'+n);                                                  // 전에 잘 돌아간 코어가 있으면 맨 앞으로
@@ -2140,7 +2140,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(isArcade) window.__arcRom=files.get(path.toLowerCase()).d;
                     if(isArcade) out('Arcade ROM: '+romName+'  core='+emuCore,'cyan');
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+((exitWatch||isArcade)?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
-                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
+                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'(function(){var r=parent.__arcRom;if(!r)throw new Error("Arcade ROM bytes missing");var b=(r instanceof Uint8Array)?r:new Uint8Array(r);var copy=new Uint8Array(b.byteLength);copy.set(b);EJS_gameUrl=new File([copy.buffer],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});})();':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
                         +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(touchDev&&!isArcade?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
                     const EM={
@@ -2216,8 +2216,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             try{
                                 const doc=fr.contentDocument;
                                 const bodyText=(doc && doc.body ? (doc.body.innerText||doc.body.textContent||'') : '').toLowerCase();
-                                if(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom/.test(bodyText)){
-                                    romError=(bodyText.match(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom/)||['ROM rejected'])[0];
+                                if(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom|load content|online updater|scanned content matching the database/.test(bodyText)){
+                                    romError=(bodyText.match(/romset is unknown|fbneo error|failed to load rom|could not load rom|invalid rom|unsupported rom|load content|online updater|scanned content matching the database/)||['ROM rejected'])[0];
                                     break;
                                 }
                                 const cv=doc && doc.querySelector('canvas');
@@ -2238,7 +2238,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             status.textContent='Trying arcade core: '+emuCore;
                             mount();
                         } else {
-                            out('  No tested core could run '+romName+'. Tried: '+arcList.join(', ')+'. Verify the ROM set/version; core changes cannot repair a mismatched ZIP.','err');
+                            out('  Arcade launch failed for '+romName+'. Tried cores: '+arcList.join(', ')+'. RetroArch menu / FBNeo Romset unknown means the ROM was not accepted. Check that this is the complete FBA ROM ZIP for the selected Street Fighter II revision. EmulatorJS en.json 404 is a missing optional language file, not the ROM error.','err');
                         }
                     };
                     mount();
