@@ -2232,9 +2232,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         const c2=document.createElement('canvas'); c2.width=c2.height=32;
                         const x=c2.getContext('2d',{willReadFrequently:true});
                         let prev=null, changed=false;
-                        // 느린 기기/첫 실행에서는 코어 로딩만으로 20초 이상 걸릴 수 있다. 너무 일찍 다른 코어로 갈아타면
-                        // (cps2 등 맞지 않는 코어에서 RetroArch 홈 메뉴가 뜸) 잘 돌던 게임까지 망가지므로 최대 약 45초까지 기다린다.
-                        for(let i=0;i<78;i++){
+                        for(let i=0;i<14;i++){
                             if(gameFrame!==fr || my!==launchSeq || $('game').style.display!=='block') return;
                             try{
                                 const cv=fr.contentDocument.querySelector('canvas');
