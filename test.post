@@ -1,0 +1,11 @@
+fetch('/api/scores', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    schoolName: '테스트초',
+    classNo: '1',
+    name: '테스터1',
+    scoreMs: 12000,   // 12초 → 83점
+    mistakes: 0
+  })
+}).then(r => r.json()).then(console.log)
