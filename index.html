@@ -1905,6 +1905,7 @@
             let padRemap=null;
             const IJKL={ArrowUp:['i','KeyI',73],ArrowLeft:['j','KeyJ',74],ArrowDown:['k','KeyK',75],ArrowRight:['l','KeyL',76]};
             let gameFrame=null;
+            let gameTop=null;   // 실행 중인 게임의 최상위 폴더 (a/b/d 종료 문구용)
             const gameDoc=()=>{ try{ return gameFrame && gameFrame.contentDocument; }catch(e){ return null; } };
             // 게임 실행 중에는 키 입력이 항상 게임(iframe)으로 가도록 포커스를 유지한다.
             // 포커스가 부모 문서에 남아 있으면 일부 키(특히 2P 키)가 게임에 전달되지 않고 사라진다.
@@ -2034,7 +2035,7 @@
             function launchHtml(path){
                 const f=files.get(path.toLowerCase());
                 if(!f) return out(tr('fileNotFound'),'err');
-                padRemap=null; kbRemap=null; diskCount=0; diskIdx=1;
+                padRemap=null; kbRemap=null; diskCount=0; diskIdx=1; gameTop=null;
                 const host=document.createElement('div'); host.style.cssText='position:absolute;inset:0';
                 $('dos').innerHTML=''; $('dos').appendChild(host);
                 $('game').style.display='block'; $('sw').style.display='none';
@@ -2066,6 +2067,7 @@
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const isArcade=/\.zip$/i.test(path);
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
+                gameTop=top?top.toLowerCase():null;
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
                 padRemap = (!isArcade && top && top.toLowerCase()==='b') ? IJKL : null;
                 kbRemap = isArcade ? ARC_KEYS : ((top && top.toLowerCase()==='b') ? SF_KEYS : null);
@@ -2332,12 +2334,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             let stopping=false;
             async function stopGame(){
                 if(stopping || $('game').style.display!=='block') return;
-                stopping=true; launchSeq++; hideSplash(); hidePad();
+                stopping=true; const endTop=gameTop; gameTop=null; launchSeq++; hideSplash(); hidePad();
                 try{
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
                     $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; padRemap=null; kbRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
-                    out(tr('gameClosed')); I.removeAttribute('inputmode'); I.focus();
+                    out(tr('gameClosed'));
+                    if(endTop==='a'||endTop==='b'||endTop==='d') out('Thank you for playing.','ok');
+                    I.removeAttribute('inputmode'); I.focus();
                 }finally{ stopping=false; }
             }
             $('x').onclick=stopGame;
