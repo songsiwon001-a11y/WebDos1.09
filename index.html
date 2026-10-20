@@ -1707,29 +1707,34 @@
                     const arg=a.join(' ').replace(/^["']|["']$/g,'').trim();
                     if(!arg) return out(tr('runUsage'), 'err');
                     const hasExt=/\.[a-z0-9]{1,4}$/i.test(arg), exts=hasExt?['']:['.exe','.com','.bat','.zip','.img','.ima','.vfd','.dsk','.flp','.iso','.cue'];
-                    let f=null; const p=resolve(arg);
-                    for(const e of exts){ f=files.get(lc(p)+e); if(f) break; }
-                    if(!f){
-                        const nm=arg.split(/[\\/]/).pop().toLowerCase();
-                        const hits=[...files.values()].filter(v=>exts.some(e=>base(v.p).toLowerCase()===nm+e));
-                        const cur=lc(cwd), near=hits.filter(v=>par(v.p.toLowerCase()).startsWith(cur));
-                        const pick=near.length?near:hits;
-                        if(pick.length>1){ out(tr('multiFileMatch'), 'err'); pick.forEach(v=>out('  RUN '+v.p.replace(/\//g,'\\'))); return; }
-                        f=pick[0];
-                    }
-                    // HTML 앱을 EXE 인 척 실행: RUN typing.exe → typing.html (진짜 .exe 가 없을 때만)
-                    if(!f){
-                        const nm2=arg.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com|bat)$/i,'');
-                        const hh=[...files.values()].filter(v=>/\.html?$/i.test(v.p) && base(v.p).toLowerCase().replace(/\.html?$/i,'')===nm2);
-                        const cur2=lc(cwd), near2=hh.filter(v=>par(v.p.toLowerCase()).startsWith(cur2));
-                        const pick2=near2.length?near2:hh;
-                        if(pick2.length>1){ out(tr('multiFileMatch'), 'err'); pick2.forEach(v=>out('  RUN '+v.p.replace(/\//g,'\\'))); return; }
-                        if(pick2.length===1) return launchHtml(pick2[0].p);
-                    }
-                    if(!f) return out(arg.toUpperCase()+': '+tr('fileNotFoundErr'), 'err');
-                    if(/\.html?$/i.test(f.p)) return launchHtml(f.p);
-                    if(!/\.(exe|com|bat|zip)$/i.test(f.p) && !IMG_RE.test(f.p)) return out(tr('invFormat'), 'err');
-                    launch(f.p, diskSet(f.p));
+                    const cur=lc(cwd), nearOf=h=>{ const n=h.filter(v=>par(v.p.toLowerCase()).startsWith(cur)); return n.length?n:h; };
+                    return (async()=>{
+                        let f=null; const p=resolve(arg);
+                        for(const e of exts){ f=files.get(lc(p)+e); if(f) break; }
+                        if(!f){
+                            const nm=arg.split(/[\\/]/).pop().toLowerCase();
+                            const cands=nearOf([...files.values()].filter(v=>exts.some(e=>base(v.p).toLowerCase()===nm+e)));
+                            if(cands.length>1){ f=await chooseFile(cands); if(!f) return; }
+                            else f=cands[0];
+                        }
+                        // HTML 앱을 EXE 인 척 실행: RUN typing.exe → typing.html (진짜 .exe 가 없을 때만)
+                        if(!f){
+                            const nm2=arg.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com|bat)$/i,'');
+                            const cands=nearOf([...files.values()].filter(v=>/\.html?$/i.test(v.p) && base(v.p).toLowerCase().replace(/\.html?$/i,'')===nm2));
+                            if(cands.length>1){ f=await chooseFile(cands); if(!f) return; }
+                            else f=cands[0];
+                        }
+                        // 파일명의 일부만 입력한 경우: 이름에 포함된 실행 파일을 찾고, 둘 이상이면 번호로 선택
+                        if(!f){
+                            const cands=nearOf(partialCands(arg));
+                            if(cands.length>1){ f=await chooseFile(cands); if(!f) return; }
+                            else f=cands[0];
+                        }
+                        if(!f) return out(arg.toUpperCase()+': '+tr('fileNotFoundErr'), 'err');
+                        if(/\.html?$/i.test(f.p)) return launchHtml(f.p);
+                        if(!/\.(exe|com|bat|zip)$/i.test(f.p) && !IMG_RE.test(f.p)) return out(tr('invFormat'), 'err');
+                        return launch(f.p, diskSet(f.p));
+                    })();
                 }
             };
 
@@ -2408,7 +2413,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     progress: (i, n) => '  downloading ' + i + '/' + n,
                     done: (n, mb, d) => n + ' file(s) loaded (' + mb + ' MB) → ' + d.toUpperCase() + '\\',
                     noExe: 'Bad command or file name.',
-                    pick: 'Multiple programs found. Use RUN with one of these:'
+                    pick: 'Multiple programs found. Use RUN with one of these:',
+                    multi: n => n + ' zip files found. Choose one to load:',
+                    choose: (n, all) => 'Enter a number (1-' + n + (all ? ', A = all' : '') + ', Q = cancel): ',
+                    badChoice: n => 'Invalid choice. Enter a number from 1 to ' + n + ' (Q = cancel).',
+                    cancelled: 'Load cancelled.',
+                    selected: nm => 'Selected: ' + nm,
+                    multiFile: n => n + ' files match. Choose one to run:'
                 },
                 kr: {
                     usage: '사용법: LOAD A [-v]   (C를 제외한 A~Z)',
@@ -2421,7 +2432,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     progress: (i, n) => '  다운로드 중 ' + i + '/' + n,
                     done: (n, mb, d) => n + '개 파일 로드 완료 (' + mb + ' MB) → ' + d.toUpperCase() + '\\',
                     noExe: '잘못된 명령 또는 파일 이름입니다.',
-                    pick: '프로그램이 여러 개입니다. 아래 중 하나를 RUN 으로 실행하세요:'
+                    pick: '프로그램이 여러 개입니다. 아래 중 하나를 RUN 으로 실행하세요:',
+                    multi: n => 'zip 파일이 ' + n + '개 있습니다. 불러올 파일을 선택하세요:',
+                    choose: (n, all) => '번호를 입력하세요 (1-' + n + (all ? ', A = 전체' : '') + ', Q = 취소): ',
+                    badChoice: n => '잘못된 선택입니다. 1~' + n + ' 사이의 번호를 입력하세요 (Q = 취소).',
+                    cancelled: '불러오기를 취소했습니다.',
+                    selected: nm => '선택됨: ' + nm,
+                    multiFile: n => '일치하는 파일이 ' + n + '개 있습니다. 실행할 파일을 선택하세요:'
                 },
                 jp: {
                     usage: '使い方: LOAD A [-v]   (Cを除くA～Z)',
@@ -2434,7 +2451,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     progress: (i, n) => '  ダウンロード中 ' + i + '/' + n,
                     done: (n, mb, d) => n + '個のファイルを読み込みました (' + mb + ' MB) → ' + d.toUpperCase() + '\\',
                     noExe: 'コマンドまたはファイル名が正しくありません。',
-                    pick: 'プログラムが複数あります。次のいずれかを RUN で実行してください:'
+                    pick: 'プログラムが複数あります。次のいずれかを RUN で実行してください:',
+                    multi: n => 'zip ファイルが ' + n + ' 個あります。読み込むファイルを選んでください:',
+                    choose: (n, all) => '番号を入力してください (1-' + n + (all ? ', A = すべて' : '') + ', Q = キャンセル): ',
+                    badChoice: n => '無効な選択です。1～' + n + ' の番号を入力してください (Q = キャンセル)。',
+                    cancelled: '読み込みをキャンセルしました。',
+                    selected: nm => '選択: ' + nm,
+                    multiFile: n => '一致するファイルが ' + n + ' 個あります。実行するファイルを選んでください:'
                 },
                 cn: {
                     usage: '用法: LOAD A [-v]   (除 C 外的 A~Z)',
@@ -2447,7 +2470,13 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     progress: (i, n) => '  下载中 ' + i + '/' + n,
                     done: (n, mb, d) => '已加载 ' + n + ' 个文件 (' + mb + ' MB) → ' + d.toUpperCase() + '\\',
                     noExe: '命令或文件名错误。',
-                    pick: '找到多个程序。请用 RUN 运行以下之一:'
+                    pick: '找到多个程序。请用 RUN 运行以下之一:',
+                    multi: n => '找到 ' + n + ' 个 zip 文件。请选择要加载的文件:',
+                    choose: (n, all) => '请输入编号 (1-' + n + (all ? ', A = 全部' : '') + ', Q = 取消): ',
+                    badChoice: n => '选择无效。请输入 1 到 ' + n + ' 之间的编号 (Q = 取消)。',
+                    cancelled: '已取消加载。',
+                    selected: nm => '已选择: ' + nm,
+                    multiFile: n => '有 ' + n + ' 个文件匹配。请选择要运行的文件:'
                 }
             };
             const lm = (k, ...a) => { const s = (LM[currentLang] && LM[currentLang][k]) || LM.en[k]; return typeof s === 'function' ? s(...a) : s; };
@@ -2645,6 +2674,30 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (has()) return;   // 기다리는 동안 로드됐을 수 있음
                 return cmds.load([L]);
             }
+            // 사용자의 번호 입력을 기다린다. (LOAD 가 명령 대기열 안에서 돌고 있으므로 Enter 입력을 대기열 대신 여기로 직접 전달)
+            let choiceResolver = null;
+            // 반환: 번호(0부터) / -1 = 전체(allowAll) / null = 취소
+            // 숫자가 아닌 다른 명령을 입력하면 선택을 취소하고 그 명령을 그대로 실행한다 (입력이 삼켜지지 않게)
+            function askChoice(n, allowAll) {
+                return new Promise(res => {
+                    const ask = () => {
+                        $('pr').textContent = lm('choose', n, allowAll);
+                        choiceResolver = v => {
+                            const t = String(v).trim();
+                            if (/^(q|quit|cancel|0)$/i.test(t)) { $('pr').textContent = ''; res(null); return true; }
+                            if (allowAll && /^(a|all)$/i.test(t)) { $('pr').textContent = ''; res(-1); return true; }
+                            const k = /^\d+$/.test(t) ? parseInt(t, 10) : 0;
+                            if (k >= 1 && k <= n) { $('pr').textContent = ''; res(k - 1); return true; }
+                            if (t && !/^\d+$/.test(t)) { $('pr').textContent = ''; res(null); return false; }   // 다른 명령 → 취소 후 일반 명령으로 처리
+                            out(lm('badChoice', n), 'err');
+                            ask();
+                            return true;
+                        };
+                        I.focus();
+                    };
+                    ask();
+                });
+            }
             cmds.load = async function (a) {
                 verbose = a.some(x => /^[-\/]v$/i.test(x));
                 const force = a.some(x => /^[-\/]f$/i.test(x));
@@ -2655,9 +2708,9 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (location.protocol === 'file:') return out(lm('local'), 'err');
                 while (lockBusy()) await sleep(100);
                 if (!force) { for (const k of files.keys()) if (k.startsWith(L + '/')) return out(lm('already'), 'yellow'); }
-                const myLock = loading = Date.now(); ghErr = null;
+                let myLock = loading = Date.now(); ghErr = null;
                 out('');
-                const bar = O.lastChild;
+                let bar = O.lastChild;
                 const st = t => { if (bar) bar.textContent = t; };
                 const rm = () => { if (bar && bar.parentNode) bar.remove(); };
                 try {
@@ -2670,6 +2723,26 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         if (ghErr) out(lm('ghErr', ghErr), 'err');
                         triedFolders.add(L);
                         return out(lm('notFound', L), 'err');
+                    }
+                    // 최상위에 zip/jsdos 가 2개 이상이면 무엇을 불러올지 번호로 선택
+                    const zipItems = hit.list.filter(it => !it.path.includes('/') && isZip(it.path));
+                    if (zipItems.length >= 2) {
+                        rm();
+                        out(lm('multi', zipItems.length), 'hi');
+                        zipItems.forEach((it, i) => out('  ' + (i + 1) + '. ' + it.path, 'cyan'));
+                        const keep = setInterval(() => { if (loading === myLock) myLock = loading = Date.now(); }, 30000);   // 기다리는 동안 잠금이 풀리지 않게 갱신
+                        let pick;
+                        try { pick = await askChoice(zipItems.length, true); } finally { clearInterval(keep); }
+                        if (pick === null) { return out(lm('cancelled'), 'yellow'); }
+                        if (pick === -1) { out(lm('selected', 'ALL (' + zipItems.length + ')'), 'ok'); }
+                        else {
+                            const chosen = zipItems[pick];
+                            out(lm('selected', chosen.path), 'ok');
+                            hit.list = hit.list.filter(it => it === chosen || !zipItems.includes(it));
+                        }
+                        myLock = loading = Date.now();
+                        out('');
+                        bar = O.lastChild;
                     }
                     st(lm('fetching'));
                     progCb = (n, g, t) => st('  ' + n + '  ' + (g / 1048576).toFixed(1) + (t ? ' / ' + (t / 1048576).toFixed(1) : '') + ' MB');
@@ -2730,6 +2803,23 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // (예전에는 CD/LOAD 가 끝날 때까지 입력창을 disabled 로 잠가서, 느린 기기에서 그 사이에 친 RUN 등이 사라졌다.)
             let cmdChain=Promise.resolve();
             // RUN 없이 파일명만 입력했을 때, 실행할 수 있는 파일(exe/com/bat/디스크 이미지/html)이 있는지 확인
+            // 실행 가능한 파일 중 이름(경로를 적었으면 경로)에 입력한 글자가 포함된 것들
+            function partialCands(arg){
+                const q=String(arg).replace(/^["']|["']$/g,'').trim().toLowerCase().replace(/\\/g,'/');
+                if(!/[a-z0-9\u00a1-\uffff]/i.test(q)) return [];
+                const hasPath=q.includes('/');
+                return [...files.values()].filter(v=>(/\.(exe|com|bat|zip|html?)$/i.test(v.p)||IMG_RE.test(v.p)) && (hasPath?v.p.toLowerCase():base(v.p).toLowerCase()).includes(q));
+            }
+            // 후보가 여러 개면 번호로 고르게 한다 (취소하면 null)
+            async function chooseFile(cands){
+                const list=[...cands].sort((x,y)=>x.p.toLowerCase()<y.p.toLowerCase()?-1:1);
+                out(lm('multiFile', list.length), 'hi');
+                list.forEach((v,i)=>out('  '+(i+1)+'. '+v.p.replace(/\//g,'\\'), 'cyan'));
+                const k=await askChoice(list.length);
+                if(k===null){ out(lm('cancelled'), 'yellow'); return null; }
+                out(lm('selected', list[k].p.replace(/\//g,'\\')), 'ok');
+                return list[k];
+            }
             function runnableExists(arg){
                 arg=String(arg).replace(/^["']|["']$/g,'').trim();
                 if(!arg) return false;
@@ -2740,7 +2830,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 const nm=arg.split(/[\\/]/).pop().toLowerCase();
                 if([...files.values()].some(v=>exts.some(e=>base(v.p).toLowerCase()===nm+e))) return true;
                 const nm2=nm.replace(/\.(exe|com|bat)$/i,'');
-                return [...files.values()].some(v=>/\.html?$/i.test(v.p) && base(v.p).toLowerCase().replace(/\.html?$/i,'')===nm2);
+                if([...files.values()].some(v=>/\.html?$/i.test(v.p) && base(v.p).toLowerCase().replace(/\.html?$/i,'')===nm2)) return true;
+                return partialCands(arg).length>0;
             }
             async function execLine(l){
                 try{
@@ -2767,6 +2858,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const l=I.value.trim();
                     out($('pr').textContent+I.value);
                     I.value='';
+                    if(choiceResolver){ const r=choiceResolver; choiceResolver=null; if(r(l)) return; }
                     if(l){
                         hist.push(l); hi=hist.length;
                         cmdChain=cmdChain.then(()=>execLine(l));
