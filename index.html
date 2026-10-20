@@ -2752,6 +2752,36 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 return firstTruthy(ghCands().flatMap(c => ['main', 'master'].map(b => one(c, b))));
             }
 
+            // 3.5) GitHub contents API: 폴더를 직접 열어 안에 있는 zip 을 찾는다.
+            //      files.json 이 없어도 되고, 브랜치 이름(main/master)이 필요 없으며, 폴더 이름의 대소문자도 구분하지 않는다.
+            //      (git/trees 보다 응답이 작고, 결과를 캐시해서 API 호출 한도를 아낀다)
+            const ghCache = {};
+            async function ghContents(repo, path) {
+                const k = repo + '/' + path;
+                if (ghCache[k]) return ghCache[k];
+                const r = await fetchT('https://api.github.com/repos/' + repo + '/contents' + (path ? '/' + encPath(path) : ''), 10000);
+                dbg('CONTENTS ' + repo + '/' + path + ' → ' + r.status);
+                if (!r.ok) { ghErr = r.status; return null; }
+                return (ghCache[k] = await r.json());
+            }
+            async function srcContents(letter) {
+                for (const c of ghCands()) {
+                    try {
+                        const root = await ghContents(c.repo, c.prefix.replace(/\/$/, ''));
+                        if (!Array.isArray(root)) continue;
+                        const f = root.find(x => x.type === 'dir' && x.name.toLowerCase() === letter.toLowerCase());
+                        if (!f) continue;
+                        const items = await ghContents(c.repo, c.prefix + f.name);
+                        if (!Array.isArray(items)) continue;
+                        // 폴더 이름은 저장소의 실제 이름(A, B ...)을 그대로 써서 GitHub Pages 의 대소문자 구분 문제를 피한다
+                        const list = items.filter(x => x.type === 'file' && !skipName(x.name))
+                            .map(x => ({ path: x.name, dir: f.name, get: getter(f.name, x.name) }));
+                        if (list.length) return { dir: f.name, list };
+                    } catch (e) { dbg('contents error: ' + (e.message || e)); }
+                }
+                return null;
+            }
+
             // 목록(files.json 등)에 적혀 있지만 서버에 실제로 없는 파일인지 가볍게 확인 (HEAD). 확인이 안 되면(네트워크 오류 등) 있는 것으로 본다.
             async function probeExists(it) {
                 if (!it.dir) return true;
@@ -2763,13 +2793,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             }
             // 목록 없이 폴더에 실제로 있는 파일들을 찾는다 (디렉터리 인덱스 / GitHub / jsDelivr)
             function discoverAlt(L) {
-                const jobs = [srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)];
+                const jobs = [srcContents(L), srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)];
                 return Promise.race([firstTruthy(jobs), new Promise(r => setTimeout(() => r(null), 15000))]);
             }
             // 모든 탐색 방법을 동시에 시작해서 가장 먼저 폴더를 찾아낸 결과를 사용
             function discover(L) {
                 const jobs = [];
                 for (const d of [L, L.toUpperCase()]) { jobs.push(srcManifest(d)); jobs.push(srcIndex(d)); }
+                jobs.push(srcContents(L));   // 폴더 안의 zip 을 직접 찾는다 (files.json 불필요)
                 jobs.push(srcGithub(L));
                 jobs.push(srcJsd(L));
                 return firstTruthy(jobs);
