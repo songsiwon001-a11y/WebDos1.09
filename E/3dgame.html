@@ -391,7 +391,7 @@ function genLevel(){
    if(r<.55)items.push({kind:'treasure',x:x+.5,z:z+.5,t:rng()*6});
    else if(r<.8)items.push({kind:'ammo',x:x+.5,z:z+.5,t:rng()*6,amt:10});
    else if(r<.88)items.push({kind:'health',x:x+.5,z:z+.5,t:rng()*6});
-   if(k<(level>2?3:2))enemies.push(mkE(rng()<.5||level<2?'guard':'officer',x+.5,z+.5));
+   if(false)enemies.push(mkE('guard',x+.5,z+.5));
   });
  }
  totalEnemies=enemies.length;
