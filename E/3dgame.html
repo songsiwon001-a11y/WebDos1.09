@@ -24,12 +24,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #fps{position:fixed;left:8px;top:6px;font-size:12px;color:#8f8;opacity:.7}
 #mm{position:fixed;right:10px;top:10px;width:150px;height:150px;border:2px solid #6376e0;pointer-events:none;image-rendering:pixelated}
 #mm.big{right:auto;left:50%;top:50%;transform:translate(-50%,-50%);width:min(72vmin,520px);height:min(72vmin,520px);z-index:4}
-#ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;justify-content:center;cursor:pointer;z-index:10;overflow:auto;touch-action:pan-y}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;justify-content:center;cursor:default;z-index:10;overflow:auto;touch-action:pan-y}
 #ovbox{text-align:center;max-width:660px;padding:24px;margin:auto}
 #ovbox h1{font-size:54px;letter-spacing:6px;color:#e33;text-shadow:3px 3px #000,0 0 20px #800}
 #ovbox h1 span{color:#ffe46b}
 #ovtxt{margin:18px 0;line-height:1.8;font-size:15px;color:#ddd;white-space:pre-line}
-#ovbtn{display:inline-block;padding:12px 28px;border:3px solid #ffe46b;color:#ffe46b;font-size:20px;font-weight:bold;animation:bl 1s infinite alternate}
+#bgmHint{display:none;margin-top:16px;font-size:13px;color:#9fb0ff;animation:bl 1s infinite alternate}
+#ovbtn{cursor:pointer;display:inline-block;padding:12px 28px;border:3px solid #ffe46b;color:#ffe46b;font-size:20px;font-weight:bold;animation:bl 1s infinite alternate}
 @keyframes bl{from{opacity:.5}to{opacity:1}}
 #set{margin:10px 0 18px;text-align:left;cursor:default}
 .row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
@@ -99,6 +100,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
   <div class="row"><span>감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
  </div>
  <div id="ovbtn">클릭하여 시작</div>
+ <div id="bgmHint">♪ 화면을 한 번 클릭하면 타이틀 음악이 재생됩니다</div>
 </div></div>
 
 <div id="touch">
@@ -115,7 +117,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 <script>
 'use strict';
 (()=>{
-const N=33,H=1.0,EYE=0.55;
+const N=64,H=1.0,EYE=0.55;
 const $=id=>document.getElementById(id);
 const cv=$('gl');
 const gl=cv.getContext('webgl',{antialias:true,alpha:false});
@@ -251,7 +253,7 @@ function addBox(b,M,cx,cy,cz,hx,hy,hz,col,tile,ft){
   for(const i of TRI)emit(b,pts[i],nn,UVS[i],tl,col);
  }
 }
-const dyn={d:new Float32Array(12*36*1500),n:0};
+const dyn={d:new Float32Array(12*36*2500),n:0};
 
 /* ================= 오디오 ================= */
 let AC=null,master=null,nbuf=null;
@@ -330,7 +332,7 @@ function refreshSet(){
  $('cross').style.display=cfg.scheme==='classic'?'none':'';
  if(state==='menu'||state==='paused')$('ovtxt').textContent=helpText()+(isFree()
   ?'\n\n[FREE 모드] 적 없음 · 무적 · 탄약 무한\nM 키로 지도 전환 (전체 지도 보기 가능)\n초록색 출구 칸에서 Space / E 를 누르면 다음 층!'
-  :'\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!');
+  :'\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!')+'\n\nFLOOR 1 = 원작 Wolfenstein 3D E1M1 맵 · 이후 층은 랜덤 생성';
 }
 function setWeapon(i){if(i!==P.weapon){P.weapon=i;P.reloading=0}}
 function startReload(){
@@ -391,8 +393,96 @@ function bfs(from,out){
   for(const [dx,dz] of D4){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N)continue;const ni=nz*N+nx;if(out[ni]>=0||isWall(grid[ni]))continue;out[ni]=out[c]+1;q.push(ni)}}
  return q;
 }
-function genLevel(){
- const rng=mulberry32(lvSeed+level*7919);
+/* 원작 Wolfenstein 3D · Episode 1 · Floor 1 (E1M1) 벽/문 배치 (64x64)
+   W=벽  |,-=문  P=시작 위치  (상하 3줄은 64행 맞춤용 외벽 패딩) */
+const E1M1_ROWS=[
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWW           WWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW    WWWWWWWWWWWWWWWWWWW           WWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW    WWWWWWWW          W           W   WWWWWWWWWWWWWWWWWWWW",
+"WWWWWW     WWWWWWW          |           | W WWWWWWWWWWWWWWWWWWWW",
+"WWWWWW     WWWWWWW          W           W   WWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWW   WWWWWWWW           WWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         WWW   WWWWWWWW           WWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         WWW   WWWWWWWWWWWWW-WWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         W       WWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         |       WWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         W       WWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWW         WWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WW         WWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WWWWWW-WWWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWW  WW      WWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WW-WWWWWW   WWWWWWWWWWWWWWWW  WWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWW  WWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   W   W   WWWWWWWWWWWWWWWW  WWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W       W   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   W   W   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WWWWWW-WWWWWWWWWWWWWWWWWWWWWWW-WWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W   WW         WWWWWWWWWWWWWWWWW     WWWWWWWWWWWWWWWWW        WW",
+"W   WW         WWWWWWWWWWWW               WWWWWWWWWWWW        WW",
+"W   WW         WWWWWWWWWWWW               WWWWWWWWWWWW        WW",
+"W    W         WWWWWWWWWWWW                W         W        WW",
+"W    |         WWWWWWWWWWWW                |         |        WW",
+"W    W         WWWWWWWWWWWW                W         W        WW",
+"W   WW         WWWWWWWWWWWW               WWWW    WWWW        WW",
+"W   WW         WWWWWWWWWWWW               WWWWW  WWWWW        WW",
+"W   WW         WWWWWWWWWWWWWWWWW     WWWWWWWWWW  WWWWW        WW",
+"W   WWWWWW-WWWWWWWWWWWWWWWWWWWWWWW-WWWWWWWWWWWW  WWWWWWW WW WWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW  WWWWWWWWWWWWWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW  WWWWWWWWWWWWWWW",
+"W   W   W   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW  WWWWWWWWWWWWWWW",
+"W       W   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW  WWW W W W WWWWW",
+"W   W   W   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW   W         WWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW   |         WWWW",
+"W   WWWWW   WWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWW   W         WWWW",
+"W                W      WWWWWWWWW   WWWWWWWWWWWWWWWW W W W WWWWW",
+"W                |      W WWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"W                W     WWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWW  W  W  WWWWWWWWWWWWWW-WWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWW W  W  W WWWWWWWWW    W   W    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWW     WWWWWWWWWWW    |   |    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW    W   W    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWW  WWWWWWWWWWWWW    W   W    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWW  WWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW    W   W    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW P  |   |    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW    W   W    WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW   WWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW             WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW             WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWW             WWWWWWWWWWWWWWWWWWWWWWW",
+"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+];
+function loadE1M1(){
+ const wl='W'.repeat(N),rows=[wl,wl,wl,...E1M1_ROWS];while(rows.length<N)rows.push(wl);
+ grid=new Uint8Array(N*N).fill(1);
+ let sx=29,sz=54;
+ for(let z=0;z<N;z++)for(let x=0;x<N;x++){
+  const c=rows[z][x];
+  if(c==='W')grid[z*N+x]=x<16?2:1;
+  else{grid[z*N+x]=0;if(c==='P'){sx=x;sz=z}}
+ }
+ for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){
+  const c=rows[z][x];if(c!=='|'&&c!=='-')continue;
+  const d={x,z,open:0,hold:0,orient:c==='-'?'z':'x',dir:1};
+  doorAt[z*N+x]=d;doorList.push(d);grid[z*N+x]=9;
+ }
+ // 방 단위(문으로 구분되는 영역) 분리 → 보물방 후보
+ const seen=new Uint8Array(N*N),rooms=[];
+ for(let i=0;i<N*N;i++){
+  if(grid[i]!==0||seen[i])continue;
+  const comp=[i];seen[i]=1;
+  for(let k=0;k<comp.length;k++){const c=comp[k],x=c%N,z=(c/N)|0;
+   for(const [dx,dz] of D4){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N)continue;const ni=nz*N+nx;if(seen[ni]||grid[ni]!==0)continue;seen[ni]=1;comp.push(ni)}}
+  rooms.push(comp);
+ }
+ // 출구(엘리베이터): 로비 동쪽 끝 작은 방의 동쪽 벽
+ exitCell={x:43,z:8};exitWall={x:44,z:8};grid[8*N+44]=8;
+ return {rooms,sx,sz};
+}
+function buildMaze(rng){
  grid=new Uint8Array(N*N).fill(1);
  const st=[[1,1]];grid[N+1]=0;
  while(st.length){
@@ -404,19 +494,17 @@ function genLevel(){
   if(!ok)st.pop();
  }
  // 로비(큰 홀): 시작 로비 / 중앙 대형 홀 / 우하단 홀
- lobbyCell=new Uint8Array(N*N);
  const hall=(rx,rz,rw,rh)=>{for(let z=rz;z<rz+rh;z++)for(let x=rx;x<rx+rw;x++){grid[z*N+x]=0;lobbyCell[z*N+x]=1}};
  hall(1,1,5,5);hall(10,12,13,9);hall(N-8,N-8,7,7);
- treasureCell=new Uint8Array(N*N);const rooms=[];
- for(let i=0;i<10;i++){const rw=3+(rng()*4|0),rh=3+(rng()*4|0);const rx=1+(rng()*(N-2-rw)|0),rz=1+(rng()*(N-2-rh)|0);
+ const rects=[];
+ for(let i=0;i<30;i++){const rw=3+(rng()*4|0),rh=3+(rng()*4|0);const rx=1+(rng()*(N-2-rw)|0),rz=1+(rng()*(N-2-rh)|0);
   for(let z=rz;z<rz+rh;z++)for(let x=rx;x<rx+rw;x++)grid[z*N+x]=0;
-  rooms.push([rx,rz,rw,rh])}
- for(let i=0;i<70;i++){const x=1+(rng()*(N-2)|0),z=1+(rng()*(N-2)|0);if(grid[z*N+x]!==1)continue;
+  rects.push([rx,rz,rw,rh])}
+ for(let i=0;i<260;i++){const x=1+(rng()*(N-2)|0),z=1+(rng()*(N-2)|0);if(grid[z*N+x]!==1)continue;
   if((grid[z*N+x-1]===0&&grid[z*N+x+1]===0)||(grid[(z-1)*N+x]===0&&grid[(z+1)*N+x]===0))grid[z*N+x]=0}
  // 로비 기둥
  for(const [px,pz] of [[3,3],[12,14],[15,14],[18,14],[12,17],[15,17],[18,17],[N-5,N-5]])grid[pz*N+px]=4;
  // 문
- doorAt=new Array(N*N).fill(null);doorList=[];
  for(let z=2;z<N-2;z++)for(let x=2;x<N-2;x++){
   if(grid[z*N+x]!==0||(x<4&&z<4))continue;
   const wl=isWall(grid[z*N+x-1]),wr=isWall(grid[z*N+x+1]),wu=isWall(grid[(z-1)*N+x]),wd=isWall(grid[(z+1)*N+x]);
@@ -428,37 +516,56 @@ function genLevel(){
  }
  // 벽 종류
  for(let z=0;z<N;z++)for(let x=0;x<N;x++)if(grid[z*N+x]===1)grid[z*N+x]=((x>>3)+(z>>3))%4+1;
+ return rects.map(([rx,rz,rw,rh])=>{const a=[];for(let z=rz;z<rz+rh;z++)for(let x=rx;x<rx+rw;x++)if(grid[z*N+x]===0&&!lobbyCell[z*N+x])a.push(z*N+x);return a});
+}
+function genLevel(){
+ const orig=level===1; // 1층 = 원작 E1M1 / 2층부터 랜덤 생성
+ const rng=mulberry32(orig?1992:lvSeed+level*7919);
+ lobbyCell=new Uint8Array(N*N);treasureCell=new Uint8Array(N*N);
+ doorAt=new Array(N*N).fill(null);doorList=[];exitCell=null;exitWall=null;
+ let rooms,sx=1.5,sz=1.5,yaw;
+ if(orig){const r=loadE1M1();rooms=r.rooms;sx=r.sx+.5;sz=r.sz+.5;yaw=-Math.PI/2}
+ else{rooms=buildMaze(rng);yaw=grid[N+2]===0||grid[N+2]===9?-Math.PI/2:Math.PI}
+ const dist=new Int16Array(N*N);const order=bfs((sz|0)*N+(sx|0),dist);
  // 출구
- const dist=new Int16Array(N*N);const order=bfs(N+1,dist);
- exitCell=null;
- for(let i=order.length-1;i>=0&&!exitCell;i--){const c=order[i];if(grid[c]!==0)continue;const x=c%N,z=(c/N)|0;
-  for(const [dx,dz] of D4){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N)continue;if(isWall(grid[nz*N+nx])){exitCell={x,z};exitWall={x:nx,z:nz};grid[nz*N+nx]=8;break}}}
+ if(!orig){
+  for(let i=order.length-1;i>=0&&!exitCell;i--){const c=order[i];if(grid[c]!==0)continue;const x=c%N,z=(c/N)|0;
+   for(const [dx,dz] of D4){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N)continue;if(isWall(grid[nz*N+nx])){exitCell={x,z};exitWall={x:nx,z:nz};grid[nz*N+nx]=8;break}}}
+ }
  // 램프
  lamps=[];lampCell=new Uint8Array(N*N);
  for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++)if(grid[z*N+x]===0&&(((x*7+z*13+level)%7)===0||(lobbyCell[z*N+x]&&x%3===0&&z%3===0))){lamps.push([x+.5,H-.08,z+.5]);lampCell[z*N+x]=1}
  // 적 / 아이템
  enemies=[];items=[];particles=[];
  const free=[];for(let i=0;i<N*N;i++)if(grid[i]===0&&dist[i]>=3)free.push(i);
- const pick=(min)=>{for(let t=0;t<200;t++){const c=free[rng()*free.length|0];if(dist[c]>=min){return c}}return free[0]};
+ const pick=(min)=>{for(let t=0;t<400;t++){const c=free[rng()*free.length|0];if(dist[c]>=min){return c}}let bc=free[0];for(const c of free)if(dist[c]>dist[bc])bc=c;return bc};
  const DF=DIFFS[cfg.diff];
- const ne=isFree()?0:Math.min(1+Math.round(level*.5)+DF.extra,5+DF.extra);
+ const ne=isFree()?0:orig?(cfg.diff===0?3:cfg.diff===1?(Math.random()<.5?4:16):[0,0,20,24][cfg.diff]):Math.min(3+level+DF.extra*2,10+DF.extra*2);
  for(let i=0;i<ne;i++){
-  const c=pick(9),r=rng();const ph=(level>=2||DF.heavy>0)?Math.min(.04+level*.05+DF.heavy,.45):0,po=Math.min(.12+level*.05+DF.off,.5);
+  const c=pick(orig?[26,20,16,12][cfg.diff]:9),r=rng();const ph=(level>=2||DF.heavy>0)?Math.min(.04+level*.05+DF.heavy,.45):0,po=Math.min(.12+level*.05+DF.off,.5);
   const type=r<ph?'heavy':r<ph+po?'officer':'guard';
   const T=ETYPES[type];
   enemies.push({x:c%N+.5,z:((c/N)|0)+.5,ang:rng()*6.28,type:T,tn:type,hp:Math.round(T.hp*DF.hp),state:'idle',seed:rng()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,r:.28*T.s,h:.95*T.s,moving:false});
  }
  totalEnemies=ne;
  const addItems=(kind,n,min)=>{for(let i=0;i<n;i++){const c=pick(min);items.push({kind,x:c%N+.5,z:((c/N)|0)+.5,t:rng()*6})}};
- addItems('health',DF.health,5);addItems('ammo',8,4);addItems('treasure',10,3);
+ addItems('health',DF.health+3,5);addItems('ammo',14,4);addItems('treasure',18,3);
  // 보물방: 방 안에 보물·탄약이 쌓여 있다 (바닥이 금색)
  const taken=new Set(items.map(it=>(it.z|0)*N+(it.x|0)));
- const cand=rooms.filter(r=>{const c=(r[1]+(r[3]>>1))*N+r[0]+(r[2]>>1);return dist[c]>=8&&!lobbyCell[c]&&grid[c]===0});
+ const exitIdx=exitCell?exitCell.z*N+exitCell.x:-1;
+ const cand=rooms.filter(cells=>{
+  if(cells.length<6||cells.length>70)return false;
+  let x0=99,x1=-1,z0=99,z1=-1;
+  for(const c of cells){const x=c%N,z=(c/N)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(z<z0)z0=z;if(z>z1)z1=z}
+  const bw=x1-x0+1,bh=z1-z0+1;
+  if(Math.min(bw,bh)<3||cells.length<bw*bh*.6)return false;
+  if(dist[cells[cells.length>>1]]<8||cells.includes(exitIdx))return false;
+  return true});
  cand.sort(()=>rng()-.5);
- const nr=Math.min(cand.length,2+Math.min(level,3));
+ const nr=Math.min(cand.length,orig?4:2+Math.min(level,3));
  for(let i=0;i<nr;i++){
-  const [rx,rz,rw,rh]=cand[i],cells=[];
-  for(let z=rz;z<rz+rh;z++)for(let x=rx;x<rx+rw;x++){if(grid[z*N+x]!==0||lobbyCell[z*N+x])continue;treasureCell[z*N+x]=1;cells.push([x,z])}
+  const cells=cand[i].filter(c=>grid[c]===0&&!lobbyCell[c]).map(c=>[c%N,(c/N)|0]);
+  for(const [x,z] of cells)treasureCell[z*N+x]=1;
   cells.sort(()=>rng()-.5);
   cells.forEach(([x,z],k)=>{
    if(taken.has(z*N+x))return;
@@ -471,8 +578,7 @@ function genLevel(){
  totalEnemies=enemies.length;
  totalTreasure=items.filter(it=>it.kind==='treasure').length;
  // 플레이어 위치
- P.x=1.5;P.z=1.5;P.vx=P.vz=0;P.pitch=0;
- P.yaw=grid[N+2]===0||grid[N+2]===9?-Math.PI/2:Math.PI;
+ P.x=sx;P.z=sz;P.vx=P.vz=0;P.pitch=0;P.yaw=yaw;
  P.kills=0;P.treasure=0;
  buildStatic();computeFlow();
 }
@@ -798,7 +904,7 @@ function cycleMap(){mapMode=isFree()?(mapMode+1)%3:(mapMode===1?0:1)}
 function drawMap(){
  if(mapMode===0||!grid){mmEl.style.display='none';return}mmEl.style.display='block';
  const big=mapMode===2&&isFree();
- const want=big?330:150;
+ const want=big?400:150;
  if(mm.width!==want){mm.width=mm.height=want}
  mmEl.classList.toggle('big',big);
  if(big){
@@ -856,6 +962,7 @@ function goFS(){
 }
 function lockPointer(){if(cfg.scheme!=='modern'||isTouch)return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
 function newGame(){
+ bgmStop();
  P.hp=100;P.ammo=40;P.weapon=1;P.score=0;P.clip=[0,8,30];P.reloading=0;P.lives=3;P.nextLife=5000;P.dead=false;P.fire=false;
  level=1;lvSeed=(Math.random()*1e9)|0;genLevel();state='play';ov.style.display='none';
  showMsg(isFree()?'FREE 모드 · M: 지도 전환':'FLOOR 1',2.2);
@@ -864,7 +971,8 @@ function respawn(){
  P.lives--;P.hp=100;P.ammo=Math.max(P.ammo,25);P.dead=false;P.weapon=1;P.clip=[0,8,30];P.reloading=0;P.fire=false;P.score=Math.max(0,P.score-0);
  genLevel();state='play';ov.style.display='none';showMsg('FLOOR '+level,2);
 }
-ov.addEventListener('click',()=>{
+ov.addEventListener('click',e=>{
+ if(state==='menu'&&!e.target.closest('#ovbtn'))return; // 타이틀: 시작 버튼을 눌러야 시작
  initAudio();if(isTouch)goFS();
  if(state==='menu'||(state==='dead'&&P.lives<=0)){newGame();lockPointer()}
  else if(state==='dead'){respawn();lockPointer()}
@@ -886,6 +994,7 @@ document.addEventListener('mouseup',e=>{if(e.button===0)P.fire=false});
 document.addEventListener('wheel',e=>{if(state==='play'){setWeapon((P.weapon+(e.deltaY>0?1:2))%3)}},{passive:true});
 document.addEventListener('contextmenu',e=>e.preventDefault());
 addEventListener('keydown',e=>{
+ if(state==='menu'&&e.code==='Enter'&&!e.repeat){initAudio();if(isTouch)goFS();newGame();lockPointer();return}
  keys[e.code]=true;
  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Tab','AltLeft','AltRight'].includes(e.code))e.preventDefault();
  if(state==='play'){
@@ -939,6 +1048,27 @@ function updTouch(){
  const s=isTouch&&state==='play';
  if(s!==touchShown){touchShown=s;$('touch').style.display=s?'block':'none';if(!s){joyReset();TC.lid=null;P.fire=false}}
 }
+
+/* ================= 타이틀 BGM (같은 폴더의 audio.mp3) ================= */
+const bgm=new Audio('audio.mp3'),bgmHint=$('bgmHint');
+bgm.loop=true;bgm.volume=.6;bgm.preload='auto';
+let bgmWanted=true,bgmFailed=false;
+function bgmPlay(){
+ if(!bgmWanted||bgmFailed||state!=='menu'||document.hidden||!bgm.paused)return;
+ const p=bgm.play();
+ if(p&&p.then)p.then(()=>{if(!bgmWanted){bgm.pause();return}bgmHint.style.display='none'})
+  .catch(err=>{if(bgmWanted&&err&&err.name==='NotAllowedError')bgmHint.style.display='block'});
+}
+function bgmStop(){
+ if(!bgmWanted)return;bgmWanted=false;bgmHint.style.display='none';
+ const v0=bgm.volume;let v=v0;
+ const t=setInterval(()=>{v-=v0/12;if(v<=.02){clearInterval(t);bgm.pause();bgm.currentTime=0;bgm.volume=v0}else bgm.volume=v},40);
+}
+bgm.addEventListener('error',()=>{bgmFailed=true;bgmHint.style.display='none'});
+// 브라우저 자동재생 정책: 막히면 첫 사용자 입력(시작 버튼 제외)에서 재생
+for(const ev of ['click','touchend','keydown'])document.addEventListener(ev,e=>{if(e.type==='keydown'&&(e.code==='Enter'||e.code==='Escape'))return;bgmPlay()},true);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(bgmWanted)bgm.pause()}else bgmPlay()});
+bgmPlay();
 
 /* ================= 메인 루프 ================= */
 let last=performance.now(),fpsA=0,fpsN=0,fpsT=0;
