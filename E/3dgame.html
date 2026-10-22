@@ -20,9 +20,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 .cell:last-child{border-right:0}
 .cell small{display:block;font-size:11px;color:#9fb0ff;letter-spacing:2px}
 .cell b{font-size:26px;color:#ffe46b;text-shadow:2px 2px #000}
-#msg{position:fixed;left:0;right:0;top:16%;text-align:center;font-size:26px;font-weight:bold;color:#ffe46b;text-shadow:2px 2px #000;pointer-events:none;opacity:0;transition:opacity .3s}
+#msg{position:fixed;left:0;right:0;top:16%;text-align:center;font-size:26px;font-weight:bold;color:#ffe46b;text-shadow:2px 2px #000;pointer-events:none;opacity:0;transition:opacity .3s;z-index:11}
 #fps{position:fixed;left:8px;top:6px;font-size:12px;color:#8f8;opacity:.7}
 #mm{position:fixed;right:10px;top:10px;width:150px;height:150px;border:2px solid #6376e0;pointer-events:none;image-rendering:pixelated}
+#mm.big{right:auto;left:50%;top:50%;transform:translate(-50%,-50%);width:min(72vmin,520px);height:min(72vmin,520px);z-index:4}
 #ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;justify-content:center;cursor:pointer;z-index:10;overflow:auto;touch-action:pan-y}
 #ovbox{text-align:center;max-width:660px;padding:24px;margin:auto}
 #ovbox h1{font-size:54px;letter-spacing:6px;color:#e33;text-shadow:3px 3px #000,0 0 20px #800}
@@ -31,7 +32,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #ovbtn{display:inline-block;padding:12px 28px;border:3px solid #ffe46b;color:#ffe46b;font-size:20px;font-weight:bold;animation:bl 1s infinite alternate}
 @keyframes bl{from{opacity:.5}to{opacity:1}}
 #set{margin:10px 0 18px;text-align:left;cursor:default}
-.row{display:flex;align-items:center;gap:8px;margin:8px 0;flex-wrap:wrap}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
 .row span{width:90px;color:#9fb0ff;font-size:14px}
 #set button{background:#10163a;color:#ddd;border:2px solid #4a5ab8;padding:8px 12px;font:inherit;font-size:13px;cursor:pointer}
 #set button.on{border-color:#ffe46b;color:#ffe46b;background:#242b66}
@@ -53,8 +54,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #tWpn{right:24px;bottom:184px}
 #tRel{right:124px;bottom:96px}
 #tUse{right:114px;bottom:164px}
+#tMap{left:12px;top:58px}
 #tPause{left:50%;top:8px;margin-left:-20px;width:40px;height:40px;font-size:14px;border-radius:8px}
-@media (pointer:coarse){#mm{width:100px;height:100px;right:6px;top:6px}#fps{display:none}}
+@media (pointer:coarse){#mm{width:100px;height:100px;right:6px;top:6px}#mm.big{right:auto;width:min(72vmin,520px);height:min(72vmin,520px);top:50%}#fps{display:none}}
 @media (max-height:520px){
  #bar{height:48px;border-top-width:3px}.cell{padding-top:2px}.cell small{font-size:9px}.cell b{font-size:18px}
  #joyZone,#lookZone{bottom:48px}#tFire{bottom:62px}#tRel{bottom:74px}#tUse{bottom:140px}#tWpn{bottom:158px}
@@ -83,14 +85,17 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
  <h1>WOLF <span>REAL 3D</span></h1>
  <div id="ovtxt"></div>
  <div id="set">
+  <div class="row"><span>모드</span>
+   <button class="dbtn" data-mode="normal">일반<small>적과 싸우며 출구로</small></button>
+   <button class="dbtn" data-mode="free">FREE · 탐방<small>적 없음 · 무적 · 탄약 무한 · 전체 지도</small></button></div>
+  <div class="row" id="rowScheme"><span>조작 방식</span>
+   <button data-scheme="modern">현대식 · WASD + 마우스</button>
+   <button data-scheme="classic">클래식 · 방향키 + Ctrl</button></div>
   <div class="row"><span>난이도</span>
    <button class="dbtn" data-diff="0">1 · 쉬움<small>Can I play, Daddy?</small></button>
    <button class="dbtn" data-diff="1">2 · 보통<small>Don't hurt me.</small></button>
    <button class="dbtn" data-diff="2">3 · 어려움<small>Bring 'em on!</small></button>
    <button class="dbtn" data-diff="3">4 · 최고<small>I am Death incarnate!</small></button></div>
-  <div class="row" id="rowScheme"><span>조작 방식</span>
-   <button data-scheme="modern">현대식 · WASD + 마우스</button>
-   <button data-scheme="classic">클래식 · 방향키 + Ctrl</button></div>
   <div class="row"><span>감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
  </div>
  <div id="ovbtn">클릭하여 시작</div>
@@ -103,6 +108,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
  <div class="tb sm" id="tWpn">무기</div>
  <div class="tb sm" id="tRel">R</div>
  <div class="tb sm" id="tUse">문</div>
+ <div class="tb sm" id="tMap">맵</div>
  <div class="tb" id="tPause">II</div>
 </div>
 
@@ -296,8 +302,8 @@ const WEAPONS=[
  {name:'PISTOL',cd:.28,dmg:[16,28],spread:.012,range:40},
  {name:'MACHINE GUN',cd:.085,auto:true,dmg:[10,18],spread:.035,range:40}];
 const keys={};
-const cfg={scheme:'modern',sens:4,diff:0};
-const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+const cfg={scheme:'modern',sens:4,diff:0,mode:'normal'};
+const isTouch=(('ontouchstart' in window)||navigator.maxTouchPoints>0)&&window.matchMedia('(pointer:coarse)').matches;
 /* 원작 난이도: 1 Can I play, Daddy? / 2 Don't hurt me. / 3 Bring 'em on! / 4 I am Death incarnate!
    (0번째 = 기존 기본 설정) */
 const DIFFS=[
@@ -305,30 +311,35 @@ const DIFFS=[
  {extra:1,hp:1,dmg:1.25,cd:.85,acc:1.1,spd:1.08,health:4,heavy:.04,off:.05},
  {extra:2,hp:1.15,dmg:1.5,cd:.7,acc:1.2,spd:1.16,health:3,heavy:.09,off:.1},
  {extra:3,hp:1.3,dmg:1.8,cd:.55,acc:1.35,spd:1.25,health:2,heavy:.16,off:.15}];
-try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens;if(sv.diff>=0&&sv.diff<=3)cfg.diff=sv.diff|0}catch(e){}
+try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens;if(sv.diff>=0&&sv.diff<=3)cfg.diff=sv.diff|0;if(sv.mode==='free'||sv.mode==='normal')cfg.mode=sv.mode}catch(e){}
 if(isTouch)cfg.scheme='modern';
+const isFree=()=>cfg.mode==='free';
 const CLIP=[0,8,30];
 function saveCfg(){try{localStorage.setItem('wolfreal3d_cfg',JSON.stringify(cfg))}catch(e){}}
 function helpText(){
- if(isTouch)return '[터치 조작]\n왼쪽 화면 드래그 = 이동 (끝까지 밀면 달리기)\n오른쪽 화면 드래그 = 시점 회전\nFIRE 발사  ·  R 재장전  ·  무기 버튼으로 교체  ·  문 버튼 (가까이 가면 자동으로도 열림)\nII 일시정지';
+ if(isTouch)return '[터치 조작]\n왼쪽 화면 드래그 = 이동 (끝까지 밀면 달리기)\n오른쪽 화면 드래그 = 시점 회전\nFIRE 발사  ·  R 재장전  ·  무기 버튼으로 교체  ·  문 버튼 (가까이 가면 자동으로도 열림)\n맵 버튼 = 지도 전환  ·  II 일시정지';
  return cfg.scheme==='classic'
- ?'[클래식 울펜슈타인 조작]\n↑ ↓ 이동  ·  ← → 회전  ·  Alt+← → 또는 Z / X 좌우 이동\nCtrl 또는 F 발사  ·  Space 문 열기  ·  Shift 달리기\n1 / 2 / 3 무기 교체  ·  M 미니맵  ·  Esc 일시정지\n재장전 없이 탄약이 바로 소모됩니다.'
- :'[현대식 조작]\nWASD 이동  ·  마우스 시점  ·  좌클릭 발사  ·  R 재장전\nSpace / E 문 열기 (가까이 가면 자동으로도 열림)  ·  Shift 달리기\n1 / 2 / 3 또는 휠로 무기 교체  ·  M 미니맵  ·  Esc 일시정지';
+ ?'[클래식 울펜슈타인 조작]\n↑ ↓ 이동  ·  ← → 회전  ·  Alt+← → 또는 Z / X 좌우 이동\nCtrl 또는 F 발사  ·  Space 문 열기  ·  Shift 달리기\n1 / 2 / 3 무기 교체  ·  M 지도 전환  ·  Esc 일시정지\n재장전 없이 탄약이 바로 소모됩니다.'
+ :'[현대식 조작]\nWASD 이동  ·  마우스 시점  ·  좌클릭 발사  ·  R 재장전\nSpace / E 문 열기 (가까이 가면 자동으로도 열림)  ·  Shift 달리기\n1 / 2 / 3 또는 휠로 무기 교체  ·  M 지도 전환  ·  Esc 일시정지';
 }
 function refreshSet(){
- for(const b of document.querySelectorAll('#set button'))b.classList.toggle('on',b.dataset.diff!==undefined?+b.dataset.diff===cfg.diff:b.dataset.scheme===cfg.scheme);
+ for(const b of document.querySelectorAll('#set button')){const d=b.dataset;
+  b.classList.toggle('on',d.diff!==undefined?+d.diff===cfg.diff:d.mode!==undefined?d.mode===cfg.mode:d.scheme===cfg.scheme)}
  $('rowScheme').style.display=isTouch?'none':'';
  $('sens').value=cfg.sens;$('sensv').textContent=cfg.sens;
  $('cross').style.display=cfg.scheme==='classic'?'none':'';
- if(state==='menu'||state==='paused')$('ovtxt').textContent=helpText()+'\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!';
+ if(state==='menu'||state==='paused')$('ovtxt').textContent=helpText()+(isFree()
+  ?'\n\n[FREE 모드] 적 없음 · 무적 · 탄약 무한\nM 키로 지도 전환 (전체 지도 보기 가능)\n초록색 출구 칸에서 Space / E 를 누르면 다음 층!'
+  :'\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!');
 }
 function setWeapon(i){if(i!==P.weapon){P.weapon=i;P.reloading=0}}
 function startReload(){
- const w=P.weapon;if(w===0||P.reloading>0||cfg.scheme!=='modern')return;
+ const w=P.weapon;if(w===0||P.reloading>0||cfg.scheme!=='modern'||isFree())return;
  if(P.clip[w]>=CLIP[w]||P.ammo<=0)return;
  P.reloading=P.reloadT=(w===1?1.0:1.7);sfx.reload();showMsg('재장전',.8);
 }
 function useDoor(){
+ if(isFree()&&state==='play'&&exitCell&&(P.x|0)===exitCell.x&&(P.z|0)===exitCell.z){levelClear();return true}
  const fx=-Math.sin(P.yaw),fz=-Math.cos(P.yaw);
  for(const dist of [.6,1,1.4]){
   const cx=Math.floor(P.x+fx*dist),cz=Math.floor(P.z+fz*dist);
@@ -359,6 +370,18 @@ function castGrid(px,pz,dx,dz,maxd){
   if(blocksSight(mx,mz))return Math.min(t,maxd);
  }
  return maxd;
+}
+/* 시야 판정: 중심선 + 몸 폭만큼 좌우로 평행 이동한 선까지 모두 뚫려 있어야 "보인다".
+   (모서리 틈·대각선 틈으로 벽 너머가 보이는 버그 방지) */
+function clearLine(x0,z0,x1,z1){
+ const dx=x1-x0,dz=z1-z0,d=Math.hypot(dx,dz);
+ if(d<.05)return true;
+ const ux=dx/d,uz=dz/d;
+ for(const o of [0,-.12,.12]){
+  const sx=x0-uz*o,sz=z0+ux*o;
+  if(castGrid(sx,sz,ux,uz,d)<d-.03)return false;
+ }
+ return true;
 }
 
 /* ================= 레벨 생성 ================= */
@@ -418,7 +441,7 @@ function genLevel(){
  const free=[];for(let i=0;i<N*N;i++)if(grid[i]===0&&dist[i]>=3)free.push(i);
  const pick=(min)=>{for(let t=0;t<200;t++){const c=free[rng()*free.length|0];if(dist[c]>=min){return c}}return free[0]};
  const DF=DIFFS[cfg.diff];
- const ne=Math.min(1+Math.round(level*.5)+DF.extra,5+DF.extra);
+ const ne=isFree()?0:Math.min(1+Math.round(level*.5)+DF.extra,5+DF.extra);
  for(let i=0;i<ne;i++){
   const c=pick(9),r=rng();const ph=(level>=2||DF.heavy>0)?Math.min(.04+level*.05+DF.heavy,.45):0,po=Math.min(.12+level*.05+DF.off,.5);
   const type=r<ph?'heavy':r<ph+po?'officer':'guard';
@@ -428,8 +451,7 @@ function genLevel(){
  totalEnemies=ne;
  const addItems=(kind,n,min)=>{for(let i=0;i<n;i++){const c=pick(min);items.push({kind,x:c%N+.5,z:((c/N)|0)+.5,t:rng()*6})}};
  addItems('health',DF.health,5);addItems('ammo',8,4);addItems('treasure',10,3);
- // 보물방: 방 안에 보물·탄약이 쌓여 있고 경비병이 지킨다 (바닥이 금색)
- const mkE=(tn,x,z)=>{const T=ETYPES[tn];return{x,z,ang:rng()*6.28,type:T,tn,hp:T.hp,state:'idle',seed:rng()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,r:.28*T.s,h:.95*T.s,moving:false}};
+ // 보물방: 방 안에 보물·탄약이 쌓여 있다 (바닥이 금색)
  const taken=new Set(items.map(it=>(it.z|0)*N+(it.x|0)));
  const cand=rooms.filter(r=>{const c=(r[1]+(r[3]>>1))*N+r[0]+(r[2]>>1);return dist[c]>=8&&!lobbyCell[c]&&grid[c]===0});
  cand.sort(()=>rng()-.5);
@@ -444,7 +466,6 @@ function genLevel(){
    if(r<.55)items.push({kind:'treasure',x:x+.5,z:z+.5,t:rng()*6});
    else if(r<.8)items.push({kind:'ammo',x:x+.5,z:z+.5,t:rng()*6,amt:10});
    else if(r<.88)items.push({kind:'health',x:x+.5,z:z+.5,t:rng()*6});
-   if(false)enemies.push(mkE('guard',x+.5,z+.5));
   });
  }
  totalEnemies=enemies.length;
@@ -493,7 +514,7 @@ function spark(x,y,z,col,n,spd){
 }
 function addScore(s){P.score+=s;if(P.score>=P.nextLife){P.nextLife+=5000;P.lives++;showMsg('★ 1UP! ★');sfx.pick()}}
 function hurt(d){
- if(P.dead)return;P.hp-=d;P.hurt=Math.min(1,P.hurt+.5+d*.04);sfx.hurt();
+ if(P.dead||isFree())return;P.hp-=d;P.hurt=Math.min(1,P.hurt+.5+d*.04);sfx.hurt();
  if(P.hp<=0){P.hp=0;P.dead=true;P.deadT=0;state='dead'}
 }
 function wake(e){if(e.state!=='idle')return;e.state='chase';e.cd=.4+Math.random()*.6;sfx.alert(Math.hypot(P.x-e.x,P.z-e.z))}
@@ -514,14 +535,16 @@ function shoot(){
  const w=WEAPONS[P.weapon];
  if(P.cd>0||P.reloading>0)return;
  const mag=cfg.scheme==='modern';
- if(!w.melee){
+ if(!w.melee&&!isFree()){
   if(mag){
    if(P.clip[P.weapon]<=0){if(P.ammo>0)startReload();else{sfx.empty();P.cd=.25}return}
    P.clip[P.weapon]--;if(P.clip[P.weapon]<=0&&P.ammo>0)startReload();
   }else{if(P.ammo<=0){sfx.empty();P.cd=.25;return}P.ammo--}
  }
  P.cd=w.cd;P.kick=1;
- if(!w.melee){P.flash=1;(P.weapon===1?sfx.pistol:sfx.mg)();for(const e of enemies)if(e.state==='idle'&&Math.hypot(e.x-P.x,e.z-P.z)<14)wake(e)}
+ if(!w.melee){P.flash=1;(P.weapon===1?sfx.pistol:sfx.mg)();
+  // 총소리: 직선거리가 아니라 실제 이동 경로(벽을 돌아가는 거리) 기준으로 들린다
+  for(const e of enemies)if(e.state==='idle'){const f=flow[(e.z|0)*N+(e.x|0)];if(f>=0&&f<=12)wake(e)}}
  else sfx.knife();
  const cp=Math.cos(P.pitch);
  let dx=-Math.sin(P.yaw)*cp,dy=Math.sin(P.pitch),dz=-Math.cos(P.yaw)*cp;
@@ -554,7 +577,7 @@ function updEnemy(e,dt){
  if(e.state==='dead'){e.fall=Math.min(1,e.fall+dt*2);return}
  e.flash=Math.max(0,e.flash-dt);e.muz=Math.max(0,e.muz-dt);e.pain=Math.max(0,e.pain-dt);e.atk=Math.max(0,e.atk-dt);e.cd-=dt;
  const dx=P.x-e.x,dz=P.z-e.z,d=Math.hypot(dx,dz)||.001,ux=dx/d,uz=dz/d;
- const los=d<20&&castGrid(e.x,e.z,ux,uz,d)>=d-.05;
+ const los=d<20&&clearLine(e.x,e.z,P.x,P.z);
  const toP=Math.atan2(-dx,-dz);
  e.moving=false;
  if(e.state==='idle'){
@@ -566,6 +589,7 @@ function updEnemy(e,dt){
  e.ang+=clamp(angDiff(toP,e.ang),-dt*6,dt*6);
  if(e.pain>0)return;
  const T=e.type;
+ // 사격은 지금 이 순간 시야가 확실히 뚫려 있을 때만
  if(los&&d<T.range&&e.atk<=0&&e.cd<=0&&Math.abs(angDiff(toP,e.ang))<.4)enemyFire(e,d);
  const hold=(los&&d<5.5)||e.atk>0;
  if(!hold){
@@ -641,8 +665,11 @@ function updatePlayer(dt){
 }
 function levelClear(){
  state='clear';clearT=0;sfx.clear();
- const bonus=level*500+(P.kills>=totalEnemies?1000:0);addScore(bonus);
- $('ovtxt').textContent=`FLOOR ${level} CLEAR!\n\n처치  ${P.kills} / ${totalEnemies}\n보물  ${P.treasure} / ${totalTreasure}\n보너스  +${bonus}\n\n다음 층으로 이동합니다...`;
+ const free=isFree();
+ const bonus=free?0:level*500+(P.kills>=totalEnemies?1000:0);addScore(bonus);
+ $('ovtxt').textContent=free
+  ?`FLOOR ${level} 탐방 완료!\n\n보물  ${P.treasure} / ${totalTreasure}\n\n다음 층으로 이동합니다...`
+  :`FLOOR ${level} CLEAR!\n\n처치  ${P.kills} / ${totalEnemies}\n보물  ${P.treasure} / ${totalTreasure}\n보너스  +${bonus}\n\n다음 층으로 이동합니다...`;
  $('set').style.display='none';$('ovbtn').style.display='none';$('ov').style.display='flex';$('ov').style.cursor='default';
 }
 function update(dt){
@@ -658,7 +685,10 @@ function update(dt){
  P.hurt=Math.max(0,P.hurt-dt*1.6);P.pick=Math.max(0,P.pick-dt*3);
  if(msgT>0){msgT-=dt;if(msgT<=0)$('msg').style.opacity=0}
  {const tc=treasureCell[(P.z|0)*N+(P.x|0)];if(tc&&!P.inTR)showMsg('★ 보물방! ★',1.6);P.inTR=!!tc}
- if(state==='play'&&exitCell&&(P.x|0)===exitCell.x&&(P.z|0)===exitCell.z)levelClear();
+ if(state==='play'&&exitCell&&(P.x|0)===exitCell.x&&(P.z|0)===exitCell.z){
+  if(isFree()){if(!P.inExit)showMsg('출구 · Space / E 로 다음 층',2.4);P.inExit=true}
+  else levelClear();
+ }else P.inExit=false;
  if(state==='dead'&&P.deadT>1.2&&$('ov').style.display!=='flex'){
   $('ovtxt').textContent=P.lives>0?`당신은 쓰러졌다...\n남은 목숨: ${P.lives}`:`GAME OVER\n\n최종 점수: ${P.score}`;
   $('ovbtn').textContent=P.lives>0?'클릭하여 재도전':'클릭하여 새 게임';$('set').style.display=P.lives>0?'none':'block';refreshSet();$('ovbtn').style.display='inline-block';$('ov').style.display='flex';$('ov').style.cursor='pointer';
@@ -763,9 +793,27 @@ function render(){
 
 /* ================= HUD / 미니맵 ================= */
 const mm=$('mm'),mc=mm.getContext('2d'),mmEl=mm;
-let mapOn=true;
+let mapMode=1; // 0 끔 / 1 미니맵 / 2 전체 지도(FREE 모드 전용)
+function cycleMap(){mapMode=isFree()?(mapMode+1)%3:(mapMode===1?0:1)}
 function drawMap(){
- if(!mapOn||!grid){mmEl.style.display='none';return}mmEl.style.display='block';
+ if(mapMode===0||!grid){mmEl.style.display='none';return}mmEl.style.display='block';
+ const big=mapMode===2&&isFree();
+ const want=big?330:150;
+ if(mm.width!==want){mm.width=mm.height=want}
+ mmEl.classList.toggle('big',big);
+ if(big){
+  const S=mm.width/N;
+  mc.fillStyle='rgba(0,0,0,.8)';mc.fillRect(0,0,mm.width,mm.height);
+  for(let z=0;z<N;z++)for(let x=0;x<N;x++){
+   const g=grid[z*N+x];
+   mc.fillStyle=g===0?(treasureCell[z*N+x]?'#3d3518':lobbyCell[z*N+x]?'#2b2030':'#1a2030'):g===9?'#a65a30':g===8?'#2fd060':'#5a5f78';
+   mc.fillRect(x*S,z*S,S+.5,S+.5);
+  }
+  if(exitCell){mc.fillStyle='#2fd060';mc.fillRect((exitCell.x+.2)*S,(exitCell.z+.2)*S,S*.6,S*.6)}
+  for(const it of items){mc.fillStyle=it.kind==='treasure'?'#fd4':it.kind==='health'?'#fff':'#9c4';mc.fillRect(it.x*S-2,it.z*S-2,4,4)}
+  mc.save();mc.translate(P.x*S,P.z*S);mc.rotate(-P.yaw);mc.fillStyle='#4af';mc.beginPath();mc.moveTo(0,-9);mc.lineTo(6,7);mc.lineTo(-6,7);mc.fill();mc.restore();
+  return;
+ }
  const R=11,S=mm.width/(R*2+1),W2=mm.width/2;
  mc.fillStyle='rgba(0,0,0,.6)';mc.fillRect(0,0,mm.width,mm.height);
  const px=P.x|0,pz=P.z|0;
@@ -781,16 +829,25 @@ function drawMap(){
 }
 const hud={lv:$('hLv'),sc:$('hSc'),lf:$('hLf'),hp:$('hHp'),am:$('hAm'),wn:$('hWn'),wp:$('hWp'),dmg:$('dmg'),pick:$('pick')};
 function updHud(){
- hud.lv.textContent=level;hud.sc.textContent=P.score;hud.lf.textContent=P.lives;hud.hp.textContent=P.hp+'%';
- hud.hp.style.color=P.hp<30?'#f55':'#ffe46b';hud.am.textContent=P.weapon===0?'--':cfg.scheme==='modern'?(P.reloading>0?'RLD':P.clip[P.weapon])+'/'+P.ammo:P.ammo;hud.wn.textContent=WEAPONS[P.weapon].name;hud.wp.textContent=P.weapon+1;
+ const fr=isFree();
+ hud.lv.textContent=level;hud.sc.textContent=P.score;hud.lf.textContent=fr?'∞':P.lives;hud.hp.textContent=P.hp+'%';
+ hud.hp.style.color=P.hp<30?'#f55':'#ffe46b';
+ hud.am.textContent=P.weapon===0?'--':fr?'∞':cfg.scheme==='modern'?(P.reloading>0?'RLD':P.clip[P.weapon])+'/'+P.ammo:P.ammo;
+ hud.wn.textContent=WEAPONS[P.weapon].name;hud.wp.textContent=P.weapon+1;
  hud.dmg.style.opacity=P.dead?.75:Math.min(1,P.hurt);hud.pick.style.opacity=P.pick*.8;
 }
 
 /* ================= 입력 / 상태 전환 ================= */
 const ov=$('ov'),ovtxt=$('ovtxt'),ovbtn=$('ovbtn');
-const HELP_OLD='WASD 이동  ·  마우스 시점  ·  좌클릭 발사\nShift 달리기  ·  1 / 2 / 3 무기 교체 (휠도 가능)\nM 미니맵  ·  ← → 방향키로도 회전 가능\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!\n문은 가까이 가면 자동으로 열립니다.';
+function setMode(m){
+ if(cfg.mode===m)return;cfg.mode=m;
+ if(m==='free'){enemies=[];totalEnemies=0;if(!P.dead)P.hp=100;mapMode=1}
+ else if(state==='paused')showMsg('일반 모드: 다음 층부터 적이 등장합니다',2.5);
+}
 $('set').addEventListener('click',e=>{e.stopPropagation();const b=e.target.closest('button');if(!b)return;
- if(b.dataset.diff!==undefined)cfg.diff=+b.dataset.diff;else{cfg.scheme=isTouch?'modern':b.dataset.scheme;P.reloading=0}
+ if(b.dataset.diff!==undefined)cfg.diff=+b.dataset.diff;
+ else if(b.dataset.mode!==undefined)setMode(b.dataset.mode);
+ else{cfg.scheme=isTouch?'modern':b.dataset.scheme;P.reloading=0}
  saveCfg();refreshSet()});
 $('sens').addEventListener('input',e=>{cfg.sens=+e.target.value;saveCfg();refreshSet()});
 function goFS(){
@@ -800,7 +857,8 @@ function goFS(){
 function lockPointer(){if(cfg.scheme!=='modern'||isTouch)return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
 function newGame(){
  P.hp=100;P.ammo=40;P.weapon=1;P.score=0;P.clip=[0,8,30];P.reloading=0;P.lives=3;P.nextLife=5000;P.dead=false;P.fire=false;
- level=1;lvSeed=(Math.random()*1e9)|0;genLevel();state='play';ov.style.display='none';showMsg('FLOOR 1',2.2);
+ level=1;lvSeed=(Math.random()*1e9)|0;genLevel();state='play';ov.style.display='none';
+ showMsg(isFree()?'FREE 모드 · M: 지도 전환':'FLOOR 1',2.2);
 }
 function respawn(){
  P.lives--;P.hp=100;P.ammo=Math.max(P.ammo,25);P.dead=false;P.weapon=1;P.clip=[0,8,30];P.reloading=0;P.fire=false;P.score=Math.max(0,P.score-0);
@@ -837,7 +895,7 @@ addEventListener('keydown',e=>{
   if(cfg.scheme==='classic'&&(e.code==='ControlLeft'||e.code==='ControlRight'||e.code==='KeyF')&&!e.repeat&&!P.dead)P.clicked=true;
   if(e.code==='Escape'||e.code==='KeyP')pauseGame();
  }
- if(e.code==='KeyM'&&!e.repeat)mapOn=!mapOn;
+ if(e.code==='KeyM'&&!e.repeat)cycleMap();
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;P.fire=false});
@@ -874,6 +932,7 @@ tbtn('tFire',()=>{P.fire=true;P.clicked=true},()=>{P.fire=false});
 tbtn('tWpn',()=>setWeapon((P.weapon+1)%3));
 tbtn('tRel',()=>startReload());
 tbtn('tUse',()=>{if(!P.dead)useDoor()});
+tbtn('tMap',()=>cycleMap());
 tbtn('tPause',()=>pauseGame());
 let touchShown=false;
 function updTouch(){
