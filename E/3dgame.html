@@ -2,11 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>WOLF REAL 3D</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",monospace;color:#fff;user-select:none;-webkit-user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",monospace;color:#fff;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none;overscroll-behavior:none}
 #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
 #dmg{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(255,0,0,0) 30%,rgba(190,0,0,.9) 100%);opacity:0;pointer-events:none}
 #pick{position:fixed;inset:0;background:rgba(255,230,120,.22);opacity:0;pointer-events:none}
@@ -23,8 +23,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #msg{position:fixed;left:0;right:0;top:16%;text-align:center;font-size:26px;font-weight:bold;color:#ffe46b;text-shadow:2px 2px #000;pointer-events:none;opacity:0;transition:opacity .3s}
 #fps{position:fixed;left:8px;top:6px;font-size:12px;color:#8f8;opacity:.7}
 #mm{position:fixed;right:10px;top:10px;width:150px;height:150px;border:2px solid #6376e0;pointer-events:none;image-rendering:pixelated}
-#ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10}
-#ovbox{text-align:center;max-width:620px;padding:24px}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;justify-content:center;cursor:pointer;z-index:10;overflow:auto;touch-action:pan-y}
+#ovbox{text-align:center;max-width:660px;padding:24px;margin:auto}
 #ovbox h1{font-size:54px;letter-spacing:6px;color:#e33;text-shadow:3px 3px #000,0 0 20px #800}
 #ovbox h1 span{color:#ffe46b}
 #ovtxt{margin:18px 0;line-height:1.8;font-size:15px;color:#ddd;white-space:pre-line}
@@ -36,6 +36,32 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #set button{background:#10163a;color:#ddd;border:2px solid #4a5ab8;padding:8px 12px;font:inherit;font-size:13px;cursor:pointer}
 #set button.on{border-color:#ffe46b;color:#ffe46b;background:#242b66}
 #set input{width:160px}
+#set .dbtn{flex:1 1 45%;text-align:left}
+#set .dbtn small{display:block;font-size:11px;color:#9fb0ff;margin-top:2px}
+#set .dbtn.on small{color:#ffe46b}
+/* 터치 컨트롤 */
+#touch{position:fixed;inset:0;display:none;pointer-events:none;z-index:5;touch-action:none}
+#joyZone{position:absolute;left:0;bottom:68px;width:42%;height:65%;pointer-events:auto}
+#lookZone{position:absolute;right:0;top:0;bottom:68px;width:58%;pointer-events:auto}
+#joyBase{position:absolute;display:none;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:2px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);pointer-events:none}
+#joyKnob{position:absolute;left:50%;top:50%;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.35);transform:translate(-50%,-50%)}
+.tb{position:absolute;pointer-events:auto;border:3px solid rgba(255,228,107,.8);background:rgba(20,30,90,.5);color:#ffe46b;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;text-shadow:1px 1px #000}
+.tb.p{background:rgba(255,228,107,.45)}
+.tb.sm{width:54px;height:54px;font-size:13px}
+#tFire{right:22px;bottom:84px;width:88px;height:88px;font-size:16px;background:rgba(200,30,30,.5)}
+#tFire.p{background:rgba(255,80,60,.7)}
+#tWpn{right:24px;bottom:184px}
+#tRel{right:124px;bottom:96px}
+#tUse{right:114px;bottom:164px}
+#tPause{left:50%;top:8px;margin-left:-20px;width:40px;height:40px;font-size:14px;border-radius:8px}
+@media (pointer:coarse){#mm{width:100px;height:100px;right:6px;top:6px}#fps{display:none}}
+@media (max-height:520px){
+ #bar{height:48px;border-top-width:3px}.cell{padding-top:2px}.cell small{font-size:9px}.cell b{font-size:18px}
+ #joyZone,#lookZone{bottom:48px}#tFire{bottom:62px}#tRel{bottom:74px}#tUse{bottom:140px}#tWpn{bottom:158px}
+ #ovbox{padding:8px}#ovbox h1{font-size:30px;letter-spacing:3px}#ovtxt{margin:8px 0;font-size:12px;line-height:1.5}
+ #set{margin:6px 0 10px}.row{margin:4px 0}.row span{font-size:12px;width:70px}#set button{padding:5px 8px;font-size:11px}
+ #ovbtn{padding:8px 20px;font-size:16px}#msg{font-size:20px;top:12%}
+}
 </style>
 </head>
 <body>
@@ -57,13 +83,28 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
  <h1>WOLF <span>REAL 3D</span></h1>
  <div id="ovtxt"></div>
  <div id="set">
-  <div class="row"><span>조작 방식</span>
+  <div class="row"><span>난이도</span>
+   <button class="dbtn" data-diff="0">1 · 쉬움<small>Can I play, Daddy?</small></button>
+   <button class="dbtn" data-diff="1">2 · 보통<small>Don't hurt me.</small></button>
+   <button class="dbtn" data-diff="2">3 · 어려움<small>Bring 'em on!</small></button>
+   <button class="dbtn" data-diff="3">4 · 최고<small>I am Death incarnate!</small></button></div>
+  <div class="row" id="rowScheme"><span>조작 방식</span>
    <button data-scheme="modern">현대식 · WASD + 마우스</button>
    <button data-scheme="classic">클래식 · 방향키 + Ctrl</button></div>
-  <div class="row"><span>마우스 감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
+  <div class="row"><span>감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
  </div>
  <div id="ovbtn">클릭하여 시작</div>
 </div></div>
+
+<div id="touch">
+ <div id="joyZone"></div><div id="lookZone"></div>
+ <div id="joyBase"><div id="joyKnob"></div></div>
+ <div class="tb" id="tFire">FIRE</div>
+ <div class="tb sm" id="tWpn">무기</div>
+ <div class="tb sm" id="tRel">R</div>
+ <div class="tb sm" id="tUse">문</div>
+ <div class="tb" id="tPause">II</div>
+</div>
 
 <script>
 'use strict';
@@ -255,17 +296,28 @@ const WEAPONS=[
  {name:'PISTOL',cd:.28,dmg:[16,28],spread:.012,range:40},
  {name:'MACHINE GUN',cd:.085,auto:true,dmg:[10,18],spread:.035,range:40}];
 const keys={};
-const cfg={scheme:'modern',sens:4};
-try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens}catch(e){}
+const cfg={scheme:'modern',sens:4,diff:0};
+const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+/* 원작 난이도: 1 Can I play, Daddy? / 2 Don't hurt me. / 3 Bring 'em on! / 4 I am Death incarnate!
+   (0번째 = 기존 기본 설정) */
+const DIFFS=[
+ {extra:0,hp:1,dmg:1,cd:1,acc:1,spd:1,health:5,heavy:0,off:0},
+ {extra:1,hp:1,dmg:1.25,cd:.85,acc:1.1,spd:1.08,health:4,heavy:.04,off:.05},
+ {extra:2,hp:1.15,dmg:1.5,cd:.7,acc:1.2,spd:1.16,health:3,heavy:.09,off:.1},
+ {extra:3,hp:1.3,dmg:1.8,cd:.55,acc:1.35,spd:1.25,health:2,heavy:.16,off:.15}];
+try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens;if(sv.diff>=0&&sv.diff<=3)cfg.diff=sv.diff|0}catch(e){}
+if(isTouch)cfg.scheme='modern';
 const CLIP=[0,8,30];
 function saveCfg(){try{localStorage.setItem('wolfreal3d_cfg',JSON.stringify(cfg))}catch(e){}}
 function helpText(){
+ if(isTouch)return '[터치 조작]\n왼쪽 화면 드래그 = 이동 (끝까지 밀면 달리기)\n오른쪽 화면 드래그 = 시점 회전\nFIRE 발사  ·  R 재장전  ·  무기 버튼으로 교체  ·  문 버튼 (가까이 가면 자동으로도 열림)\nII 일시정지';
  return cfg.scheme==='classic'
  ?'[클래식 울펜슈타인 조작]\n↑ ↓ 이동  ·  ← → 회전  ·  Alt+← → 또는 Z / X 좌우 이동\nCtrl 또는 F 발사  ·  Space 문 열기  ·  Shift 달리기\n1 / 2 / 3 무기 교체  ·  M 미니맵  ·  Esc 일시정지\n재장전 없이 탄약이 바로 소모됩니다.'
  :'[현대식 조작]\nWASD 이동  ·  마우스 시점  ·  좌클릭 발사  ·  R 재장전\nSpace / E 문 열기 (가까이 가면 자동으로도 열림)  ·  Shift 달리기\n1 / 2 / 3 또는 휠로 무기 교체  ·  M 미니맵  ·  Esc 일시정지';
 }
 function refreshSet(){
- for(const b of document.querySelectorAll('#set button'))b.classList.toggle('on',b.dataset.scheme===cfg.scheme);
+ for(const b of document.querySelectorAll('#set button'))b.classList.toggle('on',b.dataset.diff!==undefined?+b.dataset.diff===cfg.diff:b.dataset.scheme===cfg.scheme);
+ $('rowScheme').style.display=isTouch?'none':'';
  $('sens').value=cfg.sens;$('sensv').textContent=cfg.sens;
  $('cross').style.display=cfg.scheme==='classic'?'none':'';
  if(state==='menu'||state==='paused')$('ovtxt').textContent=helpText()+'\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!';
@@ -365,16 +417,17 @@ function genLevel(){
  enemies=[];items=[];particles=[];
  const free=[];for(let i=0;i<N*N;i++)if(grid[i]===0&&dist[i]>=3)free.push(i);
  const pick=(min)=>{for(let t=0;t<200;t++){const c=free[rng()*free.length|0];if(dist[c]>=min){return c}}return free[0]};
- const ne=Math.min(1+Math.round(level*.5),5);
+ const DF=DIFFS[cfg.diff];
+ const ne=Math.min(1+Math.round(level*.5)+DF.extra,5+DF.extra);
  for(let i=0;i<ne;i++){
-  const c=pick(9),r=rng();const ph=level>=2?Math.min(.04+level*.05,.3):0,po=Math.min(.12+level*.05,.4);
+  const c=pick(9),r=rng();const ph=(level>=2||DF.heavy>0)?Math.min(.04+level*.05+DF.heavy,.45):0,po=Math.min(.12+level*.05+DF.off,.5);
   const type=r<ph?'heavy':r<ph+po?'officer':'guard';
   const T=ETYPES[type];
-  enemies.push({x:c%N+.5,z:((c/N)|0)+.5,ang:rng()*6.28,type:T,tn:type,hp:T.hp,state:'idle',seed:rng()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,r:.28*T.s,h:.95*T.s,moving:false});
+  enemies.push({x:c%N+.5,z:((c/N)|0)+.5,ang:rng()*6.28,type:T,tn:type,hp:Math.round(T.hp*DF.hp),state:'idle',seed:rng()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,r:.28*T.s,h:.95*T.s,moving:false});
  }
  totalEnemies=ne;
  const addItems=(kind,n,min)=>{for(let i=0;i<n;i++){const c=pick(min);items.push({kind,x:c%N+.5,z:((c/N)|0)+.5,t:rng()*6})}};
- addItems('health',5,5);addItems('ammo',8,4);addItems('treasure',10,3);
+ addItems('health',DF.health,5);addItems('ammo',8,4);addItems('treasure',10,3);
  // 보물방: 방 안에 보물·탄약이 쌓여 있고 경비병이 지킨다 (바닥이 금색)
  const mkE=(tn,x,z)=>{const T=ETYPES[tn];return{x,z,ang:rng()*6.28,type:T,tn,hp:T.hp,state:'idle',seed:rng()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,r:.28*T.s,h:.95*T.s,moving:false}};
  const taken=new Set(items.map(it=>(it.z|0)*N+(it.x|0)));
@@ -490,11 +543,12 @@ function shoot(){
 }
 function enemyFire(e,d){
  const T=e.type;e.atk=.3;e.muz=.07;
- if(T.burst){e.burst++;if(e.burst>=T.burst){e.burst=0;e.cd=1.1+Math.random()*.5}else e.cd=T.cd}
- else e.cd=T.cd*(.8+Math.random()*.5);
+ const DF=DIFFS[cfg.diff];
+ if(T.burst){e.burst++;if(e.burst>=T.burst){e.burst=0;e.cd=(1.1+Math.random()*.5)*DF.cd}else e.cd=T.cd*DF.cd}
+ else e.cd=T.cd*DF.cd*(.8+Math.random()*.5);
  sfx.enemy(d);
- const p=clamp(.95-d*.055,.12,.85)*(P.moving?.8:1);
- if(Math.random()<p)hurt(rint(T.dmg));
+ const p=Math.min(.97,clamp(.95-d*.055,.12,.85)*DF.acc)*(P.moving?.8:1);
+ if(Math.random()<p)hurt(Math.max(1,Math.round(rint(T.dmg)*DF.dmg)));
 }
 function updEnemy(e,dt){
  if(e.state==='dead'){e.fall=Math.min(1,e.fall+dt*2);return}
@@ -522,7 +576,7 @@ function updEnemy(e,dt){
    for(const [ax,az] of D4){const nx=ex+ax,nz=ez+az;if(nx<0||nz<0||nx>=N||nz>=N)continue;const f=flow[nz*N+nx];if(f>=0&&(best<0||f<best)){best=f;bx=nx;bz=nz}}
    if(bx<0){tx=P.x;tz=P.z}else{tx=bx+.5;tz=bz+.5}
   }
-  const mx=tx-e.x,mz=tz-e.z,ml=Math.hypot(mx,mz)||1,sp=T.spd*dt;
+  const mx=tx-e.x,mz=tz-e.z,ml=Math.hypot(mx,mz)||1,sp=T.spd*DIFFS[cfg.diff].spd*dt;
   moveActor(e,mx/ml*sp,mz/ml*sp,.25);
   for(const o of enemies){if(o===e||o.state==='dead')continue;const ox=e.x-o.x,oz=e.z-o.z,od=Math.hypot(ox,oz);if(od<.5&&od>.001)moveActor(e,ox/od*dt*1.2,oz/od*dt*1.2,.25)}
   if(d<.6)moveActor(e,-ux*dt*2,-uz*dt*2,.25);
@@ -569,8 +623,9 @@ function updatePlayer(dt){
  }else{
   f=(k.KeyW||k.ArrowUp?1:0)-(k.KeyS||k.ArrowDown?1:0);s=(k.KeyD?1:0)-(k.KeyA?1:0);turn=(k.ArrowLeft?1:0)-(k.ArrowRight?1:0);
  }
+ let tmag=0;if(isTouch&&(TC.jx||TC.jy)){f+=TC.jy;s+=TC.jx;tmag=Math.hypot(TC.jx,TC.jy)}
  P.yaw+=turn*dt*(classic?2.6:2.3);
- const run=k.ShiftLeft||k.ShiftRight,sp=run?4.8:3.1;
+ const run=k.ShiftLeft||k.ShiftRight||tmag>.92,sp=run?4.8:3.1;
  const fx=-Math.sin(P.yaw),fz=-Math.cos(P.yaw),rx=Math.cos(P.yaw),rz=-Math.sin(P.yaw);
  let vx=fx*f+rx*s,vz=fz*f+rz*s;const l=Math.hypot(vx,vz);if(l>0){vx/=l;vz/=l}
  const a=Math.min(1,dt*12);P.vx+=(vx*sp-P.vx)*a;P.vz+=(vz*sp-P.vz)*a;
@@ -606,7 +661,7 @@ function update(dt){
  if(state==='play'&&exitCell&&(P.x|0)===exitCell.x&&(P.z|0)===exitCell.z)levelClear();
  if(state==='dead'&&P.deadT>1.2&&$('ov').style.display!=='flex'){
   $('ovtxt').textContent=P.lives>0?`당신은 쓰러졌다...\n남은 목숨: ${P.lives}`:`GAME OVER\n\n최종 점수: ${P.score}`;
-  $('ovbtn').textContent=P.lives>0?'클릭하여 재도전':'클릭하여 새 게임';$('set').style.display='none';$('ovbtn').style.display='inline-block';$('ov').style.display='flex';$('ov').style.cursor='pointer';
+  $('ovbtn').textContent=P.lives>0?'클릭하여 재도전':'클릭하여 새 게임';$('set').style.display=P.lives>0?'none':'block';refreshSet();$('ovbtn').style.display='inline-block';$('ov').style.display='flex';$('ov').style.cursor='pointer';
  }
 }
 
@@ -678,7 +733,7 @@ function drawBuffer(){
  gl.drawArrays(gl.TRIANGLES,0,dyn.n/12);dyn.n=0;
 }
 function render(){
- const dpr=Math.min(window.devicePixelRatio||1,1.5),W=Math.floor(innerWidth*dpr),Hh=Math.floor(innerHeight*dpr);
+ const dpr=Math.min(window.devicePixelRatio||1,isTouch?1.25:1.5),W=Math.floor(innerWidth*dpr),Hh=Math.floor(innerHeight*dpr);
  if(cv.width!==W||cv.height!==Hh){cv.width=W;cv.height=Hh}
  gl.viewport(0,0,W,Hh);gl.clearColor(.01,.01,.02,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
  if(!grid)return;
@@ -734,9 +789,15 @@ function updHud(){
 /* ================= 입력 / 상태 전환 ================= */
 const ov=$('ov'),ovtxt=$('ovtxt'),ovbtn=$('ovbtn');
 const HELP_OLD='WASD 이동  ·  마우스 시점  ·  좌클릭 발사\nShift 달리기  ·  1 / 2 / 3 무기 교체 (휠도 가능)\nM 미니맵  ·  ← → 방향키로도 회전 가능\n\n적을 쓰러뜨리고 초록색 출구 벽 앞 칸에 도달하면 다음 층!\n문은 가까이 가면 자동으로 열립니다.';
-$('set').addEventListener('click',e=>{e.stopPropagation();const b=e.target.closest('button');if(!b)return;cfg.scheme=b.dataset.scheme;P.reloading=0;saveCfg();refreshSet()});
+$('set').addEventListener('click',e=>{e.stopPropagation();const b=e.target.closest('button');if(!b)return;
+ if(b.dataset.diff!==undefined)cfg.diff=+b.dataset.diff;else{cfg.scheme=isTouch?'modern':b.dataset.scheme;P.reloading=0}
+ saveCfg();refreshSet()});
 $('sens').addEventListener('input',e=>{cfg.sens=+e.target.value;saveCfg();refreshSet()});
-function lockPointer(){if(cfg.scheme!=='modern')return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
+function goFS(){
+ try{const el=document.documentElement,f=el.requestFullscreen||el.webkitRequestFullscreen;if(f&&!document.fullscreenElement){const r=f.call(el);if(r&&r.catch)r.catch(()=>{})}}catch(e){}
+ try{if(screen.orientation&&screen.orientation.lock){const r=screen.orientation.lock('landscape');if(r&&r.catch)r.catch(()=>{})}}catch(e){}
+}
+function lockPointer(){if(cfg.scheme!=='modern'||isTouch)return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
 function newGame(){
  P.hp=100;P.ammo=40;P.weapon=1;P.score=0;P.clip=[0,8,30];P.reloading=0;P.lives=3;P.nextLife=5000;P.dead=false;P.fire=false;
  level=1;lvSeed=(Math.random()*1e9)|0;genLevel();state='play';ov.style.display='none';showMsg('FLOOR 1',2.2);
@@ -746,7 +807,7 @@ function respawn(){
  genLevel();state='play';ov.style.display='none';showMsg('FLOOR '+level,2);
 }
 ov.addEventListener('click',()=>{
- initAudio();
+ initAudio();if(isTouch)goFS();
  if(state==='menu'||(state==='dead'&&P.lives<=0)){newGame();lockPointer()}
  else if(state==='dead'){respawn();lockPointer()}
  else if(state==='paused'){state='play';ov.style.display='none';lockPointer()}
@@ -780,12 +841,51 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;P.fire=false});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseGame()});
+
+/* ================= 터치 컨트롤 ================= */
+const TC={jid:null,jx:0,jy:0,ox:0,oy:0,lid:null,lx:0,ly:0};
+const getT=(e,id)=>{if(id===null)return null;for(const t of e.changedTouches)if(t.identifier===id)return t;return null};
+const jb=$('joyBase'),jk=$('joyKnob'),JR=55,NP={passive:false};
+function joyReset(){TC.jid=null;TC.jx=TC.jy=0;jb.style.display='none'}
+const jz=$('joyZone'),lz=$('lookZone');
+jz.addEventListener('touchstart',e=>{e.preventDefault();initAudio();if(TC.jid!==null)return;const t=e.changedTouches[0];
+ TC.jid=t.identifier;TC.ox=t.clientX;TC.oy=t.clientY;jb.style.left=t.clientX+'px';jb.style.top=t.clientY+'px';
+ jk.style.transform='translate(-50%,-50%)';jb.style.display='block'},NP);
+jz.addEventListener('touchmove',e=>{e.preventDefault();const t=getT(e,TC.jid);if(!t)return;
+ let dx=t.clientX-TC.ox,dy=t.clientY-TC.oy;const l=Math.hypot(dx,dy);if(l>JR){dx*=JR/l;dy*=JR/l}
+ jk.style.transform=`translate(calc(-50% + ${dx}px),calc(-50% + ${dy}px))`;
+ const m=Math.hypot(dx,dy)/JR;if(m<.15){TC.jx=TC.jy=0}else{TC.jx=dx/JR;TC.jy=-dy/JR}},NP);
+const joyEnd=e=>{e.preventDefault();if(getT(e,TC.jid))joyReset()};
+jz.addEventListener('touchend',joyEnd,NP);jz.addEventListener('touchcancel',joyEnd,NP);
+lz.addEventListener('touchstart',e=>{e.preventDefault();initAudio();if(TC.lid!==null)return;const t=e.changedTouches[0];TC.lid=t.identifier;TC.lx=t.clientX;TC.ly=t.clientY},NP);
+lz.addEventListener('touchmove',e=>{e.preventDefault();const t=getT(e,TC.lid);if(!t)return;
+ if(state==='play'&&!P.dead){const sn=.0022*cfg.sens/4*1.8;P.yaw-=(t.clientX-TC.lx)*sn;P.pitch=clamp(P.pitch-(t.clientY-TC.ly)*sn,-1.3,1.3)}
+ TC.lx=t.clientX;TC.ly=t.clientY},NP);
+const lookEnd=e=>{e.preventDefault();if(getT(e,TC.lid))TC.lid=null};
+lz.addEventListener('touchend',lookEnd,NP);lz.addEventListener('touchcancel',lookEnd,NP);
+function tbtn(id,down,up){
+ const el=$(id);
+ el.addEventListener('touchstart',e=>{e.preventDefault();initAudio();el.classList.add('p');if(state==='play')down()},NP);
+ const end=e=>{e.preventDefault();el.classList.remove('p');if(up)up()};
+ el.addEventListener('touchend',end,NP);el.addEventListener('touchcancel',end,NP);
+}
+tbtn('tFire',()=>{P.fire=true;P.clicked=true},()=>{P.fire=false});
+tbtn('tWpn',()=>setWeapon((P.weapon+1)%3));
+tbtn('tRel',()=>startReload());
+tbtn('tUse',()=>{if(!P.dead)useDoor()});
+tbtn('tPause',()=>pauseGame());
+let touchShown=false;
+function updTouch(){
+ const s=isTouch&&state==='play';
+ if(s!==touchShown){touchShown=s;$('touch').style.display=s?'block':'none';if(!s){joyReset();TC.lid=null;P.fire=false}}
+}
 
 /* ================= 메인 루프 ================= */
 let last=performance.now(),fpsA=0,fpsN=0,fpsT=0;
 function loop(now){
  const dt=Math.min(.05,(now-last)/1000);last=now;
- update(dt);render();updHud();drawMap();
+ update(dt);render();updHud();drawMap();updTouch();
  fpsA+=dt;fpsN++;fpsT+=dt;if(fpsT>.5){$('fps').textContent=Math.round(fpsN/fpsA)+' FPS';fpsA=fpsN=0;fpsT=0}
  requestAnimationFrame(loop);
 }
