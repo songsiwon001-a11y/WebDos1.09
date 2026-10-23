@@ -2814,15 +2814,20 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             }).catch(() => null);
             // 목록 없이 폴더에 실제로 있는 파일들을 찾는다 (디렉터리 인덱스 / GitHub / jsDelivr)
             function discoverAlt(L) {
-                const jobs = [srcContents(L), srcIndex(L), srcIndex(L.toUpperCase()), srcGithub(L), srcJsd(L)].map(verified);
+                // GitHub API 는 비인증 시 시간당 60회 제한이라, contents 가 실패했을 때만 trees 를 쓴다 (호출 수 절약)
+                const api = srcContents(L).then(r => r || srcGithub(L));
+                const jobs = [api, srcIndex(L), srcIndex(L.toUpperCase()), srcJsd(L)].map(verified);
                 return Promise.race([firstTruthy(jobs), new Promise(r => setTimeout(() => r(null), 15000))]);
             }
             // 모든 탐색 방법을 동시에 시작해서, '실제로 존재가 확인된' 첫 결과를 사용
             function discover(L) {
                 const jobs = [];
                 for (const d of [L, L.toUpperCase()]) { jobs.push(srcManifest(d)); jobs.push(srcIndex(d)); }
-                jobs.push(srcContents(L));   // 폴더 안의 zip 을 직접 찾는다 (files.json 불필요)
-                jobs.push(srcGithub(L));
+                // 폴더 안의 파일을 직접 찾는다 (files.json 불필요).
+                // 예전에는 contents 와 trees(최대 6회)를 동시에 불러 API 한도(시간당 60회)를 금방 소진했고,
+                // 한도에 걸리면 낡은 jsDelivr 목록만 남아 files.json 없는 폴더(HTML 폴더 E)만 로드가 실패했다.
+                // 이제 contents 가 실패했을 때만 trees 로 넘어간다.
+                jobs.push(srcContents(L).then(r => r || srcGithub(L)));
                 jobs.push(srcJsd(L));
                 return firstTruthy(jobs.map(verified));
             }
