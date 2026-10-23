@@ -537,7 +537,8 @@ function decodeEnemy(id){
 function makeEnemy(tn,x,z,dir,state,amb,extra){
  const T=ETYPES[tn],DF=DIFFS[cfg.diff];
  const e={x:x+.5,z:z+.5,ang:dirYaw(dir*2),type:T,tn,hp:Math.round(T.hp*DF.hp),state,seed:Math.random()*10,walk:0,cd:1,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,
-  r:T.r||.28*T.s,h:T.h||.95*T.s,moving:false,amb:!!amb,boss:!!T.boss,pd:dir*2,ptx:x+.5,ptz:z+.5};
+  r:T.r||.28*T.s,h:T.h||.95*T.s,moving:false,amb:!!amb,boss:!!T.boss,pd:dir*2,ptx:x+.5,ptz:z+.5,
+  rareDoorSense:Math.random()<0.005};
  if(extra)Object.assign(e,extra);
  return e;
 }
@@ -666,7 +667,7 @@ function shoot(){
  P.cd=w.cd;P.kick=1;
  if(!w.melee){P.flash=1;(P.weapon===1?sfx.pistol:sfx.mg)();
   // 총소리: 직선거리가 아니라 실제 이동 경로(벽을 돌아가는 거리) 기준으로 들린다
-  for(const e of enemies)if((e.state==='idle'&&!e.amb)||e.state==='patrol'){const f=flow[(e.z|0)*N+(e.x|0)];if(f>=0&&f<=12)wake(e)}}
+  for(const e of enemies)if((e.state==='idle'&&!e.amb)||e.state==='patrol'){const f=flow[(e.z|0)*N+(e.x|0)];if(f>=0&&f<=5)wake(e)}}
  else sfx.knife();
  const cp=Math.cos(P.pitch);
  let dx=-Math.sin(P.yaw)*cp,dy=Math.sin(P.pitch),dz=-Math.cos(P.yaw)*cp;
@@ -707,7 +708,7 @@ function patrolStep(e,dt){
    const nx=cx+DV[e.pd][0],nz=cz+DV[e.pd][1];
    const g=gAt(nx,nz);
    if(g===0&&!decorBlock[nz*N+nx]&&!(DV[e.pd][0]&&DV[e.pd][1]&&(isWall(gAt(cx+DV[e.pd][0],cz))||isWall(gAt(cx,cz+DV[e.pd][1]))))){ok=true;e.ptx=nx+.5;e.ptz=nz+.5}
-   else if(g===9&&!doorAt[nz*N+nx].lock&&!(DV[e.pd][0]&&DV[e.pd][1])){ok=true;e.ptx=nx+.5;e.ptz=nz+.5;doorAt[nz*N+nx].hold=1.5}
+   else if(g===9&&e.rareDoorSense&&!doorAt[nz*N+nx].lock&&!(DV[e.pd][0]&&DV[e.pd][1])){ok=true;e.ptx=nx+.5;e.ptz=nz+.5;doorAt[nz*N+nx].hold=1.5}
    else e.pd=(e.pd+4)&7;
   }
   if(!ok){e.ptx=e.x;e.ptz=e.z;e.moving=false;return}
@@ -723,7 +724,7 @@ function updEnemy(e,dt){
  if(e.state==='dead'){e.fall=Math.min(1,e.fall+dt*2);return}
  e.flash=Math.max(0,e.flash-dt);e.muz=Math.max(0,e.muz-dt);e.pain=Math.max(0,e.pain-dt);e.atk=Math.max(0,e.atk-dt);e.cd-=dt;
  const dx=P.x-e.x,dz=P.z-e.z,d=Math.hypot(dx,dz)||.001,ux=dx/d,uz=dz/d;
- const los=d<20&&clearLine(e.x,e.z,P.x,P.z);
+ const los=e.rareDoorSense&&d<20&&clearLine(e.x,e.z,P.x,P.z);
  const toP=Math.atan2(-dx,-dz);
  e.moving=false;
  if(e.state==='idle'||e.state==='patrol'){
@@ -786,7 +787,7 @@ function updDoors(dt){
   const cx=d.x+.5,cz=d.z+.5;const pr=cfg.scheme==='classic'?.68:1.1;let who=(!P.dead&&Math.abs(P.x-cx)<pr&&Math.abs(P.z-cz)<pr)?P:null;
   if(d.msgT>0)d.msgT-=dt;
   if(who&&d.lock&&!P.keys[d.lock-1]){who=null;if(d.open<=.02)lockedMsg(d)}
-  if(!who&&!d.lock)for(const e of enemies)if(e.state!=='dead'&&e.state!=='idle'&&Math.abs(e.x-cx)<1&&Math.abs(e.z-cz)<1){who=e;break}
+  if(!who&&!d.lock)for(const e of enemies)if(e.rareDoorSense&&e.state!=='dead'&&e.state!=='idle'&&Math.abs(e.x-cx)<1&&Math.abs(e.z-cz)<1){who=e;break}
   if(who){if(d.open<=.02&&d.hold<=0)setDoorDir(d,who.x,who.z);d.hold=1.5}else d.hold-=dt;
   const target=d.hold>0?1:0,prev=d.open;
   d.open+=clamp(target-d.open,-dt*1.6,dt*1.6);
