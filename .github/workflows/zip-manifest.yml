@@ -1,12 +1,14 @@
-# 이 파일을 저장소의 .github/workflows/zip-manifest.yml 로 넣으세요.
-# zip/jsdos 를 push 하면 각 폴더에 files.json(zip 이름 목록)을 자동으로 만들어 커밋합니다.
-# → WEB-DOS 에서 CD A 후 LOAD 만 입력하면 폴더 안의 모든 zip 을 불러옵니다.
+# 저장소의 .github/workflows/zip-manifest.yml 을 이 파일로 교체하세요.
+# zip/jsdos/html 을 push 하면 각 폴더에 files.json(파일 이름 목록)을 자동으로 만들어 커밋합니다.
+# → files.json 이 있으면 WEB-DOS 가 GitHub API(호출 한도 있음) 없이 바로 폴더를 불러옵니다.
 name: zip manifest
 on:
   push:
     paths:
       - '**/*.zip'
       - '**/*.jsdos'
+      - '**/*.html'
+      - '!index.html'
   workflow_dispatch:
 permissions:
   contents: write
@@ -15,13 +17,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Write files.json in every folder that has zips
+      - name: Write files.json in every folder that has zips/html
         run: |
           python3 - <<'PY'
           import os, json
           for root, dirs, files in os.walk('.'):
               dirs[:] = [d for d in dirs if not d.startswith('.')]
-              z = sorted(f for f in files if f.lower().endswith(('.zip', '.jsdos')))
+              if root == '.':
+                  continue  # 루트(index.html 등)는 제외
+              z = sorted(f for f in files if f.lower().endswith(('.zip', '.jsdos', '.html', '.htm')))
               if z:
                   with open(os.path.join(root, 'files.json'), 'w', encoding='utf-8') as fp:
                       json.dump(z, fp, ensure_ascii=False)
