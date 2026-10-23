@@ -101,7 +101,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
    <button class="dbtn" data-diff="0">1 · 쉬움<small>Can I play, Daddy?</small></button>
    <button class="dbtn" data-diff="1">2 · 보통<small>Don't hurt me.</small></button>
    <button class="dbtn" data-diff="2">3 · 어려움<small>Bring 'em on!</small></button>
-   <button class="dbtn" data-diff="3">4 · 최고<small>I am Death incarnate!</small></button></div>
+   <button class="dbtn" data-diff="3">4 · 최고<small>I am Death incarnate!</small></button>
+   <button class="dbtn" data-diff="4">5 · 초쉬움<small>Can I Play, Daddy?의 적 절반</small></button></div>
   <div class="row" id="rowSens"><span>감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
  </div>
  <div id="ovbtn">클릭하여 시작</div>
@@ -187,8 +188,18 @@ function makeAtlas(){
  tile(8,()=>elevator(false));
  tile(16,()=>elevator(true));
  tile(17,()=>bricks([60,82,140],'#1a2038'));
- tile(9,()=>{bricks([60,82,140],'#1a2038');x.fillStyle='#e8c64a';x.beginPath();
-  for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?7:16;x.lineTo(32+Math.cos(a)*rr,32+Math.sin(a)*rr)}x.closePath();x.fill()});
+ tile(9,()=>{bricks([60,82,140],'#1a2038');
+  // 역사적 적대 세력 표식: 붉은 패널 + 흰 원 + 검은 하켄크로이츠 문양
+  x.fillStyle='#a20f18';x.fillRect(5,4,54,56);
+  x.fillStyle='#f1eee5';x.beginPath();x.arc(32,32,22,0,Math.PI*2);x.fill();
+  x.save();x.translate(32,32);x.rotate(Math.PI/4);x.fillStyle='#111';
+  x.beginPath();
+  x.moveTo(-5,-16);x.lineTo(5,-16);x.lineTo(5,-5);x.lineTo(16,-5);
+  x.lineTo(16,5);x.lineTo(5,5);x.lineTo(5,16);x.lineTo(-5,16);
+  x.lineTo(-5,5);x.lineTo(-16,5);x.lineTo(-16,-5);x.lineTo(-5,-5);
+  x.closePath();x.fill();x.restore();
+  x.strokeStyle='rgba(0,0,0,.35)';x.strokeRect(5.5,4.5,53,55);
+ });
  tile(10,()=>{bricks([112,114,122],'#26262b');x.fillStyle='#8a1414';x.fillRect(18,2,28,50);x.beginPath();x.moveTo(18,52);x.lineTo(32,62);x.lineTo(46,52);x.fill();
   x.fillStyle='#e8c64a';x.fillRect(18,2,28,4);x.fillRect(29,14,6,6);x.fillRect(29,26,6,6)});
  tile(11,()=>{bricks([112,114,122],'#26262b');x.fillStyle='#5a3a1a';x.fillRect(12,10,40,34);x.fillStyle='#2b4a6b';x.fillRect(16,14,32,26);
@@ -277,9 +288,11 @@ const dyn={d:new Float32Array(12*36*2500),n:0};
 /* ================= 오디오 ================= */
 let AC=null,master=null,nbuf=null;
 function initAudio(){
- if(AC)return;
+ if(AC){if(AC.state==='suspended')AC.resume().catch(()=>{});return;}
  try{AC=new(window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=.5;master.connect(AC.destination);
-  nbuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=nbuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}catch(e){AC=null}
+  nbuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=nbuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  if(AC.state==='suspended')AC.resume().catch(()=>{});
+ }catch(e){AC=null}
 }
 function tone(f0,f1,dur,type,vol,dl=0){
  if(!AC)return;const t=AC.currentTime+dl;const o=AC.createOscillator(),g=AC.createGain();
@@ -325,14 +338,14 @@ const WEAPONS=[
 const keys={};
 const cfg={scheme:'classic',sens:4,diff:0,mode:'normal',ep:1};
 const isTouch=(('ontouchstart' in window)||navigator.maxTouchPoints>0)&&window.matchMedia('(pointer:coarse)').matches;
-/* 원작 난이도: 1 Can I play, Daddy? / 2 Don't hurt me. / 3 Bring 'em on! / 4 I am Death incarnate!
-   (0번째 = 기존 기본 설정) */
+/* 원작 4개 난이도 + 초쉬움 */
 const DIFFS=[
  {extra:0,hp:1,dmg:1,cd:1,acc:1,spd:1,health:5,heavy:0,off:0},
  {extra:1,hp:1,dmg:1.25,cd:.85,acc:1.1,spd:1.08,health:4,heavy:.04,off:.05},
  {extra:2,hp:1.15,dmg:1.5,cd:.7,acc:1.2,spd:1.16,health:3,heavy:.09,off:.1},
- {extra:3,hp:1.3,dmg:1.8,cd:.55,acc:1.35,spd:1.25,health:2,heavy:.16,off:.15}];
-try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens;if(sv.diff>=0&&sv.diff<=3)cfg.diff=sv.diff|0;if(sv.mode==='free'||sv.mode==='normal')cfg.mode=sv.mode;if(sv.ep>=1&&sv.ep<=6)cfg.ep=sv.ep|0}catch(e){}
+ {extra:3,hp:1.3,dmg:1.8,cd:.55,acc:1.35,spd:1.25,health:2,heavy:.16,off:.15},
+ {extra:0,hp:.75,dmg:.65,cd:1.35,acc:.7,spd:.8,health:8,heavy:0,off:0}];
+try{const sv=JSON.parse(localStorage.getItem('wolfreal3d_cfg')||'{}');if(sv.scheme==='classic'||sv.scheme==='modern')cfg.scheme=sv.scheme;if(sv.sens>=1&&sv.sens<=10)cfg.sens=sv.sens;if(sv.diff>=0&&sv.diff<=4)cfg.diff=sv.diff|0;if(sv.mode==='free'||sv.mode==='normal')cfg.mode=sv.mode;if(sv.ep>=1&&sv.ep<=6)cfg.ep=sv.ep|0}catch(e){}
 cfg.scheme='classic'; // 클래식 조작만 지원
 const isFree=()=>cfg.mode==='free';
 const CLIP=[0,8,30];
@@ -579,8 +592,11 @@ function loadWolfMap(idx){
    const d=decodeEnemy(o);if(!d)continue;
    if(d.dead){decor.push({id:'dead',x:x+.5,z:z+.5});continue}
    if(isFree())continue;
+   if(cfg.diff===4&&d.band>0)continue;
    if(d.band===1&&cfg.diff<2)continue;
    if(d.band===2&&cfg.diff<3)continue;
+   // 초쉬움: 일반 적은 좌표 기반으로 절반만 남기고 보스는 유지
+   if(cfg.diff===4&&!ETYPES[d.tn].boss&&(((x*31+z*17+o)&1)===0))continue;
    const e=makeEnemy(d.tn,x,z,d.dir,d.patrol?'patrol':'idle',!d.patrol&&ambush[i],d.gc!==undefined?{gc:d.gc}:null);
    enemies.push(e);
   }
@@ -724,13 +740,15 @@ function updEnemy(e,dt){
  if(e.state==='dead'){e.fall=Math.min(1,e.fall+dt*2);return}
  e.flash=Math.max(0,e.flash-dt);e.muz=Math.max(0,e.muz-dt);e.pain=Math.max(0,e.pain-dt);e.atk=Math.max(0,e.atk-dt);e.cd-=dt;
  const dx=P.x-e.x,dz=P.z-e.z,d=Math.hypot(dx,dz)||.001,ux=dx/d,uz=dz/d;
- const los=e.rareDoorSense&&d<20&&clearLine(e.x,e.z,P.x,P.z);
+ const los=d<20&&clearLine(e.x,e.z,P.x,P.z);
  const toP=Math.atan2(-dx,-dz);
  e.moving=false;
  if(e.state==='idle'||e.state==='patrol'){
   if(e.state==='idle')e.ang+=Math.sin(time*.6+e.seed)*dt*.25;
   else patrolStep(e,dt);
-  if(!P.dead&&los&&d<15&&(Math.abs(angDiff(e.ang,toP))<1.6||d<4))wake(e);
+  // 플레이어를 먼저 발견하는 능력은 0.5% 희귀 적에게만 있음.
+  // 일단 총소리 등으로 깨어난 적은 일반 시야 판정으로 추적·공격할 수 있음.
+  if(!P.dead&&e.rareDoorSense&&los&&d<15&&(Math.abs(angDiff(e.ang,toP))<1.6||d<4))wake(e);
   return;
  }
  if(P.dead)return;
@@ -1142,6 +1160,9 @@ function pauseGame(){
  refreshSet();$('set').style.display='block';
  ovbtn.textContent='클릭하여 계속';ovbtn.style.display='inline-block';ov.style.display='flex';ov.style.cursor='pointer';
 }
+// iframe에서는 Web Audio가 suspended 상태로 남을 수 있으므로 사용자 제스처마다 재개를 시도한다.
+for(const ev of ['pointerdown','touchstart','keydown'])document.addEventListener(ev,()=>initAudio(),{capture:true,passive:true});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&AC&&AC.state==='suspended')AC.resume().catch(()=>{})});
 document.addEventListener('contextmenu',e=>e.preventDefault());
 addEventListener('keydown',e=>{
  if(state==='menu'&&e.code==='Enter'&&!e.repeat){initAudio();if(isTouch)goFS();newGame();lockPointer();return}
