@@ -491,7 +491,17 @@ function useDoor(){
 }
 function lockedMsg(d){if(d.msgT>0)return;d.msgT=1.6;showMsg(d.lock===1?'골드 키가 필요합니다':'실버 키가 필요합니다',1.5);sfx.empty()}
 function useElevator(){
- if(state!=='play'||P.dead||exitT>0||mp.active)return;
+ if(state!=='play'||P.dead||exitT>0)return;
+ if(mp.active){
+  const now=performance.now();if(now-(mp.elevT||0)<700)return;mp.elevT=now; // 키 반복 입력 방지
+  mp.elevWarn=(mp.elevWarn||0)+1;
+  if(mp.elevWarn<=3){showMsg('🔒 엘리베이터가 잠겨 있습니다 ('+mp.elevWarn+'/3)',1.6);sfx.empty();return}
+  // 경고 3번을 무시하고 또 시도 → 체력 절반 삭감 (죽지는 않음)
+  mp.elevWarn=0;
+  P.hp=Math.max(1,Math.ceil(P.hp/2));P.hurt=1;sfx.hurt();
+  showMsg('⚠ 경고를 무시했습니다! 체력 절반 삭감 ⚠',2.6);
+  const m=$('msg');m.style.fontSize=window.innerWidth<700?'30px':'48px';m.style.color='#ff3b3b';
+  return}
  if(enemies.some(e=>e.boss&&e.state!=='dead')){showMsg('보스를 쓰러뜨려야 엘리베이터가 열립니다',1.8);sfx.empty();return}
  goSecret=!inSecret&&!!altCell[(P.z|0)*N+(P.x|0)];exitOn=true;exitT=.9;buildStatic();sfx.door();showMsg(goSecret?'★ 비밀 엘리베이터! ★':'엘리베이터 작동!',1.2);
 }
@@ -740,7 +750,7 @@ function buildStatic(){
 function computeFlow(){bfs((P.z|0)*N+(P.x|0),flow)}
 
 /* ================= 게임 로직 ================= */
-function showMsg(t,s=2){const m=$('msg');m.textContent=t;m.style.opacity=1;msgT=s}
+function showMsg(t,s=2){const m=$('msg');m.style.fontSize=m.style.color='';m.textContent=t;m.style.opacity=1;msgT=s}
 function spark(x,y,z,col,n,spd){
  for(let i=0;i<n&&particles.length<300;i++)particles.push({x,y,z,vx:(Math.random()-.5)*spd,vy:Math.random()*spd*.8,vz:(Math.random()-.5)*spd,life:.35+Math.random()*.4,col,s:.012+Math.random()*.018});
 }
@@ -1742,7 +1752,7 @@ function mpLabels(on){
 }
 function mpBegin(oppId,oppName){
  net.out=null;net.inc=[];netList(false);
- Object.assign(mp,{active:true,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),
+ Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),
   pref:null,gone:false,sendT:0,pingT:0,ping:0,respT:0,cd:3,cdN:4,hit:0,hitHd:0,hitT:0,shT:0,endT:0,savedMode:cfg.mode});
  cfg.mode='normal';level=1;inSecret=false;
  P.score=0;P.weapon=1;P.has=[true,true,true];P.clip=[5,8,30];P.ammo=99;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.dead=false;P.hp=100;P.inv=3;
@@ -1759,7 +1769,7 @@ function mpBegin(oppId,oppName){
 function mpLeave(notify){
  if(mp.active&&notify)netSend({k:'bye'},2);
  rtcClose();
- mp.active=false;mp.over=false;mp.cd=0;P.inv=0;mp.opp=null;
+ mp.active=false;mp.elevWarn=0;mp.over=false;mp.cd=0;P.inv=0;mp.opp=null;
  cfg.mode=mp.savedMode||'normal';mpLabels(false);
  enemies=[];state='menu';P.dead=false;P.hp=100;P.fire=false;P.rmb=false;P.zoom=0;P.has=[true,true,false];P.weapon=1;
  if(document.pointerLockElement)document.exitPointerLock();
