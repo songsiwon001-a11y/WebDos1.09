@@ -349,6 +349,7 @@
             const helpDocs = {
                 en: {
                     ASSOC: "ASSOC - Displays file extension associations.",
+                    AUTORUN: "AUTORUN cmd1,cmd2 - Commands to run at startup. \"a,b\" (no space) = separate commands; \"a, b\" = one command. AUTORUN OFF clears.",
                     ATTRIB: "ATTRIB - Displays or changes file attributes.",
                     BEEP: "BEEP - Plays retro PC speaker sound effect.",
                     BREAK: "BREAK - Sets extended CTRL+C checking.",
@@ -445,6 +446,7 @@
                 },
                 kr: {
                     ASSOC: "ASSOC - 파일 확장명 연결을 표시합니다.",
+                    AUTORUN: "AUTORUN 명령1,명령2 - 시작 시 자동 실행할 명령. 쉼표만 붙이면(a,b) 따로, 쉼표 뒤 공백(a, b)이면 한 명령. AUTORUN OFF 로 해제.",
                     ATTRIB: "ATTRIB - 파일 속성을 표시하거나 변경합니다.",
                     BEEP: "BEEP - 레트로 PC 스피커 비프음을 재생합니다.",
                     BREAK: "BREAK - 확장된 CTRL+C 검사를 설정합니다.",
@@ -540,6 +542,7 @@
                 },
                 jp: {
                     ASSOC: "ASSOC - ファイル拡張子の関連付けを表示します。",
+                    AUTORUN: "AUTORUN コマンド1,コマンド2 - 起動時に自動実行。カンマのみ(a,b)は別々、カンマ+空白(a, b)は1つのコマンド。AUTORUN OFF で解除。",
                     ATTRIB: "ATTRIB - ファイル属性を表示または変更します。",
                     BEEP: "BEEP - レトロPCスピーカーのビープ音を再生します。",
                     BREAK: "BREAK - 拡張CTRL+Cチェックを設定します。",
@@ -635,6 +638,7 @@
                 },
                 cn: {
                     ASSOC: "ASSOC - 显示文件扩展名关联。",
+                    AUTORUN: "AUTORUN 命令1,命令2 - 启动时自动执行。仅逗号(a,b)为分开的命令，逗号+空格(a, b)视为同一命令。AUTORUN OFF 取消。",
                     ATTRIB: "ATTRIB - 显示或更改文件属性。",
                     BEEP: "BEEP - 播放复古 PC 扬声器蜂鸣声。",
                     BREAK: "BREAK - 设置扩展 CTRL+C 检查。",
@@ -1376,6 +1380,26 @@
                     prompt();
                 },
                 assoc(a){ out(getHelpDoc('ASSOC')); },
+                autorun(a){
+                    const AR = {
+                        en: { cur: 'Autorun: ', none: 'Autorun is not set.', set: 'Autorun saved: ', off: 'Autorun cleared.', use: 'Usage: AUTORUN cmd1,cmd2 ...   (AUTORUN OFF to clear)  e.g. AUTORUN cd a,run st  (", " with a space stays inside one command)' },
+                        kr: { cur: '자동 실행: ', none: '자동 실행이 설정되지 않았습니다.', set: '자동 실행 저장됨: ', off: '자동 실행이 해제되었습니다.', use: '사용법: AUTORUN 명령1,명령2 ...   (해제: AUTORUN OFF)  예: AUTORUN cd a,run st  (", " 처럼 쉼표 뒤에 공백이 있으면 한 명령)' },
+                        jp: { cur: '自動実行: ', none: '自動実行は設定されていません。', set: '自動実行を保存しました: ', off: '自動実行を解除しました。', use: '使用方法: AUTORUN コマンド1,コマンド2 ...   (解除: AUTORUN OFF)  例: AUTORUN cd a,run st  (", " のように後ろに空白があれば1つのコマンド)' },
+                        cn: { cur: '自动运行: ', none: '未设置自动运行。', set: '已保存自动运行: ', off: '已取消自动运行。', use: '用法: AUTORUN 命令1,命令2 ...   (取消: AUTORUN OFF)  例: AUTORUN cd a,run st  (", " 逗号后有空格则视为同一条命令)' }
+                    }[currentLang] || {};
+                    const raw = a.join(' ').trim();
+                    if (!raw) {
+                        const cur = loadSetting('autorun');
+                        out(cur ? AR.cur + cur : AR.none, cur ? 'cyan' : '');
+                        return out(AR.use);
+                    }
+                    if (/^(off|clear|none|reset)$/i.test(raw)) { saveSetting('autorun', ''); return out(AR.off, 'ok'); }
+                    const list = raw.split(/,(?!\s)/).map(s => s.trim()).filter(s => s && !/^autorun(\s|$)/i.test(s));
+                    if (!list.length) return out(AR.use, 'err');
+                    const val = list.join(',');
+                    saveSetting('autorun', val);
+                    out(AR.set + val, 'ok');
+                },
                 attrib(a){ out(getHelpDoc('ATTRIB')); },
                 break(a){ out(tx('breakOn')); },
                 bcdedit(){ out(tx('bcdedit')); },
@@ -3149,6 +3173,15 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 out(tr('intro2'));
                 out('');
                 prompt();
+                // AUTORUN: 저장된 명령을 쉼표 단위로 잘라, 사용자가 직접 친 것처럼 순서대로 실행
+                const ar = loadSetting('autorun');
+                if (ar) {
+                    for (const c of ar.split(/,(?!\s)/).map(s => s.trim()).filter(Boolean)) {
+                        if (/^autorun(\s|$)/i.test(c)) continue;   // 자기 자신 재귀 방지
+                        hist.push(c); hi = hist.length;
+                        cmdChain = cmdChain.then(() => { out($('pr').textContent + c); return execLine(c); });
+                    }
+                }
             })();
         })();
     </script>
