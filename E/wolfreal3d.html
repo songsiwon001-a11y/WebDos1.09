@@ -114,6 +114,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #mpHud b{font-size:24px;color:#ffe46b;margin:0 4px}
 #mpHud small{display:block;font-size:10px;color:#9fb0ff}
 @media (pointer:coarse){#mpHud{top:54px}}
+#chat{position:fixed;left:12px;bottom:14px;width:min(420px,60vw);z-index:7;display:none;pointer-events:none;font-size:14px}
+#chatLog div{background:rgba(10,15,51,.62);padding:2px 8px;margin-top:2px;word-break:break-all;animation:chatFade 1s linear 9s forwards}
+#chatLog div b{color:#ffe46b;margin-right:6px}
+#chatLog div.me b{color:#7cf}
+#chatLog div.sys{color:#9fb0ff}
+#chat.open #chatLog div{animation:none;opacity:1}
+#chatIn{display:none;width:100%;box-sizing:border-box;margin-top:4px;background:rgba(0,0,0,.8);color:#fff;border:2px solid #6376e0;padding:6px 8px;font:inherit;outline:none;pointer-events:auto}
+#chat.open #chatIn{display:block}
+@keyframes chatFade{to{opacity:0}}
 @media (max-height:520px){#mpbox h2{font-size:24px}#mpsub{margin:4px 0 8px}.mpb{margin-top:6px;padding:6px 14px;font-size:14px}#mpGbox h2{font-size:30px}}
 </style>
 </head>
@@ -190,7 +199,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
  <div id="mpStat"></div>
 </div></div>
 <div id="mpGame"><div id="mpGbox"></div></div>
-<div id="mpHud"><span id="mpMe"></span> <b id="mpS1">0</b>:<b id="mpS2">0</b> <span id="mpOp"></span><small id="mpNet"></small></div>
+<div id="mpHud"><span id="mpMe"></span> <b id="mpS1">0</b>:<b id="mpS2">0</b> <span id="mpOp"></span><small id="mpNet"></small><small id="mpMic"></small></div>
+<div id="chat"><div id="chatLog"></div><input id="chatIn" maxlength="80" autocomplete="off" placeholder="메시지 입력 후 Enter (Esc 취소)"></div>
 
 <div id="touch">
  <div id="joyZone"></div><div id="lookZone"></div>
@@ -1200,6 +1210,7 @@ function render(){
 
 /* ================= HUD / 미니맵 ================= */
 const mm=$('mm'),mc=mm.getContext('2d'),mmEl=mm;
+let chatOpen=false;
 let mapMode=1; // 0 끔 / 1 미니맵 / 2 전체 지도(FREE 모드 전용)
 function cycleMap(){mapMode=isFree()?(mapMode+1)%3:(mapMode===1?0:1)}
 /* 대결 상대를 미니맵에 실시간 표시 (상대 이름 포함, 보간된 현재 위치) */
@@ -1283,7 +1294,7 @@ function lockPointer(){
  if(isTouch||cfg.scheme!=='modern'||document.pointerLockElement)return;
  try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}
 }
-document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&state==='play'&&cfg.scheme==='modern')pauseGame()});
+document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&state==='play'&&cfg.scheme==='modern'&&!chatOpen&&!net.micBusy)pauseGame()});
 addEventListener('mousemove',e=>{
  if(state!=='play'||P.dead||cfg.scheme!=='modern'||!document.pointerLockElement)return;
  const sn=.0022*cfg.sens/4*(1-.78*P.zoom);
@@ -1327,7 +1338,7 @@ addEventListener('mousedown',e=>{
 });
 addEventListener('mouseup',e=>{if(e.button===0)P.fire=false;else if(e.button===2)P.rmb=false});
 addEventListener('keydown',e=>{
- if(e.target&&e.target.id==='mpName')return;
+ if(e.target&&(e.target.id==='mpName'||e.target.id==='chatIn'))return;
  if(state==='menu'&&e.code==='Enter'&&!e.repeat&&!net.ui){initAudio();if(isTouch)goFS();newGame();lockPointer();return}
  keys[e.code]=true;
  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Tab','AltLeft','AltRight'].includes(e.code))e.preventDefault();
@@ -1338,7 +1349,9 @@ addEventListener('keydown',e=>{
   if(cfg.scheme==='classic'&&(e.code==='ControlLeft'||e.code==='ControlRight'||e.code==='KeyF')&&!e.repeat&&!P.dead)P.clicked=true;
   if(e.code==='Escape'||e.code==='KeyP')pauseGame();
  }
- if(e.code==='KeyM'&&!e.repeat)cycleMap();
+ if(e.code==='KeyM'&&!e.repeat){if(mp.active)toggleMic();else cycleMap()}
+ if(e.code==='KeyN'&&!e.repeat&&mp.active)cycleMap();
+ if(e.code==='KeyT'&&!e.repeat&&mp.active&&state==='play'&&!mp.over){e.preventDefault();openChat()}
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;P.fire=false;P.rmb=false});
@@ -1713,6 +1726,8 @@ function onDirect(m){
    case 'rm':mp.rmOpp=true;if(mp.over)mpEndUI();if(mp.rm&&mp.rmOpp)mpRestart();break;
    case 'bye':mpOppLeft();break;
    case 'pg':netSend({k:'po',t:m.t},0);break;
+   case 'ct':mpChatRx(m);break;
+   case 'mic':mp.oppMic=!!m.on;break;
    case 'po':if(fin(+m.t))mp.ping=Math.round(performance.now()-m.t);break;
    case 'sd':case 'ic':rtcSignal(m);break;
   }
@@ -1747,6 +1762,9 @@ async function rtcInit(offer){
   const dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
   const dE=pc.createDataChannel('e',{negotiated:true,id:1});
   net.dS=dS;net.dE=dE;
+  // 음성: 처음부터 오디오 m-line 을 만들어 두고 마이크는 replaceTrack 으로 켜고 끈다 (재협상 불필요). 기본은 트랙 없음(=비활성)
+  if(offer){const tr=pc.addTransceiver('audio',{direction:'sendrecv'});net.aSender=tr.sender}
+  pc.ontrack=e=>{if(e.track.kind!=='audio')return;try{if(net.aEl){net.aEl.srcObject=null}const a=new Audio();a.autoplay=true;a.srcObject=new MediaStream([e.track]);net.aEl=a;const pl=a.play();if(pl&&pl.catch)pl.catch(()=>{})}catch(x){}};
   const rx=e=>{let m;try{m=JSON.parse(e.data)}catch(x){return}if(m&&m.f===mp.oppId)onDirect(m)};
   dS.onmessage=rx;dE.onmessage=rx;
   pc.onicecandidate=e=>{if(e.candidate&&mp.active)netSend({k:'ic',c:e.candidate.toJSON?e.candidate.toJSON():e.candidate},1)};
@@ -1760,6 +1778,7 @@ async function rtcSignal(m){
    if(d.type==='offer'){
     if(!net.pc)await rtcInit(false);if(!net.pc)return;
     await net.pc.setRemoteDescription(d);await rtcFlush();
+    for(const tr of net.pc.getTransceivers())if(tr.receiver&&tr.receiver.track&&tr.receiver.track.kind==='audio'&&!net.aSender){try{tr.direction='sendrecv'}catch(x){}net.aSender=tr.sender}
     const a=await net.pc.createAnswer();await net.pc.setLocalDescription(a);
     netSend({k:'sd',d:{type:a.type,sdp:a.sdp}},1);
    }else if(net.pc&&net.pc.signalingState==='have-local-offer'){await net.pc.setRemoteDescription(d);await rtcFlush()}
@@ -1770,6 +1789,7 @@ async function rtcSignal(m){
 }
 async function rtcFlush(){const q=net.pend;net.pend=[];for(const c of q){try{await net.pc.addIceCandidate(c)}catch(e){}}}
 function rtcClose(){
+ micStopLocal();try{if(net.aEl){net.aEl.pause();net.aEl.srcObject=null}}catch(e){}net.aEl=null;net.aSender=null;
  try{if(net.dS)net.dS.close()}catch(e){}try{if(net.dE)net.dE.close()}catch(e){}try{if(net.pc)net.pc.close()}catch(e){}
  net.pc=net.dS=net.dE=null;net.pend=[];
 }
@@ -1890,7 +1910,7 @@ function mpLabels(on){
 }
 function mpBegin(oppId,oppName){
  net.out=null;net.inc=[];netList(false);
- Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),
+ Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),oppMic:false,
   pref:null,gone:false,sendT:0,pingT:0,ping:0,respT:0,cd:3,cdN:4,hit:0,hitHd:0,hitT:0,shT:0,endT:0,savedMode:cfg.mode});
  cfg.mode='normal';level=1;inSecret=false;
  P.score=0;P.weapon=1;P.has=[true,true,true];P.clip=[5,8,30];P.ammo=99;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.dead=false;P.hp=100;P.inv=3;
@@ -1904,7 +1924,77 @@ function mpBegin(oppId,oppName){
  if(mp.role==='A')setTimeout(()=>{if(mp.active&&mp.oppId===oppId)rtcInit(true)},500);
  for(const m of early)if(m.f===oppId){net.seen.delete(m.i);onDirect(m)}
 }
+/* ---- 채팅 (T) : WebRTC 신뢰 채널로 직접 전송, 서버 미사용 ---- */
+function chatAdd(who,txt,cls){
+ const log=$('chatLog'),d=el('div',cls||'');
+ if(who)d.appendChild(el('b','',who));
+ d.appendChild(document.createTextNode(txt));
+ log.appendChild(d);while(log.children.length>40)log.removeChild(log.firstChild);
+ $('chat').style.display='block';
+ const c=$('chat');c.scrollTop=c.scrollHeight;
+}
+function openChat(){
+ if(chatOpen||!mp.active)return;
+ chatOpen=true;P.fire=false;P.rmb=false;for(const k in keys)keys[k]=false;
+ $('chat').classList.add('open');$('chat').style.display='block';
+ if(document.pointerLockElement)document.exitPointerLock();
+ const i=$('chatIn');i.value='';setTimeout(()=>{try{i.focus()}catch(e){}},0);
+}
+function closeChat(relock){
+ if(!chatOpen)return;
+ chatOpen=false;$('chat').classList.remove('open');
+ const i=$('chatIn');try{i.blur()}catch(e){}
+ for(const k in keys)keys[k]=false;
+ if(relock&&mp.active&&state==='play')lockPointer();
+}
+function chatSend(){
+ const txt=$('chatIn').value.replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,80);
+ if(!txt)return;
+ chatAdd(net.name,txt,'me');
+ if(net.dE&&net.dE.readyState==='open')netSend({k:'ct',t:txt},1);
+ else if(net.mode==='mq')netSend({k:'ct',t:txt},1);
+ else chatAdd('','P2P 연결 전이라 전달되지 않았습니다','sys');
+}
+let chatRxT=0;
+function mpChatRx(m){
+ const now=performance.now();if(now-chatRxT<120)return;chatRxT=now;
+ if(typeof m.t!=='string')return;
+ const txt=m.t.replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,80);if(!txt)return;
+ chatAdd(mp.oppName,txt,'');
+}
+$('chatIn').addEventListener('keydown',e=>{
+ e.stopPropagation();
+ if(e.key==='Enter'){e.preventDefault();chatSend();closeChat(true)}
+ else if(e.key==='Escape'){e.preventDefault();closeChat(true)}
+});
+$('chatIn').addEventListener('keyup',e=>e.stopPropagation());
+/* ---- 음성 통화 (M) : WebRTC 오디오 트랙, 서버 미사용. 기본 꺼짐 ---- */
+function micStopLocal(){
+ if(net.micStream){try{net.micStream.getTracks().forEach(t=>t.stop())}catch(e){}net.micStream=null}
+ net.micOn=false;
+}
+function micOff(){
+ try{if(net.aSender)net.aSender.replaceTrack(null)}catch(e){}
+ micStopLocal();
+ if(mp.active)netSend({k:'mic',on:0},1);
+}
+async function toggleMic(){
+ if(!mp.active||net.micBusy)return;
+ if(net.micOn){micOff();showMsg('🎤 마이크 꺼짐',1.2);return}
+ if(!net.pc||!net.aSender||!rtcOpen()){showMsg('P2P 연결 후에 음성 통화를 쓸 수 있습니다',2);return}
+ net.micBusy=1;
+ try{
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('nomedia');
+  const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+  if(!mp.active||!net.aSender){st.getTracks().forEach(t=>t.stop());return}
+  await net.aSender.replaceTrack(st.getAudioTracks()[0]);
+  net.micStream=st;net.micOn=true;
+  netSend({k:'mic',on:1},1);showMsg('🎤 마이크 켜짐 (M: 끄기 · 이어폰 권장)',2);
+ }catch(e){showMsg('마이크를 사용할 수 없습니다 (브라우저 권한 확인)',2.4)}
+ finally{net.micBusy=0}
+}
 function mpLeave(notify){
+ closeChat(false);$('chat').style.display='none';$('chatLog').textContent='';
  if(mp.active&&notify)netSend({k:'bye'},2);
  rtcClose();
  mp.active=false;mp.elevWarn=0;mp.over=false;mp.cd=0;P.inv=0;mp.opp=null;
@@ -1985,6 +2075,7 @@ function mpOppLeft(){
  mpEndUI();
 }
 function mpEndUI(){
+ closeChat(false);
  const g=$('mpGbox');g.textContent='';
  const win=mp.gone||mp.mk>mp.ok;
  g.appendChild(el('h2',win?'win':'lose',win?'★ 승리! ★':'패배…'));
@@ -2063,6 +2154,7 @@ function mpHudUpdate(){
  $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.mk;$('mpS2').textContent=mp.ok;
  $('mpNet').textContent=(rtcOpen()?'P2P ':(net.mode==='mq'?'RELAY ':'연결중 '))+(mp.ping?mp.ping+'ms':'…');
  $('hKey').textContent=mp.ping?mp.ping:'--';
+ $('mpMic').textContent='🎤 '+(net.micOn?'ON':'OFF (M)')+(mp.oppMic?'  ·  상대 마이크 ON':'')+'  ·  T 채팅';
 }
 
 /* ---- UI 이벤트 ---- */
