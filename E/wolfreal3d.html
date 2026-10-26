@@ -1465,7 +1465,7 @@ const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig';
 const MP_SEND=.2; // 위치 전송 주기(초): 0.2초마다
 const MP_WIN=5,MP_STALE=40000,MP_HB=15000,MP_RESP=2.6,MP_ITEM_RT=20;
 const MPT={col:[.85,.28,.25],helm:[.5,.14,.12],s:1};
-const net={mode:'fs',cl:[],fs:null,sc:0,id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
+const net={rv:0,pendNext:[],mode:'fs',cl:[],fs:null,sc:0,id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
 const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e};
 const cleanName=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f<>&"'`]/g,'').trim().slice(0,12);
 const rid=()=>{const a='abcdefghijklmnopqrstuvwxyz0123456789';let s='';for(let i=0;i<8;i++)s+=a[Math.random()*36|0];return s};
@@ -1563,15 +1563,17 @@ function sendCtl(id,k,o){sendTo(id,JSON.stringify(Object.assign({k,f:net.id,fn:n
 /* mode 0 = 빠른 경로(상태·총성·핑), 1 = 신뢰 경로, 2 = 둘 다.
    Firebase 모드: 전투 데이터는 WebRTC 로만 전송 (연결 신호 sd/ic 와 bye 만 Firestore 경유).
    MQTT 모드: WebRTC 가 안 되면 브로커 중계로 대체. */
+const SIGK={sd:1,ic:1,rr:1,ka:1}; // Firebase 모드에서 Firestore 로 보내는 신호 종류 (연결 협상·재연결 요청·생존 신호)
 function netSend(m,mode){
  m.f=net.id;if(mode>0)m.i=net.id+':'+(++net.n);
+ if(m.k==='sd'||m.k==='ic')m.rv=net.rv|0;
  const s=JSON.stringify(m);
  if(net.mode==='mq'){
   if(mode===0){if(net.dS&&net.dS.readyState==='open'){try{net.dS.send(s);return}catch(e){}}}
   else{if(net.dE&&net.dE.readyState==='open'){try{net.dE.send(s);if(mode===1)return}catch(e){}}}
   sendTo(mp.oppId,s,true);return;
  }
- if(m.k==='sd'||m.k==='ic'){sendTo(mp.oppId,s);return}
+ if(SIGK[m.k]){sendTo(mp.oppId,s);return}
  const ch=mode===0?net.dS:net.dE;
  if(ch&&ch.readyState==='open'){try{ch.send(s);return}catch(e){}}
  if(m.k==='bye')sendTo(mp.oppId,s);
@@ -1726,6 +1728,8 @@ function onDirect(m){
    case 'rm':mp.rmOpp=true;if(mp.over)mpEndUI();if(mp.rm&&mp.rmOpp)mpRestart();break;
    case 'bye':mpOppLeft();break;
    case 'pg':netSend({k:'po',t:m.t},0);break;
+   case 'ka':break;
+   case 'rr':if(mp.role==='A'&&!rtcOpen()&&now-(mp.rT||0)>2500)rtcRecover();break;
    case 'ct':mpChatRx(m);break;
    case 'mic':mp.oppMic=!!m.on;break;
    case 'po':if(fin(+m.t))mp.ping=Math.round(performance.now()-m.t);break;
@@ -1762,6 +1766,7 @@ async function rtcInit(offer){
   const dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
   const dE=pc.createDataChannel('e',{negotiated:true,id:1});
   net.dS=dS;net.dE=dE;
+  dS.onopen=dE.onopen=()=>{mp.everUp=true;mp.downT=0;mp.rAtt=0};
   // 음성: 처음부터 오디오 m-line 을 만들어 두고 마이크는 replaceTrack 으로 켜고 끈다 (재협상 불필요). 기본은 트랙 없음(=비활성)
   if(offer){const tr=pc.addTransceiver('audio',{direction:'sendrecv'});net.aSender=tr.sender}
   pc.ontrack=e=>{if(e.track.kind!=='audio')return;try{if(net.aEl){net.aEl.srcObject=null}const a=new Audio();a.autoplay=true;a.srcObject=new MediaStream([e.track]);net.aEl=a;const pl=a.play();if(pl&&pl.catch)pl.catch(()=>{})}catch(x){}};
@@ -1773,6 +1778,13 @@ async function rtcInit(offer){
 }
 async function rtcSignal(m){
  try{
+  // 재구축 세대(rv): 낮은 세대의 신호는 버리고, 높은 세대의 offer 가 오면 기존 연결을 닫고 새로 시작
+  const rv=typeof m.rv==='number'?m.rv:0;
+  if(rv<net.rv)return;
+  if(rv>net.rv){
+   if(m.k==='sd'&&m.d&&m.d.type==='offer'){net.rv=rv;rtcClose();net.pend=net.pendNext;net.pendNext=[]}
+   else{if(m.k==='ic'&&m.c&&typeof m.c==='object'&&net.pendNext.length<60)net.pendNext.push(m.c);return}
+  }
   if(m.k==='sd'){
    const d=m.d;if(!d||typeof d.sdp!=='string'||(d.type!=='offer'&&d.type!=='answer'))return;
    if(d.type==='offer'){
@@ -1786,6 +1798,16 @@ async function rtcSignal(m){
    if(net.pc&&net.pc.remoteDescription)await net.pc.addIceCandidate(m.c);else if(net.pend.length<60)net.pend.push(m.c);
   }
  }catch(e){}
+}
+/* 연결이 끊기면 A 쪽이 ICE 재시작 → 그래도 안 되면 연결을 새로 만든다 (B 는 rr 로 요청) */
+async function rtcRecover(){
+ mp.rT=performance.now();mp.rAtt=(mp.rAtt||0)+1;
+ try{
+  if(net.pc&&mp.rAtt<=2&&net.pc.signalingState==='stable'&&net.pc.connectionState!=='closed'){
+   const o=await net.pc.createOffer({iceRestart:true});await net.pc.setLocalDescription(o);
+   netSend({k:'sd',d:{type:o.type,sdp:o.sdp}},1);
+  }else{rtcClose();net.rv++;await rtcInit(true)}
+ }catch(e){try{rtcClose();net.rv++;await rtcInit(true)}catch(x){}}
 }
 async function rtcFlush(){const q=net.pend;net.pend=[];for(const c of q){try{await net.pc.addIceCandidate(c)}catch(e){}}}
 function rtcClose(){
@@ -1909,8 +1931,8 @@ function mpLabels(on){
  $('hKey').previousElementSibling.textContent=on?'PING':'KEYS';
 }
 function mpBegin(oppId,oppName){
- net.out=null;net.inc=[];netList(false);
- Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),oppMic:false,
+ net.out=null;net.inc=[];netList(false);net.rv=0;net.pendNext=[];
+ Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),oppMic:false,downT:0,rAtt:0,rT:0,rqT:0,kaT:0,tkT:0,everUp:false,
   pref:null,gone:false,sendT:0,pingT:0,ping:0,respT:0,cd:3,cdN:4,hit:0,hitHd:0,hitT:0,shT:0,endT:0,savedMode:cfg.mode});
  cfg.mode='normal';level=1;inSecret=false;
  P.score=0;P.weapon=1;P.has=[true,true,true];P.clip=[5,8,30];P.ammo=99;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.dead=false;P.hp=100;P.inv=3;
@@ -2148,7 +2170,20 @@ function mpTickSlow(now){
  if(!mp.active)return;
  if(!rtcOpen()&&mp.pref!=null&&now-mp.lastMq>3000)mp.pref=null;
  if(now-mp.pingT>2000){mp.pingT=now;netSend({k:'pg',t:now},0)}
- if(now-mp.lastRx>12000&&!mp.gone)mpOppLeft();
+ // 이 탭이 멈췄다 깨어난 경우(절전·백그라운드 정지)엔 상대 무응답으로 보지 않는다
+ const gap=now-(mp.tkT||now);mp.tkT=now;if(gap>3000)mp.lastRx=now;
+ // P2P 가 끊겨 있으면: 신호 경로로 생존 신호를 보내고, 재연결을 시도한다
+ if(rtcOpen()){mp.downT=0;mp.rAtt=0}
+ else{
+  if(!mp.downT)mp.downT=now;
+  const dn=now-mp.downT;
+  if(now-mp.kaT>5000){mp.kaT=now;netSend({k:'ka'},1)}
+  const th=!mp.everUp?10000:(mp.rAtt?5000:3000);
+  if(mp.role==='A'){if(dn>th&&now-mp.rT>5000)rtcRecover()}
+  else if(dn>th+2000&&now-mp.rqT>8000){mp.rqT=now;netSend({k:'rr'},1)}
+ }
+ // 명시적인 나가기(bye)가 없으면 30초 동안 아무 신호가 없을 때만 상대가 떠난 것으로 처리
+ if(now-mp.lastRx>30000&&!mp.gone)mpOppLeft();
 }
 function mpHudUpdate(){
  $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.mk;$('mpS2').textContent=mp.ok;
