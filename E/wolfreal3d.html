@@ -203,6 +203,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
  <div class="tb" id="tPause">II</div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
 <script>
 'use strict';
 (()=>{
@@ -1416,16 +1418,28 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){if(bgmWant
 bgmPlay();
 
 /* ================= 멀티플레이 (1 vs 1) =================
-   서버 없이 GitHub Pages 에서 동작: 공개 MQTT(WebSocket) 브로커를 "대기실 + 신호 중계"로만 쓰고,
-   전투 데이터는 WebRTC P2P(DataChannel)로 직접 주고받는다. P2P 가 막힌 망이면 브로커 중계로 자동 대체.
+   대기실(접속자 목록) + 신호 교환(대결 신청/수락, WebRTC offer/answer/ICE)만 Firebase Firestore 를 쓰고,
+   전투 데이터는 WebRTC P2P(DataChannel)로 직접 주고받는다.
+   Firebase 무료 한도 초과/오류 시 공개 MQTT 브로커(예비 서버, 중계 폴백 포함)로 자동 전환.
    ?room=이름 으로 대기실을 분리할 수 있다 (친구끼리만 쓰기). */
 const MP_Q=new URLSearchParams(location.search);
 const MP_ROOM=(MP_Q.get('room')||'main').replace(/[^\w-]/g,'').slice(0,24)||'main';
+const firebaseConfig={
+  apiKey:"AIzaSyDU4famr5DzAYlNpjcTcUUqjzDxEvjVeec",
+  authDomain:"webdos-11d5a.firebaseapp.com",
+  projectId:"webdos-11d5a",
+  storageBucket:"webdos-11d5a.firebasestorage.app",
+  messagingSenderId:"500610787415",
+  appId:"1:500610787415:web:75e8268bcbfd2bef211b12"
+};
 const MP_NS='wolfreal3d-kr/v1/'+MP_ROOM;
 const MP_BROKERS=MP_Q.get('broker')?MP_Q.get('broker').split(',').filter(Boolean):['wss://broker.hivemq.com:8884/mqtt','wss://broker.emqx.io:8084/mqtt','wss://mqtt.eclipseprojects.io:443/mqtt','wss://test.mosquitto.org:8081'];
-const MP_WIN=5,MP_STALE=20000,MP_RESP=2.6,MP_ITEM_RT=20;
+const MP_MAX=12; // Firebase 대기실 최대 동시 인원
+const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig';
+const MP_SEND=.2; // 위치 전송 주기(초): 0.2초마다
+const MP_WIN=5,MP_STALE=40000,MP_HB=15000,MP_RESP=2.6,MP_ITEM_RT=20;
 const MPT={col:[.85,.28,.25],helm:[.5,.14,.12],s:1};
-const net={cl:[],id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
+const net={mode:'fs',cl:[],fs:null,sc:0,id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
 const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e};
 const cleanName=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f<>&"'`]/g,'').trim().slice(0,12);
 const rid=()=>{const a='abcdefghijklmnopqrstuvwxyz0123456789';let s='';for(let i=0;i<8;i++)s+=a[Math.random()*36|0];return s};
@@ -1492,34 +1506,69 @@ function MQ(url,o){
  return self;
 }
 
-/* ---- 네트워크 계층 ---- */
+
+/* ---- 네트워크 계층: 기본 Firebase(Firestore), 한도 초과/오류 시 MQTT 로 자동 전환 ---- */
+let fdb=null,fsDead=false;
+const netActive=()=>!!(net.fs||net.cl.length);
+function fbInit(){
+ if(fdb)return fdb;
+ if(!window.firebase)return null;
+ try{
+  if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
+  fdb=firebase.firestore();
+  try{fdb.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}
+ }catch(e){console.error(e);fdb=null}
+ return fdb;
+}
 function pubAll(topic,s,retain){for(const c of net.cl)if(c.connected)try{c.publish(topic,s,retain)}catch(e){}}
+const stale=()=>net.mode==='mq'?20000:MP_STALE;
+const hbMs=()=>net.mode==='mq'?6000:MP_HB;
+function fsWriteErr(e){const c=e&&e.code;if(c==='resource-exhausted'||c==='permission-denied'||c==='unauthenticated')fsFail(c)}
 function sendTo(id,s,fast){
- const t=MP_NS+'/p/'+id;
- if(fast&&mp.active&&mp.pref!=null){const c=net.cl[mp.pref];if(c&&c.connected){c.publish(t,s,false);return}}
- pubAll(t,s,false);
+ if(net.mode==='mq'){
+  const t=MP_NS+'/p/'+id;
+  if(fast&&mp.active&&mp.pref!=null){const c=net.cl[mp.pref];if(c&&c.connected){c.publish(t,s,false);return}}
+  pubAll(t,s,false);return;
+ }
+ if(!fdb||!net.fs)return;
+ fdb.collection(FS_SIG).add({to:id,s,t:Date.now(),c:++net.sc}).catch(fsWriteErr);
 }
 function sendCtl(id,k,o){sendTo(id,JSON.stringify(Object.assign({k,f:net.id,fn:net.name,i:net.id+':'+(++net.n)},o||{})),false)}
-/* mode 0 = 빠른 경로(상태·총성·핑: RTC 비신뢰 채널 → 중계), 1 = 신뢰 경로(RTC 신뢰 채널 → 중계), 2 = 둘 다 */
+/* mode 0 = 빠른 경로(상태·총성·핑), 1 = 신뢰 경로, 2 = 둘 다.
+   Firebase 모드: 전투 데이터는 WebRTC 로만 전송 (연결 신호 sd/ic 와 bye 만 Firestore 경유).
+   MQTT 모드: WebRTC 가 안 되면 브로커 중계로 대체. */
 function netSend(m,mode){
  m.f=net.id;if(mode>0)m.i=net.id+':'+(++net.n);
  const s=JSON.stringify(m);
- if(mode===0){if(net.dS&&net.dS.readyState==='open'){try{net.dS.send(s);return}catch(e){}}}
- else{if(net.dE&&net.dE.readyState==='open'){try{net.dE.send(s);if(mode===1)return}catch(e){}}}
- sendTo(mp.oppId,s,true);
+ if(net.mode==='mq'){
+  if(mode===0){if(net.dS&&net.dS.readyState==='open'){try{net.dS.send(s);return}catch(e){}}}
+  else{if(net.dE&&net.dE.readyState==='open'){try{net.dE.send(s);if(mode===1)return}catch(e){}}}
+  sendTo(mp.oppId,s,true);return;
+ }
+ if(m.k==='sd'||m.k==='ic'){sendTo(mp.oppId,s);return}
+ const ch=mode===0?net.dS:net.dE;
+ if(ch&&ch.readyState==='open'){try{ch.send(s);return}catch(e){}}
+ if(m.k==='bye')sendTo(mp.oppId,s);
 }
 const rtcOpen=()=>!!(net.dS&&net.dS.readyState==='open');
 function setStat(){
  const el0=$('mpStat');if(!el0)return;
- const ok=net.cl.filter(c=>c.connected).length;
- if(!net.cl.length){el0.textContent='';return}
- const nm=net.cl.filter(c=>c.connected).map(c=>{try{return new URL(c.url).hostname.replace(/^(broker|mqtt|test)\./,'').split('.')[0]}catch(e){return '?'}}).join(', ');
- el0.textContent=ok?`● 서버 연결됨 ${ok}/${net.cl.length} (${nm})`:'○ 서버에 연결하는 중… (실패 시 자동 재시도, 몇 초 걸릴 수 있습니다)';
- el0.className=ok?'ok':'';
+ if(net.mode==='mq'){
+  if(!net.cl.length){el0.textContent='';return}
+  const ok=net.cl.filter(c=>c.connected).length;
+  const nm=net.cl.filter(c=>c.connected).map(c=>{try{return new URL(c.url).hostname.replace(/^(broker|mqtt|test)\./,'').split('.')[0]}catch(e){return '?'}}).join(', ');
+  el0.textContent=ok?`● 예비 서버 연결됨 ${ok}/${net.cl.length} (${nm})`:'○ 예비 서버에 연결하는 중… (몇 초 걸릴 수 있습니다)';
+  el0.className=ok?'ok':'';return;
+ }
+ const f=net.fs;
+ if(!f){el0.textContent='';return}
+ if(f.ok){
+  const now=performance.now(),n=Object.values(net.lobby).filter(p=>now-p.seen<MP_STALE).length+(net.listed?1:0);
+  el0.textContent=`● Firebase 연결됨 (대기실 ${n}/${MP_MAX})`;el0.className='ok';
+ }else{el0.textContent='○ Firebase 에 연결하는 중…';el0.className=''}
 }
-function netConnect(){
- if(net.cl.length)return;
- net.id=rid();net.lobby={};net.inc=[];net.out=null;net.early=[];
+function mqStart(){
+ net.mode='mq';net.lobby={};net.inc=[];net.out=null;
  MP_BROKERS.forEach((url,i)=>{
   const c=MQ(url,{id:'w'+net.id,will:MP_NS+'/lobby/'+net.id});
   c.on('connect',()=>{c.subscribe([MP_NS+'/lobby/+',MP_NS+'/p/'+net.id]);if(net.listed)announce(c);setStat()});
@@ -1528,22 +1577,96 @@ function netConnect(){
   net.cl.push(c);
  });
  setStat();
+}
+function fsStop(f){
+ clearTimeout(f.tmo);
+ try{if(f.lobU)f.lobU()}catch(e){}try{if(f.sigU)f.sigU()}catch(e){}
+ try{if(f.doc)f.doc.delete().catch(()=>{})}catch(e){}
+}
+/* Firebase 한도 초과(resource-exhausted)·권한 오류·접속 불가 → 예비(MQTT) 서버로 전환 */
+function fsFail(reason){
+ fsDead=true;
+ if(net.mode!=='fs'||!net.fs||mp.active)return;
+ fsStop(net.fs);net.fs=null;
+ toast('Firebase 사용 불가('+reason+') → 예비 서버로 전환합니다');
+ mqStart();
+}
+function fsFull(){
+ netDisconnect();
+ mpShow('join');setStat();
+ toast('대기실이 가득 찼습니다 (최대 '+MP_MAX+'명). 잠시 후 다시 시도하세요');
+}
+/* 대기실 정원: 먼저 들어온 순(j, id)으로 MP_MAX 명까지. 모든 클라이언트가 같은 기준으로 계산하므로 동시 입장에도 일관됨 */
+function fsRankFull(){
+ const f=net.fs,now=performance.now();let before=0;
+ for(const id in net.lobby){const p=net.lobby[id];if(now-p.seen>=MP_STALE)continue;if(p.j<f.j||(p.j===f.j&&id<net.id))before++}
+ return before>=MP_MAX;
+}
+function fsStart(){
+ const db=fbInit();if(!db)return false;
+ const fs=net.fs={ok:false,first:false,j:Date.now(),lobU:null,sigU:null,doc:null,tmo:0};
+ fs.doc=db.collection(FS_LOBBY).doc(net.id);
+ fs.tmo=setTimeout(()=>{if(net.fs===fs&&!fs.ok)fsFail('timeout')},8000);
+ fs.lobU=db.collection(FS_LOBBY).where('room','==',MP_ROOM).onSnapshot(snap=>{
+  if(net.fs!==fs)return;
+  if(!snap.metadata.fromCache){fs.ok=true;clearTimeout(fs.tmo)}
+  const now=performance.now(),wall=Date.now();
+  snap.docChanges().forEach(ch=>{
+   const id=ch.doc.id;if(id===net.id)return;
+   if(ch.type==='removed'){delete net.lobby[id];return}
+   const d=ch.doc.data()||{};if(typeof d.n!=='string')return;
+   const age=Math.max(0,wall-(+d.ts||0));
+   if(age>180000){if(ch.type==='added')ch.doc.ref.delete().catch(()=>{});delete net.lobby[id];return}
+   net.lobby[id]={id,n:cleanName(d.n)||'PLAYER',j:+d.j||0,seen:now-Math.min(age,MP_STALE)};
+  });
+  if(fs.ok&&net.listed){
+   if(fsRankFull()){fsFull();return}
+   if(!fs.first){fs.first=true;announce();net.hbT=performance.now()}
+  }
+  renderLobby();setStat();
+ },e=>{fsFail(e&&e.code||'error')});
+ fs.sigU=db.collection(FS_SIG).where('to','==',net.id).onSnapshot(snap=>{
+  if(net.fs!==fs)return;
+  const arr=[];
+  snap.docChanges().forEach(ch=>{if(ch.type==='added'){arr.push(ch.doc.data()||{});ch.doc.ref.delete().catch(()=>{})}});
+  arr.sort((a,b)=>((a.t||0)-(b.t||0))||((a.c||0)-(b.c||0)));
+  const wall=Date.now();
+  for(const d of arr){
+   if(wall-(+d.t||0)>60000||typeof d.s!=='string')continue;
+   let m;try{m=JSON.parse(d.s)}catch(e){continue}
+   onDirect(m);
+  }
+ },e=>{fsFail(e&&e.code||'error')});
+ return true;
+}
+function netConnect(){
+ if(netActive())return;
+ net.id=rid();net.lobby={};net.inc=[];net.out=null;net.early=[];
+ net.mode='fs';
+ if(fsDead||!fsStart())mqStart();
+ setStat();
  clearInterval(net.tm);net.tm=setInterval(lobbyTick,1000);
 }
 function netDisconnect(){
  clearInterval(net.tm);
- pubAll(MP_NS+'/lobby/'+net.id,'',true);
- for(const c of net.cl)c.end();
- net.cl=[];net.lobby={};net.inc=[];net.out=null;net.listed=false;setStat();
+ if(net.fs){fsStop(net.fs);net.fs=null}
+ if(net.cl.length){pubAll(MP_NS+'/lobby/'+net.id,'',true);for(const c of net.cl)c.end();net.cl=[]}
+ net.lobby={};net.inc=[];net.out=null;net.listed=false;setStat();
 }
 function announce(c){
- const s=JSON.stringify({n:net.name});
- if(c){if(c.connected)c.publish(MP_NS+'/lobby/'+net.id,s,true)}else pubAll(MP_NS+'/lobby/'+net.id,s,true);
+ if(net.mode==='mq'){
+  const s=JSON.stringify({n:net.name});
+  if(c){if(c.connected)c.publish(MP_NS+'/lobby/'+net.id,s,true)}else pubAll(MP_NS+'/lobby/'+net.id,s,true);
+  return;
+ }
+ const f=net.fs;if(!f||!f.doc||!f.first)return;
+ f.doc.set({room:MP_ROOM,n:net.name,ts:Date.now(),j:f.j}).catch(fsWriteErr);
 }
 function netList(on){
  net.listed=on;
  if(on){announce();net.hbT=performance.now()}
- else pubAll(MP_NS+'/lobby/'+net.id,'',true);
+ else if(net.mode==='mq')pubAll(MP_NS+'/lobby/'+net.id,'',true);
+ else if(net.fs&&net.fs.doc)net.fs.doc.delete().catch(()=>{});
 }
 function onMqtt(idx,t,s){
  const LB=MP_NS+'/lobby/';
@@ -1602,7 +1725,7 @@ function onDirect(m){
  }
 }
 
-/* ---- WebRTC (P2P). 실패해도 브로커 중계로 계속 진행 ---- */
+/* ---- WebRTC (P2P). 신호는 Firestore 로 교환 ---- */
 async function rtcInit(offer){
  if(!window.RTCPeerConnection||net.pc)return;
  try{
@@ -1678,14 +1801,14 @@ function acceptInc(id){
 }
 function rejectInc(id){net.inc=net.inc.filter(v=>v.id!==id);sendCtl(id,'rj');renderLobby()}
 function quickMatch(){
- const arr=Object.values(net.lobby).filter(p=>performance.now()-p.seen<MP_STALE);
+ const arr=Object.values(net.lobby).filter(p=>performance.now()-p.seen<stale());
  if(!arr.length){toast('지금 대결을 요청 중인 사람이 없습니다. 잠시 기다리면 목록에 나타납니다');return}
  challenge(arr[Math.random()*arr.length|0].id);
 }
 function lobbyTick(){
  const now=performance.now();
- if(net.listed&&now-net.hbT>6000){net.hbT=now;announce()}
- for(const id in net.lobby)if(now-net.lobby[id].seen>MP_STALE)delete net.lobby[id];
+ if(net.listed&&now-net.hbT>hbMs()){net.hbT=now;announce()}
+ for(const id in net.lobby)if(now-net.lobby[id].seen>stale())delete net.lobby[id];
  net.inc=net.inc.filter(x=>now-x.t<25000);
  if(net.out&&now-net.out.t>20000){sendCtl(net.out.to,'cx');toast(`${net.out.n}님이 응답하지 않습니다`);net.out=null}
  renderLobby();setStat();
@@ -1778,7 +1901,7 @@ function mpLeave(notify){
  level=1;inSecret=false;genLevel();
  $('mpGame').style.display='none';$('mpHud').style.display='none';
  ov.style.display='flex';ov.style.cursor='default';$('set').style.display='block';$('ovbtn').style.display='inline-block';$('ovbtn').textContent='클릭하여 시작';refreshSet();
- if(net.cl.length){netList(true);mpShow('lobby');renderLobby()}else openMp();
+ if(netActive()){netList(true);mpShow('lobby');renderLobby()}else openMp();
 }
 function mpCheckEnd(){
  if(mp.over||(mp.mk<MP_WIN&&mp.ok<MP_WIN))return;
@@ -1802,8 +1925,15 @@ function mpOnState(m){
  const o=mp.opp;if(!o||!fin(+m.s)||m.s<=mp.lastSeq)return;mp.lastSeq=m.s;
  if(!fin(+m.x)||!fin(+m.z)||!fin(+m.a))return;
  const x=clamp(+m.x,0,N),z=clamp(+m.z,0,N);
+ // 0.2초 간격 패킷 사이를 부드럽게 잇기 위해 속도를 추정해 앞으로 조금 예측(extrapolate)한다
+ const nw=performance.now();
+ if(o.got&&o.rx&&Math.hypot(x-o.tx,z-o.tz)<3){
+  const dr=clamp((nw-o.rx)/1000,.05,.6);
+  o.vx=(x-o.tx)/dr;o.vz=(z-o.tz)/dr;o.va=angDiff(+m.a,o.ta)/dr;
+ }else{o.vx=o.vz=o.va=0}
+ o.rx=nw;
  o.tx=x;o.tz=z;o.ta=+m.a;
- if(!o.got||Math.hypot(x-o.x,z-o.z)>3){o.x=x;o.z=z;o.ang=o.ta;o.got=true}
+ if(!o.got||Math.hypot(x-o.x,z-o.z)>3){o.x=x;o.z=z;o.ang=o.ta;o.got=true;o.vx=o.vz=o.va=0}
  if(o.state==='dead'&&m.v===1&&performance.now()-o.deadAt>1200){o.state='mp';o.fall=0;o.x=x;o.z=z}
 }
 function mpOnShot(m){
@@ -1871,8 +2001,10 @@ function mpMenu(){
 function mpUpdOpp(e,dt){
  e.flash=Math.max(0,e.flash-dt);e.muz=Math.max(0,e.muz-dt);e.atk=Math.max(0,e.atk-dt);
  if(e.state==='dead'){e.fall=Math.min(1,e.fall+dt*2);e.moving=false;return}
- const k=1-Math.exp(-dt*16),ox=e.x,oz=e.z;
- e.x+=(e.tx-e.x)*k;e.z+=(e.tz-e.z)*k;e.ang+=angDiff(e.ta,e.ang)*k;
+ const k=1-Math.exp(-dt*12),ox=e.x,oz=e.z;
+ const ex=e.rx?Math.min((performance.now()-e.rx)/1000,.25):0;
+ const px=e.tx+(e.vx||0)*ex,pz=e.tz+(e.vz||0)*ex,pa=e.ta+(e.va||0)*ex;
+ e.x+=(px-e.x)*k;e.z+=(pz-e.z)*k;e.ang+=angDiff(pa,e.ang)*k;
  const sp=Math.hypot(e.x-ox,e.z-oz)/Math.max(dt,1e-3);
  e.moving=sp>.4;if(e.moving)e.walk+=dt*(sp>3.8?12:8);
 }
@@ -1901,7 +2033,7 @@ function mpTick(dt){
  // 상태 전송: P2P 면 ~30Hz, 중계면 ~12Hz
  mp.sendT-=dt;
  if(mp.sendT<=0){
-  mp.sendT=rtcOpen()?.033:.085;
+  mp.sendT=MP_SEND;
   netSend({k:'st',x:+P.x.toFixed(2),z:+P.z.toFixed(2),a:+P.yaw.toFixed(2),v:P.dead?0:1,w:P.weapon,s:++mp.seq},0);
  }
  // 플레이어끼리 겹치지 않게 살짝 밀어냄
@@ -1916,7 +2048,7 @@ function mpTickSlow(now){
 }
 function mpHudUpdate(){
  $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.mk;$('mpS2').textContent=mp.ok;
- $('mpNet').textContent=(rtcOpen()?'P2P ':'RELAY ')+(mp.ping?mp.ping+'ms':'…');
+ $('mpNet').textContent=(rtcOpen()?'P2P ':(net.mode==='mq'?'RELAY ':'연결중 '))+(mp.ping?mp.ping+'ms':'…');
  $('hKey').textContent=mp.ping?mp.ping:'--';
 }
 
@@ -1928,7 +2060,7 @@ $('mpLeave').addEventListener('click',leaveLobby);
 $('mpQuick').addEventListener('click',quickMatch);
 $('mpName').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();enterLobby()}if(e.key==='Escape'){mpShow(null)}});
 $('mpName').addEventListener('keyup',e=>e.stopPropagation());
-addEventListener('beforeunload',()=>{try{if(mp.active)netSend({k:'bye'},2);if(net.cl.length)pubAll(MP_NS+'/lobby/'+net.id,'',true)}catch(e){}});
+addEventListener('beforeunload',()=>{try{if(mp.active)netSend({k:'bye'},2);if(net.fs&&net.fs.doc)net.fs.doc.delete();if(net.cl.length)pubAll(MP_NS+'/lobby/'+net.id,'',true)}catch(e){}});
 if(MP_Q.has('debug'))window.__wr={P,mp,net,get state(){return state},get enemies(){return enemies},get items(){return items},hurt,shoot,genLevel,clearLine,canStand,mpRespawn};
 
 /* ================= 메인 루프 ================= */
