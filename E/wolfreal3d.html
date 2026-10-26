@@ -1767,6 +1767,8 @@ async function rtcInit(offer){
   const dE=pc.createDataChannel('e',{negotiated:true,id:1});
   net.dS=dS;net.dE=dE;
   dS.onopen=dE.onopen=()=>{mp.everUp=true;mp.downT=0;mp.rAtt=0};
+  // 상대가 창을 닫으면 DataChannel 이 즉시 닫힌다 → 바로 생존 확인(신호 경로)을 시작
+  dS.onclose=dE.onclose=()=>{if(mp.active&&net.dS===dS){mp.dcCloseT=performance.now();mp.kaT=0}};
   // 음성: 처음부터 오디오 m-line 을 만들어 두고 마이크는 replaceTrack 으로 켜고 끈다 (재협상 불필요). 기본은 트랙 없음(=비활성)
   if(offer){const tr=pc.addTransceiver('audio',{direction:'sendrecv'});net.aSender=tr.sender}
   pc.ontrack=e=>{if(e.track.kind!=='audio')return;try{if(net.aEl){net.aEl.srcObject=null}const a=new Audio();a.autoplay=true;a.srcObject=new MediaStream([e.track]);net.aEl=a;const pl=a.play();if(pl&&pl.catch)pl.catch(()=>{})}catch(x){}};
@@ -2173,17 +2175,21 @@ function mpTickSlow(now){
  // 이 탭이 멈췄다 깨어난 경우(절전·백그라운드 정지)엔 상대 무응답으로 보지 않는다
  const gap=now-(mp.tkT||now);mp.tkT=now;if(gap>3000)mp.lastRx=now;
  // P2P 가 끊겨 있으면: 신호 경로로 생존 신호를 보내고, 재연결을 시도한다
- if(rtcOpen()){mp.downT=0;mp.rAtt=0}
- else{
+ if(rtcOpen()){
+  mp.downT=0;mp.rAtt=0;
+  // 연결은 열려 있는데 5초 넘게 아무것도 안 오면(상대 강제종료·네트워크 단절 등) 신호 경로로 생존 확인
+  if(now-mp.lastRx>5000&&now-mp.kaT>3000){mp.kaT=now;netSend({k:'ka'},1)}
+ }else{
   if(!mp.downT)mp.downT=now;
   const dn=now-mp.downT;
-  if(now-mp.kaT>5000){mp.kaT=now;netSend({k:'ka'},1)}
+  if(now-mp.kaT>3000){mp.kaT=now;netSend({k:'ka'},1)}
   const th=!mp.everUp?10000:(mp.rAtt?5000:3000);
   if(mp.role==='A'){if(dn>th&&now-mp.rT>5000)rtcRecover()}
   else if(dn>th+2000&&now-mp.rqT>8000){mp.rqT=now;netSend({k:'rr'},1)}
  }
  // 명시적인 나가기(bye)가 없으면 30초 동안 아무 신호가 없을 때만 상대가 떠난 것으로 처리
- if(now-mp.lastRx>30000&&!mp.gone)mpOppLeft();
+ // 연결이 열려 있어도 12초, P2P 가 끊긴 상태에서는 9초 동안 어떤 신호(ka 포함)도 없으면 상대가 창을 닫은 것으로 본다
+ if(now-mp.lastRx>(rtcOpen()?12000:9000)&&!mp.gone)mpOppLeft();
 }
 function mpHudUpdate(){
  $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.mk;$('mpS2').textContent=mp.ok;
@@ -2200,7 +2206,16 @@ $('mpLeave').addEventListener('click',leaveLobby);
 $('mpQuick').addEventListener('click',quickMatch);
 $('mpName').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();enterLobby()}if(e.key==='Escape'){mpShow(null)}});
 $('mpName').addEventListener('keyup',e=>e.stopPropagation());
-addEventListener('beforeunload',()=>{try{if(mp.active)netSend({k:'bye'},2);if(net.fs&&net.fs.doc)net.fs.doc.delete();if(net.cl.length)pubAll(MP_NS+'/lobby/'+net.id,'',true)}catch(e){}});
+function unloadBye(e){
+ if(e&&e.type==='pagehide'&&e.persisted)return;
+ try{
+  if(mp.active){netSend({k:'bye'},2);if(net.fs)sendTo(mp.oppId,JSON.stringify({k:'bye',f:net.id,i:net.id+':bye'}))}
+  if(net.fs&&net.fs.doc)net.fs.doc.delete();
+  if(net.cl.length)pubAll(MP_NS+'/lobby/'+net.id,'',true);
+  rtcClose();
+ }catch(x){}
+}
+addEventListener('pagehide',unloadBye);addEventListener('beforeunload',unloadBye);
 if(MP_Q.has('debug'))window.__wr={P,mp,net,get state(){return state},get enemies(){return enemies},get items(){return items},hurt,shoot,genLevel,clearLine,canStand,mpRespawn};
 
 /* ================= 메인 루프 ================= */
