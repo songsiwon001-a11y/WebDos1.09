@@ -176,20 +176,21 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
    <button class="dbtn" data-scheme="modern">현대<small>WASD · 마우스 조준/발사 · 재장전 R</small></button></div>
   <div class="row" id="rowSens"><span>감도</span><input id="sens" type="range" min="1" max="10" step=".5"><b id="sensv"></b></div>
  </div>
- <div id="mpBtn">⚔ 멀티플레이 · 1 : 1 대결</div><br>
+ <div id="mpBtn">⚔ 멀티플레이 · 대결 / 협동</div><br>
  <div id="ovbtn">클릭하여 시작</div>
  <div id="bgmHint">♪ 화면을 한 번 클릭하면 타이틀 음악이 재생됩니다</div>
 </div></div>
 
 <div id="mp"><div id="mpbox">
- <h2>⚔ 1 : 1 대결</h2>
- <div id="mpsub">1 에피소드 · 1 스테이지 · 먼저 5번 처치하면 승리<br>모든 무기 · 무한 탄약 · 죽으면 바로 리스폰</div>
+ <h2>⚔ 멀티플레이</h2>
+ <div id="mpsub">대결: 먼저 5번 처치하면 승리 · 협동: 같은 에피소드를 함께 클리어<br>(요청을 보낼 때 방식을 고르세요)</div>
  <div id="mpJoin">
   <input id="mpName" type="text" maxlength="12" placeholder="닉네임" autocomplete="off" spellcheck="false"><br>
   <div class="mpb" id="mpEnter">입장</div><div class="mpb dim" id="mpBack">뒤로</div>
  </div>
  <div id="mpLobby" style="display:none">
   <div id="mpMeRow"><b id="mpMeName"></b> &nbsp;<span class="pulse">● 대결 요청 중…</span></div>
+  <div id="mpSel" style="margin:8px 0"><span class="mpb sm" data-md="pvp">⚔ 1 : 1 대결</span><span class="mpb sm dim" data-md="coop">🤝 협동 2인</span> <select id="mpEp" style="display:none;font:inherit;padding:6px"></select></div>
   <div id="mpIn"></div>
   <div class="mph">대결을 요청 중인 플레이어 <span id="mpCnt"></span></div>
   <div id="mpList"></div>
@@ -435,7 +436,7 @@ const WEAPONS=[
 const keys={};
 /* 멀티플레이 상태 (구현은 아래 '멀티플레이' 블록) */
 const mp={active:false,over:false,cd:0,opp:null,pref:null,gone:false};
-const infAmmo=()=>isFree()||mp.active;
+const infAmmo=()=>isFree()||(mp.active&&!mp.coop);
 const cfg={scheme:'classic',sens:4,diff:0,mode:'normal',ep:1};
 const isTouch=(('ontouchstart' in window)||navigator.maxTouchPoints>0)&&window.matchMedia('(pointer:coarse)').matches;
 /* 원작 4개 난이도 + 초쉬움 */
@@ -504,7 +505,7 @@ function useDoor(){
 function lockedMsg(d){if(d.msgT>0)return;d.msgT=1.6;showMsg(d.lock===1?'골드 키가 필요합니다':'실버 키가 필요합니다',1.5);sfx.empty()}
 function useElevator(){
  if(state!=='play'||P.dead||exitT>0)return;
- if(mp.active){
+ if(mp.active&&!mp.coop){
   const now=performance.now();if(now-(mp.elevT||0)<700)return;mp.elevT=now; // 키 반복 입력 방지
   mp.elevWarn=(mp.elevWarn||0)+1;
   if(mp.elevWarn<=3){showMsg('🔒 엘리베이터가 잠겨 있습니다 ('+mp.elevWarn+'/3)',1.6);sfx.empty();return}
@@ -706,7 +707,7 @@ function loadWolfMap(idx){
   }else if(o>=108){
    const d=decodeEnemy(o);if(!d)continue;
    if(d.dead){decor.push({id:'dead',x:x+.5,z:z+.5});continue}
-   if(isFree()||mp.active)continue;
+   if(isFree()||(mp.active&&!mp.coop))continue;
    if(cfg.diff===4&&d.band>0)continue;
    if(d.band===1&&cfg.diff<2)continue;
    if(d.band===2&&cfg.diff<3)continue;
@@ -983,7 +984,8 @@ function gameWin(){
  $('ovtxt').textContent=`★ THE END ★\n\n히틀러가 쓰러졌다.\n당신은 성을 탈출했고 전쟁은 끝났다!\n\n최종 점수: ${P.score}`;
  $('set').style.display='none';ovbtn.textContent='클릭하여 타이틀로';ovbtn.style.display='inline-block';ov.style.display='flex';ov.style.cursor='pointer';
 }
-function levelClear(){
+function levelClear(fromNet){
+ if(mp.coop){if(mp.over)return;if(!fromNet)netSend({k:"nf",lv:level,go:goSecret?1:0},2);if(flOf(level)===9&&!inSecret){mpCoopEnd(true);return}}
  if(level>=54&&!inSecret&&!goSecret){gameWin();return}
  state='clear';clearT=0;sfx.clear();
  const free=isFree(),ep=epOf(level),fl=inSecret?10:flOf(level),lab=ep+'-'+(inSecret?'S':flOf(level));
@@ -1002,7 +1004,7 @@ function update(dt){
  flowT-=dt;if(flowT<=0){flowT=.3;computeFlow()}
  updDoors(dt);updSecrets(dt);
  for(const e of enemies)updEnemy(e,dt);
- if(mp.active){mpUpdItems(dt);mpTick(dt)}else updItems(dt);
+ if(mp.active){if(mp.coop)updItems(dt);else mpUpdItems(dt);mpTick(dt)}else updItems(dt);
  if(winT>0){winT-=dt;if(winT<=0){winT=0;if(!P.dead)gameWin()}}
  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.vy-=9*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;if(p.y<0){p.y=0;p.vy*=-.3;p.vx*=.6;p.vz*=.6}p.life-=dt;if(p.life<=0)particles.splice(i,1)}
  P.hurt=Math.max(0,P.hurt-dt*1.6);P.pick=Math.max(0,P.pick-dt*3);
@@ -1010,7 +1012,7 @@ function update(dt){
  {const tc=treasureCell[(P.z|0)*N+(P.x|0)];if(tc&&!P.inTR)showMsg('★ 보물방! ★',1.6);P.inTR=!!tc}
  if(exitT>0){exitT-=dt;if(exitT<=0){exitT=0;if(state==='play')levelClear()}}
  const pcx=P.x|0,pcz=P.z|0;
- if(state==='play'&&exitT<=0&&!mp.active&&(gAt(pcx+1,pcz)===8||gAt(pcx-1,pcz)===8||gAt(pcx,pcz+1)===8||gAt(pcx,pcz-1)===8)){
+ if(state==='play'&&exitT<=0&&(!mp.active||mp.coop)&&(gAt(pcx+1,pcz)===8||gAt(pcx-1,pcz)===8||gAt(pcx,pcz+1)===8||gAt(pcx,pcz-1)===8)){
   if(!P.inExit)showMsg('엘리베이터 · 스위치 벽을 바라보고 Space / E',2.4);
   P.inExit=true;
  }else P.inExit=false;
@@ -1260,8 +1262,8 @@ function drawMap(){
 }
 const hud={lv:$('hLv'),key:$('hKey'),sc:$('hSc'),lf:$('hLf'),hp:$('hHp'),am:$('hAm'),wn:$('hWn'),scope:$('scope'),cr:$('cross'),sl:[...document.querySelectorAll('#slots span')],dmg:$('dmg'),pick:$('pick')};
 function updHud(){
- const fr=isFree()||mp.active;
- hud.lv.textContent=epOf(level)+'-'+(inSecret?'S':flOf(level));hud.key.innerHTML=(P.keys[0]?'<span style="color:#ffd23a">●</span>':'')+(P.keys[1]?'<span style="color:#cfe0ff">●</span>':'')||'--';hud.sc.textContent=mp.active?mp.mk:P.score;hud.lf.textContent=mp.active?mp.ok:fr?'∞':P.lives;hud.hp.textContent=P.hp+'%';
+ const fr=isFree()||(mp.active&&!mp.coop);
+ hud.lv.textContent=epOf(level)+'-'+(inSecret?'S':flOf(level));hud.key.innerHTML=(P.keys[0]?'<span style="color:#ffd23a">●</span>':'')+(P.keys[1]?'<span style="color:#cfe0ff">●</span>':'')||'--';hud.sc.textContent=fr&&mp.active?mp.mk:P.score;hud.lf.textContent=mp.active&&!mp.coop?mp.ok:fr?'∞':P.lives;hud.hp.textContent=P.hp+'%';
  hud.hp.style.color=P.hp<30?'#f55':'#ffe46b';
  hud.am.textContent=fr?'∞':cfg.scheme==='modern'?(P.reloading>0?'RLD':P.clip[P.weapon])+'/'+P.ammo:P.ammo;
  hud.wn.textContent=WEAPONS[P.weapon].name+(P.zoom>.5?' · 4×':'');
@@ -1464,8 +1466,8 @@ const MP_MAX=12; // Firebase 대기실 최대 동시 인원
 const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig';
 const MP_SEND=.2; // 위치 전송 주기(초): 0.2초마다
 const MP_WIN=5,MP_STALE=40000,MP_HB=15000,MP_RESP=2.6,MP_ITEM_RT=20;
-const MPT={col:[.85,.28,.25],helm:[.5,.14,.12],s:1};
-const net={rv:0,pendNext:[],mode:'fs',cl:[],fs:null,sc:0,id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
+const MPT={col:[.85,.28,.25],helm:[.5,.14,.12],s:1},MPA={col:[.3,.55,.95],helm:[.12,.25,.55],s:1};
+const net={sel:{md:"pvp",ep:1},rv:0,pendNext:[],mode:'fs',cl:[],fs:null,sc:0,id:'',name:'',n:0,lobby:{},seen:new Set(),seenQ:[],out:null,inc:[],listed:false,hbT:0,early:[],pc:null,dS:null,dE:null,pend:[],tm:0};
 const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e};
 const cleanName=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f<>&"'`]/g,'').trim().slice(0,12);
 const rid=()=>{const a='abcdefghijklmnopqrstuvwxyz0123456789';let s='';for(let i=0;i<8;i++)s+=a[Math.random()*36|0];return s};
@@ -1728,6 +1730,7 @@ function onDirect(m){
    case 'rm':mp.rmOpp=true;if(mp.over)mpEndUI();if(mp.rm&&mp.rmOpp)mpRestart();break;
    case 'bye':mpOppLeft();break;
    case 'pg':netSend({k:'po',t:m.t},0);break;
+   case 'nf':if(mp.coop&&state==='play'&&(m.lv|0)===level){goSecret=!!m.go;levelClear(true)}break;
    case 'ka':break;
    case 'rr':if(mp.role==='A'&&!rtcOpen()&&now-(mp.rT||0)>2500)rtcRecover();break;
    case 'ct':mpChatRx(m);break;
@@ -1739,15 +1742,15 @@ function onDirect(m){
  }
  switch(k){
   case 'ch':{
-   const nm=cleanName(m.fn)||'PLAYER';
+   const nm=cleanName(m.fn)||'PLAYER',rmd=m.md==='coop'?'coop':'pvp',rep=clamp(m.ep|0,1,6);
    if(!net.listed)return;
-   if(net.out&&net.out.to===m.f){const o=net.out;net.out=null;sendCtl(m.f,'ac');mpBegin(m.f,nm);return}
+   if(net.out&&net.out.to===m.f){const o=net.out,lo=net.id<m.f,md=lo?o.md:rmd,ep=lo?o.ep:rep;net.out=null;sendCtl(m.f,'ac',{md,ep});mpBegin(m.f,nm,md,ep);return}
    const ex=net.inc.find(x=>x.id===m.f);
-   if(ex)ex.t=now;else{net.inc.push({id:m.f,n:nm,t:now});sfx.alert(4)}
+   if(ex){ex.t=now;ex.md=rmd;ex.ep=rep}else{net.inc.push({id:m.f,n:nm,t:now,md:rmd,ep:rep});sfx.alert(4)}
    renderLobby();break}
   case 'cx':net.inc=net.inc.filter(x=>x.id!==m.f);renderLobby();break;
   case 'ac':
-   if(net.out&&net.out.to===m.f){const nm=net.out.n;net.out=null;mpBegin(m.f,cleanName(m.fn)||nm)}
+   if(net.out&&net.out.to===m.f){const nm=net.out.n;net.out=null;mpBegin(m.f,cleanName(m.fn)||nm,m.md==='coop'?'coop':'pvp',clamp(m.ep|0,1,6))}
    else sendCtl(m.f,'bye');
    break;
   case 'rj':
@@ -1846,7 +1849,7 @@ function leaveLobby(){
 function challenge(id){
  const p=net.lobby[id];if(!p)return;
  if(net.out&&net.out.to!==id)sendCtl(net.out.to,'cx');
- net.out={to:id,n:p.n,t:performance.now()};sendCtl(id,'ch');renderLobby();
+ net.out={to:id,n:p.n,t:performance.now(),md:net.sel.md,ep:net.sel.ep};sendCtl(id,'ch',{md:net.sel.md,ep:net.sel.ep});renderLobby();
 }
 function cancelChallenge(){if(net.out){sendCtl(net.out.to,'cx');net.out=null;renderLobby()}}
 function acceptInc(id){
@@ -1854,7 +1857,7 @@ function acceptInc(id){
  if(net.out){sendCtl(net.out.to,'cx');net.out=null}
  for(const o of net.inc)if(o.id!==id)sendCtl(o.id,'rj',{r:'busy'});
  net.inc=[];initAudio();if(isTouch)goFS();
- sendCtl(id,'ac');mpBegin(id,x.n);
+ sendCtl(id,'ac',{md:x.md,ep:x.ep});mpBegin(id,x.n,x.md,x.ep);
 }
 function rejectInc(id){net.inc=net.inc.filter(v=>v.id!==id);sendCtl(id,'rj');renderLobby()}
 function quickMatch(){
@@ -1873,9 +1876,10 @@ function lobbyTick(){
 }
 function renderLobby(){
  if(net.ui!=='lobby')return;
+ selRender();
  const box=$('mpIn');box.textContent='';
  for(const x of net.inc){
-  const r=el('div','mpcard hot');r.appendChild(el('span','nm',x.n));r.appendChild(el('span','tx','님이 대결을 신청했습니다'));
+  const r=el('div','mpcard hot');r.appendChild(el('span','nm',x.n));r.appendChild(el('span','tx',x.md==='coop'?`님이 협동(EP${x.ep} ${EPN[x.ep-1]})을 신청했습니다`:'님이 1 : 1 대결을 신청했습니다'));
   const a=el('div','mpb sm','수락'),b=el('div','mpb sm dim','거부');
   a.onclick=()=>acceptInc(x.id);b.onclick=()=>rejectInc(x.id);r.appendChild(a);r.appendChild(b);box.appendChild(r);
  }
@@ -1896,7 +1900,7 @@ function renderLobby(){
 function bestYaw(x,z){let by=0,bd=-1;for(let i=0;i<16;i++){const a=i/16*Math.PI*2,d=castGrid(x,z,-Math.sin(a),-Math.cos(a),30);if(d>bd){bd=d;by=a}}return by}
 /* genLevel 끝에서 호출: 아이템/스폰 지점/상대 엔티티 준비 (두 클라이언트가 같은 결과를 얻도록 결정적) */
 function mpPrepareMap(){
- items=items.filter(i=>i.kind==='health');items.forEach((it,k)=>{it.id=k;it.gone=false;it.rt=0});
+ if(!mp.coop)items=items.filter(i=>i.kind==='health');items.forEach((it,k)=>{it.id=k;it.gone=false;it.rt=0});
  const sx=P.x|0,sz=P.z|0,cells=[];
  const free=(x,z)=>{const g=gAt(x,z);return g===0&&!decorBlock[z*N+x]};
  for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){
@@ -1912,8 +1916,8 @@ function mpPrepareMap(){
  }
  mp.spawns=sp.map(c=>({x:c[0]+.5,z:c[1]+.5}));
  if(mp.spawns.length<2)mp.spawns.push({x:sx+.5,z:sz+.5});
- mp.opp={x:0,z:0,ang:0,type:MPT,tn:'player',hp:100,state:'mp',seed:0,walk:0,cd:0,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,
-  r:.26,h:.72,moving:false,amb:false,boss:false,opp:true,tx:0,tz:0,ta:0,got:false,deadAt:0};
+ mp.opp={x:P.x,z:P.z,ang:0,type:mp.coop?MPA:MPT,tn:'player',hp:100,state:'mp',seed:0,walk:0,cd:0,flash:0,muz:0,pain:0,atk:0,fall:0,burst:0,
+  r:.26,h:.72,moving:false,amb:false,boss:false,opp:true,tx:P.x,tz:P.z,ta:0,got:false,deadAt:0};
  enemies.push(mp.opp);
 }
 function mpSpawnInitial(){
@@ -1932,15 +1936,16 @@ function mpLabels(on){
  $('hLf').previousElementSibling.textContent=on?'RIVAL':'LIVES';
  $('hKey').previousElementSibling.textContent=on?'PING':'KEYS';
 }
-function mpBegin(oppId,oppName){
+function mpBegin(oppId,oppName,md,ep){
  net.out=null;net.inc=[];netList(false);net.rv=0;net.pendNext=[];
  Object.assign(mp,{active:true,elevWarn:0,elevT:0,oppId,oppName,role:net.id<oppId?'A':'B',mk:0,ok:0,over:false,rm:false,rmOpp:false,seq:0,lastSeq:-1,lastRx:performance.now(),lastMq:performance.now(),oppMic:false,downT:0,rAtt:0,rT:0,rqT:0,kaT:0,tkT:0,everUp:false,
   pref:null,gone:false,sendT:0,pingT:0,ping:0,respT:0,cd:3,cdN:4,hit:0,hitHd:0,hitT:0,shT:0,endT:0,savedMode:cfg.mode});
- cfg.mode='normal';level=1;inSecret=false;
- P.score=0;P.weapon=1;P.has=[true,true,true];P.clip=[5,8,30];P.ammo=99;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.dead=false;P.hp=100;P.inv=3;
- genLevel();mpSpawnInitial();
+ mp.coop=md==='coop';cfg.mode='normal';level=mp.coop?(clamp(ep|0,1,6)-1)*9+1:1;inSecret=false;
+ P.score=0;P.weapon=1;P.has=mp.coop?[true,true,false]:[true,true,true];P.clip=[5,8,30];P.ammo=mp.coop?40:99;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.dead=false;P.hp=100;P.inv=3;
+ if(mp.coop){mp.cd=0;mp.cdN=0;P.lives=3}
+ genLevel();if(mp.coop)computeFlow();else mpSpawnInitial();
  state='play';mapMode=1;$('mp').style.display='none';net.ui='';ov.style.display='none';$('mpGame').style.display='none';
- $('mpHud').style.display='block';mpLabels(true);bgmStop();
+ $('mpHud').style.display='block';mpLabels(!mp.coop);bgmStop();
  if(cfg.scheme==='modern'&&!isTouch)showMsg('화면을 클릭해 조준을 시작하세요',2.4);
  lockPointer();
  // WebRTC: 먼저 신청한 쪽이 아닌, ID 가 작은 쪽(A)이 연결을 제안
@@ -2021,7 +2026,7 @@ function mpLeave(notify){
  closeChat(false);$('chat').style.display='none';$('chatLog').textContent='';
  if(mp.active&&notify)netSend({k:'bye'},2);
  rtcClose();
- mp.active=false;mp.elevWarn=0;mp.over=false;mp.cd=0;P.inv=0;mp.opp=null;
+ mp.active=false;mp.coop=false;mp.elevWarn=0;mp.over=false;mp.cd=0;P.inv=0;mp.opp=null;
  cfg.mode=mp.savedMode||'normal';mpLabels(false);
  enemies=[];state='menu';P.dead=false;P.hp=100;P.fire=false;P.rmb=false;P.zoom=0;P.has=[true,true,false];P.weapon=1;
  if(document.pointerLockElement)document.exitPointerLock();
@@ -2036,6 +2041,7 @@ function mpCheckEnd(){
  if(mp.mk>mp.ok)sfx.clear();
 }
 function mpOnDeath(){
+ if(mp.coop){mp.respT=MP_RESP;sfx.die(0);P.fire=false;showMsg("쓰러졌다… 곧 동료 곁에서 되살아납니다",2);return}
  mp.ok++;mp.respT=MP_RESP;sfx.die(0);P.fire=false;
  netSend({k:'die',ok:mp.ok},2);
  showMsg(`${mp.oppName}에게 당했다…`,2);
@@ -2062,6 +2068,7 @@ function mpOnState(m){
  o.tx=x;o.tz=z;o.ta=+m.a;
  if(!o.got||Math.hypot(x-o.x,z-o.z)>3){o.x=x;o.z=z;o.ang=o.ta;o.got=true;o.vx=o.vz=o.va=0}
  if(o.state==='dead'&&m.v===1&&performance.now()-o.deadAt>1200){o.state='mp';o.fall=0;o.x=x;o.z=z}
+ if(mp.coop&&m.v===0&&o.state!=='dead'){o.state='dead';o.fall=0;o.deadAt=performance.now()}
 }
 function mpOnShot(m){
  const o=mp.opp;if(!o||o.state==='dead')return;
@@ -2074,7 +2081,7 @@ function mpShotFx(){
 }
 /* 내 총알이 상대에게 맞았다: 피해량은 모아서(최대 10회/초) 상대에게 보낸다. 체력은 맞은 쪽이 판정(권위) */
 function mpHitOpp(e,d,y){
- if(!mp.opp||e.state==='dead'||mp.cd>0)return;
+ if(!mp.opp||e.state==='dead'||mp.cd>0||mp.coop)return;
  const head=y>e.h*.78;if(head)d*=2;if(P.weapon===2)d*=.6;
  e.flash=.15;sfx.hit();spark(e.x,Math.min(y,e.h),e.z,[2.2,.2,.1],10,2.5);
  mp.hit+=Math.round(d);
@@ -2082,7 +2089,7 @@ function mpHitOpp(e,d,y){
 }
 function mpFlushHit(){if(mp.hit>0){netSend({k:'ht',d:mp.hit},1);mp.hit=0}mp.hitT=performance.now()}
 function mpRespawn(){
- const s=mpPickSpawn();
+ const s=mp.coop&&mp.opp&&mp.opp.got?{x:mp.opp.x,z:mp.opp.z}:mpPickSpawn();
  P.x=s.x;P.z=s.z;P.vx=P.vz=0;P.pitch=0;P.yaw=bestYaw(s.x,s.z);P.hp=100;P.dead=false;P.deadT=0;P.inv=2;P.zoom=0;P.rmb=false;P.reloading=0;P.fire=false;P.hurt=0;
  computeFlow();showMsg('리스폰!',.9);
 }
@@ -2099,6 +2106,7 @@ function mpOppLeft(){
  mpEndUI();
 }
 function mpEndUI(){
+ if(mp.coop){mpCoopEnd(false);return}
  closeChat(false);
  const g=$('mpGbox');g.textContent='';
  const win=mp.gone||mp.mk>mp.ok;
@@ -2114,6 +2122,13 @@ function mpEndUI(){
  }
  const l=el('div','mpb dim','대기실로');l.onclick=()=>mpLeave(true);g.appendChild(l);
  $('mpGame').style.display='flex';
+}
+function mpCoopEnd(win){
+ mp.over=true;P.fire=false;P.rmb=false;closeChat(false);if(document.pointerLockElement)document.exitPointerLock();
+ const g=$('mpGbox');g.textContent='';
+ if(win){const e=epOf(level);g.appendChild(el('h2','win','★ 에피소드 클리어! ★'));g.appendChild(el('p','',`EPISODE ${e} · ${EPN[e-1]}\n${net.name} & ${mp.oppName}`));sfx.clear()}
+ else{g.appendChild(el('h2','lose','협동 종료'));g.appendChild(el('p','',`${mp.oppName}님이 떠났습니다.`))}
+ const l=el('div','mpb','대기실로');l.onclick=()=>mpLeave(true);g.appendChild(l);$('mpGame').style.display='flex';
 }
 function mpMenu(){
  if(!mp.active||mp.over||document.hidden)return;
@@ -2192,12 +2207,21 @@ function mpTickSlow(now){
  if(now-mp.lastRx>(rtcOpen()?12000:9000)&&!mp.gone)mpOppLeft();
 }
 function mpHudUpdate(){
- $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.mk;$('mpS2').textContent=mp.ok;
+ $('mpMe').textContent=net.name;$('mpOp').textContent=mp.oppName;$('mpS1').textContent=mp.coop?'♥':mp.mk;$('mpS2').textContent=mp.coop?'♥':mp.ok;
  $('mpNet').textContent=(rtcOpen()?'P2P ':(net.mode==='mq'?'RELAY ':'연결중 '))+(mp.ping?mp.ping+'ms':'…');
- $('hKey').textContent=mp.ping?mp.ping:'--';
+ if(!mp.coop)$('hKey').textContent=mp.ping?mp.ping:'--';
  $('mpMic').textContent='🎤 '+(net.micOn?'ON':'OFF (M)')+(mp.oppMic?'  ·  상대 마이크 ON':'')+'  ·  T 채팅';
 }
 
+/* ---- 요청 방식 선택 (대결 / 협동 + 에피소드) ---- */
+function selRender(){
+ document.querySelectorAll('#mpSel [data-md]').forEach(b=>b.classList.toggle('dim',b.dataset.md!==net.sel.md));
+ const e=$('mpEp');e.style.display=net.sel.md==='coop'?'':'none';if(+e.value!==net.sel.ep)e.value=net.sel.ep;
+}
+EPN.forEach((n,i)=>{const o=document.createElement('option');o.value=i+1;o.textContent=`EP${i+1} · ${n}`;$('mpEp').appendChild(o)});
+document.querySelectorAll('#mpSel [data-md]').forEach(b=>b.addEventListener('click',()=>{net.sel.md=b.dataset.md;selRender()}));
+$('mpEp').addEventListener('change',e=>{net.sel.ep=+e.target.value||1});
+$('mpEp').addEventListener('keydown',e=>e.stopPropagation());
 /* ---- UI 이벤트 ---- */
 $('mpBtn').addEventListener('click',()=>{initAudio();openMp()});
 $('mpEnter').addEventListener('click',enterLobby);
