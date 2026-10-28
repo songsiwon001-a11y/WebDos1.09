@@ -101,7 +101,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 </div>
 <div class="ov" id="ovMap">
  <canvas id="mapc" width="200" height="200"></canvas>
- <div class="sub" style="margin-top:8px">전체 월드 (10000×10000) — 노란 점: 나 · 흰 점: 다른 플레이어 · M 로 닫기</div>
+ <div class="sub" style="margin-top:8px">전체 월드 (10000×10000) — 노란 점: 나 · 흰 점: 다른 플레이어 · N 으로 닫기</div>
 </div>
 <div id="touch">
  <div id="joy"><div id="joyk"></div></div>
@@ -111,7 +111,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div class="tb" id="tbPal" style="right:96px;bottom:154px;width:46px;height:46px">E</div>
  <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">채팅</div>
  <div class="tb" id="tbMap" style="right:80px;top:14px;width:46px;height:46px">지도</div>
- <div class="tb" id="tbMic" style="right:134px;top:14px;width:46px;height:46px">마이크</div>
+ <div class="tb" id="tbMic" style="right:188px;top:14px;width:46px;height:46px">마이크</div>
  <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
  <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
  <div class="tb" id="tbRun" style="left:60px;bottom:228px;width:50px;height:50px">달리기</div>
@@ -945,6 +945,7 @@ function peerMsg(p,s){
  let m;try{m=JSON.parse(s)}catch(e){return}
  if(!m||typeof m.k!=='string')return;
  p.rx=mono();
+ if(p.banned&&m.k!=='bye')return;
  switch(m.k){
   case 'st':
    if(fin(m.x)&&fin(m.y)&&fin(m.z)&&fin(m.r)&&fin(m.p)){
@@ -952,6 +953,8 @@ function peerMsg(p,s){
     if(!p.has){p.rx_=p.tx;p.ry=p.ty;p.rz=p.tz;p.yaw=p.tyaw;p.pitch=p.tpitch;p.has=true}
    }break;
   case 'hi':p.name=cleanName(m.n)||'PLAYER';p.mt=fin(m.mt)?m.mt:0;
+   if(isBanned(p.name)){banPeer(p,true);break} // 차단된 닉네임은 즉시 연결 종료
+   if(myRole()>=1)for(const [bn,r] of banRec)peerSend(p,{k:'bn',n:bn,on:r[0],t:r[1],s:1},true); // 새로 온 사람에게 차단 기록 전달
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
    // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
    if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
@@ -977,6 +980,12 @@ function peerMsg(p,s){
   case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
   case 'po':if(fin(m.t))p.ping=Math.round(mono()-m.t);break;
+  case 'bn':{ // 차단/해제 기록 (보낸 사람이 어드민 이상이고 대상보다 권한이 높을 때만 인정)
+   const n=bkey(m.n),on=m.on?1:0;if(!n)break;
+   if(!applyBan(n,on,fin(m.t)?m.t:Date.now(),lvOf(p.name)))break;
+   if(on){if(n===bkey(net.name))kickMe(p.name);else{const q=peerByName(n);if(q)banPeer(q,false)}}
+   else if(!m.s)chatAdd('',n+' 님의 차단이 해제되었습니다','sys');
+  }break;
   case 'bye':peerDown(p,'bye');break;
  }
 }
@@ -1047,6 +1056,27 @@ const myRole=()=>lvOf(net.name);
 const isOwner=()=>myRole()>=3;
 const canSetRole=(sl,cur,lv)=>sl>=3||(sl>=2&&lv<2&&cur<2); // 소유자: 전부 / 슈퍼어드민: 어드민 부여·해제만
 function setRole(n,lv){n=cleanName(n).toLowerCase();if(!n||n===OWNER)return false;if(lv>0)roles.set(n,lv);else roles.delete(n);saveRoles();return true}
+/* ---- 영구 차단(/ban): 닉네임 기준 · 이 브라우저에 저장 · 접속자끼리 P2P 로 동기화 (서버 없음) ----
+   banRec: 닉(소문자) -> [차단여부 1/0, 시각]. 시각이 더 늦은 기록이 이김 (밴/언밴이 엇갈려도 일관됨) */
+const banRec=new Map();
+try{const r=JSON.parse(localStorage.getItem('wc_bans_'+ROOM)||'[]');if(Array.isArray(r))for(const e of r)if(Array.isArray(e)&&typeof e[0]==='string'&&e[0]&&fin(e[2]))banRec.set(e[0],[e[1]?1:0,e[2]])}catch(e){}
+const saveBans=()=>{try{localStorage.setItem('wc_bans_'+ROOM,JSON.stringify([...banRec].map(([n,r])=>[n,r[0],r[1]])))}catch(e){}};
+const bkey=n=>cleanName(n).toLowerCase();
+const isBanned=n=>{const r=banRec.get(bkey(n));return !!(r&&r[0])};
+const canBan=(sl,n)=>{n=bkey(n);return sl>=1&&n!==OWNER&&sl>lvOf(n)}; // 어드민 이상, 나보다 낮은 권한만 (소유자는 불가)
+function localBan(n,on){const t=Math.max(Date.now(),((banRec.get(n)||[0,0])[1])+1);banRec.set(n,[on?1:0,t]);saveBans();return t}
+function applyBan(n,on,t,sl){ // 남이 보낸 차단/해제 기록 적용 (보낸 사람 권한 검증 + 최신 기록만)
+ if(!n||n===OWNER||!fin(t))return false;
+ if(on?!canBan(sl,n):sl<1)return false;
+ t=Math.min(t,Date.now()+864e5);const r=banRec.get(n);if(r&&r[1]>=t)return false;
+ banRec.set(n,[on?1:0,t]);saveBans();return true;
+}
+function banPeer(p,send){ // 차단된 사람과의 연결 끊기 (음성도 함께 끊김)
+ if(p.banned)return;p.banned=true;p.open=false;updateStat();
+ if(send){const r=banRec.get(bkey(p.name));peerSend(p,{k:'bn',n:bkey(p.name),on:1,t:r?r[1]:Date.now()},true)}
+ setTimeout(()=>{if(peers.get(p.id)===p){peerDown(p,'banned');net.retry[p.id]=mono()+6e5}},400);
+}
+function kickMe(by){if(state!=='play'&&state!=='queue')return;toast('🚫 이 닉네임은 영구 차단되었습니다 ('+by+')',6000);leaveGame()}
 const sys=t=>chatAdd('',t,'sys');
 const peerByName=n=>{n=String(n||'').toLowerCase();return [...peers.values()].find(p=>p.open&&String(p.name).toLowerCase()===n)};
 const num=(s,base)=>{s=String(s);if(s[0]==='~'){const v=s.length>1?parseFloat(s.slice(1)):0;return isFinite(v)?base+v:NaN}const v=parseFloat(s);return isFinite(v)?v:NaN};
@@ -1146,6 +1176,26 @@ function grant(a,lv){
 }
 cmd(['어드민','admin','op'],2,'/어드민 <닉>','어드민 권한 부여',a=>grant(a,1));
 cmd(['강등','deop','demote'],2,'/강등 <닉>','관리자 권한 해제',a=>grant(a,0));
+cmd(['ban','밴','차단'],1,'/ban <닉>','닉네임 영구 차단 (접속 중이면 바로 추방, 다시 못 들어옴)',a=>{
+ const n=bkey(a[0]);if(!n)return sys('사용법: /ban 닉네임');
+ if(n===bkey(net.name))return sys('자기 자신은 차단할 수 없습니다');
+ if(n===OWNER)return sys('소유자는 차단할 수 없습니다');
+ if(!canBan(myRole(),n))return sys('나와 같거나 더 높은 권한의 사람은 차단할 수 없습니다');
+ if(isBanned(n))return sys(n+' 님은 이미 차단되어 있습니다');
+ const t=localBan(n,1);netBroadcast({k:'bn',n,on:1,t},true);
+ const p=peerByName(n);if(p)banPeer(p,false);
+ sys(n+' 님을 영구 차단했습니다  (해제: /unban '+n+')');
+});
+cmd(['unban','언밴','차단해제','pardon'],1,'/unban <닉>','영구 차단 해제',a=>{
+ const n=bkey(a[0]);if(!n)return sys('사용법: /unban 닉네임');
+ if(!isBanned(n))return sys(n+' 님은 차단 목록에 없습니다');
+ const t=localBan(n,0);netBroadcast({k:'bn',n,on:0,t},true);
+ sys(n+' 님의 차단을 해제했습니다');
+});
+cmd(['banlist','밴목록','차단목록'],1,'/banlist','차단된 닉네임 목록',()=>{
+ const l=[...banRec].filter(([n,r])=>r[0]).map(([n])=>n);
+ sys(l.length?'차단된 닉네임 '+l.length+'개: '+l.join(', '):'차단된 닉네임이 없습니다');
+});
 /* ---- 소유자 ---- */
 cmd(['슈퍼어드민','superadmin'],3,'/슈퍼어드민 <닉>','슈퍼어드민 권한 부여',a=>grant(a,2));
 cmd(['소유자','owner'],3,'/소유자 <닉>','소유자 권한 부여',a=>grant(a,3));
@@ -1438,7 +1488,8 @@ function readNick(){
 }
 $('bSolo').onclick=()=>{readNick();enterGame()};
 $('bMulti').onclick=()=>{
- readNick();state='queue';showOv('ovTitle',false);showOv('ovQueue',true);$('bQSolo').style.display='none';
+ if(isBanned(readNick()))return toast('🚫 이 닉네임은 이 방에서 영구 차단되었습니다',3500);
+ state='queue';showOv('ovTitle',false);showOv('ovQueue',true);$('bQSolo').style.display='none';
  $('qMsg').textContent='Firebase 에 연결하는 중…';$('qList').textContent='';netConnect();evalQueue();
 };
 $('bQSolo').onclick=()=>{netDisconnect();enterGame()};
