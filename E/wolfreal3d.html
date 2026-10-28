@@ -30,7 +30,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #chat.open #chatIn{display:block}
 #toast{position:fixed;left:50%;top:14%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border:1px solid #888;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;text-align:center;max-width:90vw}
 #tab{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:rgba(0,0,0,.65);border:1px solid #777;padding:10px 16px;min-width:260px;display:none;font-size:14px;line-height:1.7}
-.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.55);text-align:center}
+.ov{z-index:5;position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.55);text-align:center}
 .card{background:rgba(25,25,25,.94);border:2px solid #777;padding:22px 26px;width:min(460px,92vw);max-height:92vh;overflow:auto}
 h1{font-size:44px;letter-spacing:4px;color:#7ddc4a;text-shadow:3px 3px 0 #2a4a14;margin-bottom:4px}
 .sub{font-size:13px;color:#bbb;margin-bottom:16px;line-height:1.5}
@@ -46,7 +46,8 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 #mapc{width:min(80vh,92vw);height:min(80vh,92vw);image-rendering:pixelated;border:2px solid #aaa;background:#123}
 #touch{position:fixed;inset:0;display:none;pointer-events:none}
 .tb{position:absolute;pointer-events:auto;width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.2);border:2px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;font-size:13px}
-#joy{position:absolute;left:24px;bottom:84px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
+@media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#bname{bottom:52px}#chat{bottom:52px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
+#joy{position:absolute;left:24px;bottom:70px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
 #joyk{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.4)}
 </style>
 </head>
@@ -89,6 +90,9 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <div class="sub" id="pStat"></div>
   <div class="sub">시야 거리: <span id="rdv"></span> 청크<br><input type="range" id="rd" min="3" max="12" step="1" style="width:90%"></div>
   <div class="b" id="bResume">계속하기</div>
+  <div class="b" id="bExport" style="display:none">맵 내보내기 (.webcraft)</div>
+  <div class="b" id="bImport" style="display:none">맵 불러오기 (.webcraft)</div>
+  <input id="mapFile" type="file" accept=".webcraft,application/json" style="display:none">
   <div class="b dim" id="bLeave">나가기 (타이틀)</div>
  </div>
 </div>
@@ -105,7 +109,11 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div class="tb" id="tbBreak" style="right:96px;bottom:84px">파괴</div>
  <div class="tb" id="tbPlace" style="right:26px;bottom:84px">설치</div>
  <div class="tb" id="tbPal" style="right:96px;bottom:154px;width:46px;height:46px">E</div>
- <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">T</div>
+ <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">채팅</div>
+ <div class="tb" id="tbMap" style="right:80px;top:14px;width:46px;height:46px">지도</div>
+ <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
+ <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
+ <div class="tb" id="tbRun" style="left:60px;bottom:228px;width:50px;height:50px">달리기</div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
@@ -740,6 +748,12 @@ setInterval(()=>{if(state==='play')updateStat()},1000);
 
 /* ===================== 채팅 ===================== */
 let chatOpen=false;
+// 권한은 현재 클라이언트 닉네임 기반입니다. 실제 보안 권한은 인증 서버가 필요합니다.
+const OPS=new Set(['joon0824']);
+const isAdmin=()=>String(net.name||'').toLowerCase()==='joon0824';
+function updateAdminMenu(){const show=isAdmin();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
+function exportWebcraft(){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
+function importWebcraft(file){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t)))count++}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
 function chatAdd(who,txt,cls){
  const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
  if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
@@ -751,10 +765,11 @@ function openChat(){if(state!=='play'||chatOpen)return;chatOpen=true;ui='chat';f
 function closeChat(relock){if(!chatOpen)return;chatOpen=false;ui='';$('chat').classList.remove('open');$('chatIn').blur();if(relock)lockPointer()}
 $('chatIn').addEventListener('keydown',e=>{
  e.stopPropagation();
- if(e.key==='Enter'){e.preventDefault();const t=cleanText($('chatIn').value);if(t){chatAdd(net.name,t,'me');netBroadcast({k:'ct',t},true)}closeChat(true)}
+ if(e.key==='Enter'){e.preventDefault();const raw=String($('chatIn').value||'').trim();const t=cleanText(raw);if(t){if(/^\/op\s+/i.test(raw)){if(!isAdmin()){chatAdd('','권한이 없습니다. joon0824만 /op 명령을 사용할 수 있습니다.','sys')}else{const target=cleanName(raw.replace(/^\/op\s+/i,'')).toLowerCase();if(!target)chatAdd('','사용법: /op 대상자','sys');else{OPS.add(target);chatAdd('','관리자 권한(OP)을 부여했습니다: '+target,'sys')}}}else{chatAdd(net.name,t,'me');netBroadcast({k:'ct',t},true)}}closeChat(true)}
  else if(e.key==='Escape'){e.preventDefault();closeChat(true)}
 });
 $('chatIn').addEventListener('keyup',e=>e.stopPropagation());
+$('chatIn').addEventListener('blur',()=>{if(isTouch&&chatOpen)setTimeout(()=>closeChat(false),150)});
 
 /* ===================== 핫바 / UI ===================== */
 function iconCanvas(b,size){
@@ -822,9 +837,13 @@ document.addEventListener('pointerlockchange',()=>{
  locked=document.pointerLockElement===cv;
  if(!locked&&state==='play'&&!ui&&!isTouch){ui='pause';openPause()}
 });
-function openPause(){$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 시드 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;showOv('ovPause',true)}
+function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 시드 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;showOv('ovPause',true)}
 function resume(){if(ui==='pause'){ui='';showOv('ovPause',false);lockPointer()}}
 $('bResume').onclick=resume;
+$('bExport').onclick=exportWebcraft;
+$('bImport').onclick=()=>{if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');$('mapFile').click()};
+$('mapFile').addEventListener('change',e=>{importWebcraft(e.target.files&&e.target.files[0]);e.target.value=''});
+$('ovMap').addEventListener('click',()=>toggleMap(false));
 $('rd').oninput=e=>{RD=+e.target.value;$('rdv').textContent=RD;try{localStorage.setItem('wc_rd',RD)}catch(x){}};
 $('bLeave').onclick=()=>{saveNow();ui='';showOv('ovPause',false);leaveGame()};
 document.addEventListener('keydown',e=>{
@@ -868,9 +887,10 @@ document.addEventListener('mousemove',e=>{
 });
 window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;hold.b=hold.p=0});
 /* ---- 터치 ---- */
+let touchSprint=false;
 const joy={a:false,x:0,y:0,id:-1};let lookId=-1,lx=0,ly=0;
 if(isTouch){
- $('touch').style.display='block';
+ 
  const jz=$('joy'),jk=$('joyk');
  jz.addEventListener('touchstart',e=>{const t=e.changedTouches[0];joy.id=t.identifier;joy.a=true;jmove(t);e.preventDefault()},{passive:false});
  const jmove=t=>{const r=jz.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=(t.clientX-cx)/(r.width/2),dy=(t.clientY-cy)/(r.height/2);const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l}joy.x=dx;joy.y=dy;jk.style.left=(40+dx*40)+'px';jk.style.top=(40+dy*40)+'px'};
@@ -880,12 +900,16 @@ if(isTouch){
  cv.addEventListener('touchstart',e=>{if(state!=='play'||ui)return;for(const t of e.changedTouches)if(lookId<0){lookId=t.identifier;lx=t.clientX;ly=t.clientY}e.preventDefault()},{passive:false});
  cv.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===lookId){cam.yaw-=(t.clientX-lx)*.005;cam.pitch=clamp(cam.pitch-(t.clientY-ly)*.005,-1.55,1.55);lx=t.clientX;ly=t.clientY}e.preventDefault()},{passive:false});
  const lend=e=>{for(const t of e.changedTouches)if(t.identifier===lookId)lookId=-1};cv.addEventListener('touchend',lend);cv.addEventListener('touchcancel',lend);
- const btn=(id,dn,up)=>{const b=$(id);b.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&!ui||id==='tbPal'||id==='tbChat')dn()},{passive:false});if(up)b.addEventListener('touchend',up)};
+ const btn=(id,dn,up)=>{const b=$(id);b.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&(!ui||id==='tbPal'||id==='tbMap'))dn()},{passive:false});if(up){b.addEventListener('touchend',up);b.addEventListener('touchcancel',up)}};
  btn('tbJump',()=>{keys.Space=true;const now=mono();if(now-lastSpace<300){P.fly=!P.fly;toast(P.fly?'비행 모드 ON':'비행 모드 OFF',1200)}lastSpace=now},()=>{keys.Space=false});
  btn('tbBreak',()=>{breakBlock();hold.b=1;hold.t=.3},()=>{hold.b=0});
  btn('tbPlace',()=>{placeBlock();hold.p=1;hold.t=.3},()=>{hold.p=0});
  btn('tbPal',()=>togglePal());
- btn('tbChat',()=>{const t=prompt('채팅');const x=cleanText(t);if(x){chatAdd(net.name,x,'me');netBroadcast({k:'ct',t:x},true)}});
+ btn('tbChat',()=>{if(state==='play'&&!ui)openChat()});
+ btn('tbMap',()=>toggleMap());
+ btn('tbMenu',()=>{if(state==='play'&&!ui){ui='pause';openPause()}});
+ btn('tbDown',()=>{keys.ShiftLeft=true},()=>{keys.ShiftLeft=false});
+ btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
 }
 
 /* ===================== 다른 플레이어 그리기 ===================== */
@@ -988,13 +1012,13 @@ function placeAtSurface(x,z,needClear){
 }
 function enterGame(){
  if(state==='play')return;
- state='play';showOv('ovTitle',false);showOv('ovQueue',false);$('hud').style.display='block';
+ state='play';showOv('ovTitle',false);showOv('ovQueue',false);$('hud').style.display='block';if(isTouch)$('touch').style.display='block';
  let sp=null;try{sp=JSON.parse(localStorage.getItem('wc_pos_'+ROOM)||'null')}catch(e){}
  if(sp&&fin(sp.x)&&fin(sp.z)&&sp.x>=0&&sp.z>=0&&sp.x<WORLD&&sp.z<WORLD){ensureAround(sp.x>>4,sp.z>>4,2);placeAtSurface(Math.floor(sp.x),Math.floor(sp.z));if(fin(sp.y)&&sp.y>1&&sp.y<WH){const b=getBlock(Math.floor(sp.x),Math.floor(sp.y),Math.floor(sp.z));if(!SOLID[b])P.y=sp.y}cam.yaw=+sp.yaw||0}
  else{for(let i=0;i<40;i++){const [x,z]=findSpawn();if(placeAtSurface(x,z,true))break}cam.yaw=Math.random()*6.28}
  cam.pitch=0;P.fly=false;
  net.offline=allEdits();renderHotbar();buildPalette();updateStat();
- chatAdd('','WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · M 지도','sys');
+ chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · M 지도','sys');
  if(isTouch)goFS();else lockPointer();
  if(net.on)toast('대기열 통과! 다른 플레이어와 P2P 연결 중…');
 }
@@ -1003,7 +1027,7 @@ function leaveGame(){
  try{localStorage.setItem('wc_pos_'+ROOM,JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}
  netDisconnect();net.synced=false;
  state='title';ui='';chatOpen=false;if(document.pointerLockElement)document.exitPointerLock();
- $('hud').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
+ $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
 }
@@ -1036,7 +1060,7 @@ function frame(t){
   const mv={f:0,s:0,jump:false,down:false,sprint:false};
   if(free){
    mv.f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joy.y;mv.s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joy.x;
-   mv.jump=!!keys.Space;mv.down=!!(keys.ShiftLeft||keys.ShiftRight);mv.sprint=!!(keys.ControlLeft||keys.ControlRight||keys.sprintLock)&&mv.f>0;
+   mv.jump=!!keys.Space;mv.down=!!(keys.ShiftLeft||keys.ShiftRight);mv.sprint=!!(keys.ControlLeft||keys.ControlRight||keys.sprintLock||touchSprint)&&mv.f>0;
    if(joy.a&&Math.hypot(joy.x,joy.y)>.95)mv.sprint=true;
    hold.t-=dt;if(hold.t<=0){if(hold.b){breakBlock();hold.t=.17}else if(hold.p){placeBlock();hold.t=.2}}
   }
