@@ -505,6 +505,7 @@ function ray(maxD){
 }
 function localEdit(x,y,z,b){
  const t=nextT();if(!applyEdit(x,y,z,b,t))return;
+ markRegion(x,z);
  netBroadcast({k:'bk',x,y,z,b,t},true);
 }
 function breakBlock(){
@@ -546,6 +547,86 @@ function fbInit(){
  try{if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);fdb=firebase.firestore();try{fdb.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}}catch(e){console.error(e);fdb=null}
  return fdb;
 }
+/* ---- 클라우드 저장 (Firebase): 모두 나가거나 서버가 닫혀도 맵이 남도록, 블록 변경 기록을 구역(512x512)별 문서로 저장 ----
+   · 기존 컬렉션(FS_LOBBY)을 재사용하고 room 값을 'wcsave-방이름' 으로 구분 (보안 규칙 변경 불필요)
+   · 문서 1개 ≤ DOC_MAX, 전체 ≤ TOTAL_MAX 를 넘거나 Firebase 한도(resource-exhausted)에 걸리면 자동 업로드가 막힙니다 */
+const CS={room:'wcsave-'+ROOM,dirty:new Set(),sizes:new Map(),blocked:false,loaded:false,busy:false,DOC_MAX:900000,TOTAL_MAX:200*1024*1024};
+const regOf=(x,z)=>(x>>9)+'_'+(z>>9);
+const csId=r=>'wcs_'+ROOM+'_'+r;
+function markRegion(x,z){CS.dirty.add(regOf(x,z))}
+function csEncode(r){
+ const [rx,rz]=r.split('_').map(Number),list=[];
+ for(let cx=rx*32;cx<rx*32+32;cx++)for(let cz=rz*32;cz<rz*32+32;cz++){
+  const m=edits.get(ckey(cx,cz));if(!m)continue;
+  for(const [idx,v] of m)list.push([cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15),v[0],v[1]]);
+ }
+ const buf=new ArrayBuffer(list.length*14),dv=new DataView(buf);let mt=0;
+ list.forEach((e,i)=>{const o=i*14;dv.setUint16(o,e[0]);dv.setUint8(o+2,e[1]);dv.setUint16(o+3,e[2]);dv.setUint8(o+5,e[3]);dv.setFloat64(o+6,e[4]);if(e[4]>mt)mt=e[4]});
+ const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));
+ return {n:list.length,d:btoa(s),mt};
+}
+function csDecode(str){ // 문서의 변경 기록을 월드에 적용(LWW), 가장 큰 시각을 돌려줌
+ const s=atob(str),n=Math.floor(s.length/14),u=new Uint8Array(n*14);
+ for(let i=0;i<u.length;i++)u[i]=s.charCodeAt(i);
+ const dv=new DataView(u.buffer);let mt=0;
+ for(let i=0;i<n;i++){const o=i*14,t=dv.getFloat64(o+6);applyEdit(dv.getUint16(o),dv.getUint8(o+2),dv.getUint16(o+3),dv.getUint8(o+5),t);if(t>mt)mt=t}
+ return mt;
+}
+function csText(){
+ if(CS.blocked)return ' · ☁ 클라우드 저장 중단(용량/권한)';
+ if(!CS.loaded)return ' · ☁ 클라우드 연결 중…';
+ return ' · ☁ 클라우드 저장'+(CS.dirty.size?' (대기 '+CS.dirty.size+'구역)':' 완료');
+}
+async function csLoad(){
+ if(CS.loaded||CS.busy)return;
+ const db=fbInit();if(!db)return;
+ CS.busy=true;
+ const localMax=new Map();
+ for(const [k,m] of edits){const r=regOf(Math.floor(k/1024)*CH,(k%1024)*CH);let mx=localMax.get(r)||0;for(const v of m.values())if(v[1]>mx)mx=v[1];localMax.set(r,mx)}
+ try{
+  const snap=await db.collection(FS_LOBBY).where('room','==',CS.room).get();
+  if(snap.metadata&&snap.metadata.fromCache&&!snap.size){CS.busy=false;return}
+  const remoteMax=new Map();
+  snap.forEach(doc=>{
+   const d=doc.data()||{};if(typeof d.d!=='string'||typeof d.r!=='string'||!/^\d+_\d+$/.test(d.r))return;
+   try{remoteMax.set(d.r,csDecode(d.d));CS.sizes.set(d.r,d.d.length)}catch(e){}
+  });
+  CS.loaded=true;
+  for(const [r,mx] of localMax)if(mx>(remoteMax.get(r)||0))CS.dirty.add(r); // 내 브라우저에만 있는 변경은 올린다
+  saveNow();
+  if(remoteMax.size)toast('클라우드에서 저장된 맵을 불러왔습니다 ('+remoteMax.size+'개 구역)');
+ }catch(e){
+  if(e&&e.code==='permission-denied'){CS.blocked=true;toast('클라우드 저장 권한이 없습니다 (Firestore 규칙 확인)',5000)}
+ }
+ CS.busy=false;if(typeof updateStat==='function')updateStat();
+}
+async function csFlush(){
+ if(CS.busy||CS.blocked||!CS.loaded||!CS.dirty.size)return;
+ const db=fbInit();if(!db)return;
+ CS.busy=true;
+ try{
+  for(const r of [...CS.dirty].slice(0,4)){
+   const ref=db.collection(FS_LOBBY).doc(csId(r));let over=false,len=0;
+   await db.runTransaction(async tx=>{
+    over=false;
+    const s=await tx.get(ref);
+    if(s.exists){const d=s.data()||{};if(typeof d.d==='string'){try{csDecode(d.d)}catch(e){}}} // 남이 올린 변경과 합치기
+    const enc=csEncode(r);let total=0;for(const [k,v] of CS.sizes)if(k!==r)total+=v;
+    if(enc.d.length>CS.DOC_MAX||total+enc.d.length>CS.TOTAL_MAX){over=true;return}
+    len=enc.d.length;
+    tx.set(ref,{room:CS.room,r,n:enc.n,mt:enc.mt,d:enc.d,ts:Date.now()});
+   });
+   if(over){CS.blocked=true;toast('클라우드 용량 한도 초과 — 자동 업로드를 중단합니다 (내 브라우저에는 계속 저장)',6000);break}
+   CS.sizes.set(r,len);CS.dirty.delete(r);
+  }
+ }catch(e){
+  const c=e&&e.code;
+  if(c==='resource-exhausted'){CS.blocked=true;toast('Firebase 용량/한도 초과 — 자동 업로드를 중단합니다',6000)}
+  else if(c==='permission-denied'){CS.blocked=true;toast('클라우드 저장 권한이 없습니다 (Firestore 규칙 확인)',5000)}
+ }
+ CS.busy=false;updateStat();
+}
+setInterval(()=>{if(!CS.loaded)csLoad();else csFlush()},15000);
 function sendSig(to,obj){if(!fdb||!net.fs)return;fdb.collection(FS_SIG).add({to,s:JSON.stringify(Object.assign({f:net.id},obj)),t:Date.now(),c:++net.sc}).catch(e=>{if(e&&e.code==='resource-exhausted')toast('Firebase 무료 한도 초과 — 새 연결이 안 될 수 있습니다')})}
 function members(){ // 대기열 순서: 먼저 들어온 순 (j, id)
  const now=mono(),arr=[{id:net.id,n:net.name,j:net.j,me:true}];
@@ -741,8 +822,8 @@ function peerMsg(p,s){
 function updateStat(){
  const n=[...peers.values()].filter(p=>p.open).length;
  const el=$('stat');
- if(!net.on){el.textContent='솔로 플레이';el.className='';return}
- el.textContent=`● 멀티 — 연결 ${n+1}명 / 대기열 ${Math.min(members().length,MAXP)}/${MAXP}${net.synced||!peers.size?'':' (월드 동기화 중…)'}`;el.className=n?'ok':'';
+ if(!net.on){el.textContent='솔로 플레이'+csText();el.className='';return}
+ el.textContent=`● 멀티 — 연결 ${n+1}명 / 대기열 ${Math.min(members().length,MAXP)}/${MAXP}${net.synced||!peers.size?'':' (월드 동기화 중…)'}`+csText();el.className=n?'ok':'';
 }
 setInterval(()=>{if(state==='play')updateStat()},1000);
 
@@ -753,7 +834,7 @@ const OPS=new Set(['joon0824']);
 const isAdmin=()=>String(net.name||'').toLowerCase()==='joon0824';
 function updateAdminMenu(){const show=isAdmin();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
 function exportWebcraft(){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
-function importWebcraft(file){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t)))count++}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
+function importWebcraft(file){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
 function chatAdd(who,txt,cls){
  const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
  if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
@@ -845,7 +926,7 @@ $('bImport').onclick=()=>{if(!isAdmin())return toast('관리자 joon0824만 사�
 $('mapFile').addEventListener('change',e=>{importWebcraft(e.target.files&&e.target.files[0]);e.target.value=''});
 $('ovMap').addEventListener('click',()=>toggleMap(false));
 $('rd').oninput=e=>{RD=+e.target.value;$('rdv').textContent=RD;try{localStorage.setItem('wc_rd',RD)}catch(x){}};
-$('bLeave').onclick=()=>{saveNow();ui='';showOv('ovPause',false);leaveGame()};
+$('bLeave').onclick=()=>{saveNow();csFlush();ui='';showOv('ovPause',false);leaveGame()};
 document.addEventListener('keydown',e=>{
  if(e.target&&e.target.tagName==='INPUT'&&e.target.id!=='chatIn')return;
  if(state!=='play'){return}
@@ -1100,7 +1181,7 @@ function frame(t){
 }
 /* 시작 */
 window.__wc={setDay(v){DAY_OFF=v},P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
-loadSaved().then(()=>{});
+loadSaved().then(()=>csLoad());
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
 requestAnimationFrame(frame);
