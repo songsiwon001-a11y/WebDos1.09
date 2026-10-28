@@ -72,7 +72,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
   <div class="b" id="bMulti">멀티플레이 (대기열 입장)</div>
   <div class="b dim" id="bSolo">혼자 플레이</div>
-  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 하강 · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅 · M 전체 지도 · Tab 접속자</div>
+  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 하강 · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅(/help 명령어) · N 전체 지도 · M 마이크 · Tab 접속자</div>
  </div>
 </div>
 <div class="ov" id="ovQueue">
@@ -111,6 +111,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div class="tb" id="tbPal" style="right:96px;bottom:154px;width:46px;height:46px">E</div>
  <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">채팅</div>
  <div class="tb" id="tbMap" style="right:80px;top:14px;width:46px;height:46px">지도</div>
+ <div class="tb" id="tbMic" style="right:134px;top:14px;width:46px;height:46px">마이크</div>
  <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
  <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
  <div class="tb" id="tbRun" style="left:60px;bottom:228px;width:50px;height:50px">달리기</div>
@@ -154,8 +155,10 @@ function terrainH(x,z){
 /* ===================== 블록 정의 · 텍스처 아틀라스 ===================== */
 // 타일: 0 grassTop 1 grassSide 2 dirt 3 stone 4 cobble 5 sand 6 logSide 7 logTop 8 leaves 9 planks 10 glass 11 water 12 bricks 13 snow 14 bedrock 15 gravel 16 glow 17.. wool(16..23) 31 white
 const T={grassTop:0,grassSide:1,dirt:2,stone:3,cobble:4,sand:5,logSide:6,logTop:7,leaves:8,planks:9,glass:10,water:11,bricks:12,snow:13,bedrock:14,gravel:15,glow:16,wool:17,white:31};
+// 신규 타일: 32번부터 차례대로 (기존 타일 번호/모양은 그대로)
+['stoneBrick','smooth','sandTop','sandSide','sandBot','obsidian','quartzTop','quartzSide','clay','terracotta','birchPlanks','darkPlanks','birchSide','birchTop','bookshelf','ironBlock','goldBlock','diamondBlock','coalOre','ironOre','goldOre','diamondOre','mossy','ice','cactusTop','cactusSide','pumpkinTop','pumpkinSide','melonTop','melonSide','hayTop','haySide','netherrack','redSand','seaLantern','lantern','magma','redLamp','jackFace','neonWhite','neonBlue','neonGreen','neonPurple','neonRed','glassRed','glassBlue','glassGreen','glassYellow'].forEach((n,i)=>{T[n]=32+i});
 const DEF=[null];
-function def(name,top,side,bot,o){DEF.push(Object.assign({name,top,side,bot,trans:false,solid:true,emit:false},o||{}))}
+function def(name,top,side,bot,o){DEF.push(Object.assign({name,top,side,bot,trans:false,solid:true,emit:false,lum:0},o||{}))} // lum: 발광 밝기 1~15 (emit 블록만)
 def('잔디',T.grassTop,T.grassSide,T.dirt);          //1
 def('흙',T.dirt,T.dirt,T.dirt);                    //2
 def('돌',T.stone,T.stone,T.stone);                  //3
@@ -170,12 +173,57 @@ def('벽돌',T.bricks,T.bricks,T.bricks);             //11
 def('눈',T.snow,T.snow,T.snow);                     //12
 def('기반암',T.bedrock,T.bedrock,T.bedrock);        //13
 def('자갈',T.gravel,T.gravel,T.gravel);             //14
-def('발광석',T.glow,T.glow,T.glow,{emit:true});     //15
+def('발광석',T.glow,T.glow,T.glow,{emit:true,lum:15});     //15
 ['흰색 양털','빨간 양털','주황 양털','노란 양털','초록 양털','파란 양털','보라 양털','검정 양털'].forEach((n,i)=>def(n,T.wool+i,T.wool+i,T.wool+i)); //16..23
+/* ---- 신규 블록 (24~): 번호는 저장된 맵과 호환되도록 항상 뒤에만 추가하세요 ---- */
+// 건축용
+def('석재 벽돌',T.stoneBrick,T.stoneBrick,T.stoneBrick);     //24
+def('매끈한 돌',T.smooth,T.smooth,T.smooth);                 //25
+def('사암',T.sandTop,T.sandSide,T.sandBot);                  //26
+def('흑요석',T.obsidian,T.obsidian,T.obsidian);              //27
+def('석영 블록',T.quartzTop,T.quartzSide,T.quartzTop);       //28
+def('점토',T.clay,T.clay,T.clay);                            //29
+def('테라코타',T.terracotta,T.terracotta,T.terracotta);      //30
+def('자작나무 판자',T.birchPlanks,T.birchPlanks,T.birchPlanks); //31
+def('짙은 참나무 판자',T.darkPlanks,T.darkPlanks,T.darkPlanks); //32
+def('자작나무 통나무',T.birchTop,T.birchSide,T.birchTop);    //33
+def('책장',T.planks,T.bookshelf,T.planks);                   //34
+def('철 블록',T.ironBlock,T.ironBlock,T.ironBlock);          //35
+def('금 블록',T.goldBlock,T.goldBlock,T.goldBlock);          //36
+def('다이아몬드 블록',T.diamondBlock,T.diamondBlock,T.diamondBlock); //37
+// 광석 · 야생
+def('석탄 광석',T.coalOre,T.coalOre,T.coalOre);              //38
+def('철 광석',T.ironOre,T.ironOre,T.ironOre);                //39
+def('금 광석',T.goldOre,T.goldOre,T.goldOre);                //40
+def('다이아몬드 광석',T.diamondOre,T.diamondOre,T.diamondOre); //41
+def('이끼 낀 조약돌',T.mossy,T.mossy,T.mossy);               //42
+def('얼음',T.ice,T.ice,T.ice,{trans:true});                  //43
+def('선인장',T.cactusTop,T.cactusSide,T.cactusTop);          //44
+def('호박',T.pumpkinTop,T.pumpkinSide,T.pumpkinTop);         //45
+def('수박',T.melonTop,T.melonSide,T.melonTop);               //46
+def('건초 더미',T.hayTop,T.haySide,T.hayTop);                //47
+def('네더랙',T.netherrack,T.netherrack,T.netherrack);        //48
+def('붉은 모래',T.redSand,T.redSand,T.redSand);              //49
+// 빛을 내는 블록 (주변까지 밝힘, lum = 밝기)
+def('바다 랜턴',T.seaLantern,T.seaLantern,T.seaLantern,{emit:true,lum:15}); //50
+def('등불 블록',T.lantern,T.lantern,T.lantern,{emit:true,lum:14});          //51
+def('마그마 블록',T.magma,T.magma,T.magma,{emit:true,lum:12});              //52
+def('붉은 램프',T.redLamp,T.redLamp,T.redLamp,{emit:true,lum:13});          //53
+def('호박등',T.pumpkinTop,T.jackFace,T.pumpkinTop,{emit:true,lum:14});      //54
+def('흰 네온',T.neonWhite,T.neonWhite,T.neonWhite,{emit:true,lum:15});      //55
+def('파란 네온',T.neonBlue,T.neonBlue,T.neonBlue,{emit:true,lum:13});       //56
+def('초록 네온',T.neonGreen,T.neonGreen,T.neonGreen,{emit:true,lum:13});    //57
+def('보라 네온',T.neonPurple,T.neonPurple,T.neonPurple,{emit:true,lum:13}); //58
+def('빨간 네온',T.neonRed,T.neonRed,T.neonRed,{emit:true,lum:13});          //59
+// 색유리
+def('빨간 유리',T.glassRed,T.glassRed,T.glassRed,{trans:true});             //60
+def('파란 유리',T.glassBlue,T.glassBlue,T.glassBlue,{trans:true});          //61
+def('초록 유리',T.glassGreen,T.glassGreen,T.glassGreen,{trans:true});       //62
+def('노란 유리',T.glassYellow,T.glassYellow,T.glassYellow,{trans:true});    //63
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
 const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&i!==B_BED)PALETTE.push(i);
-const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1);
-for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0}
+const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1);
+for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0}
 
 const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
 (function drawAtlas(){
@@ -203,6 +251,54 @@ const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
  const wool=[[236,236,236],[170,50,48],[222,120,40],[228,200,50],[70,150,50],[50,80,190],[130,60,170],[34,34,38]];
  wool.forEach((c,i)=>tile(T.wool+i,c,14,(x,y)=>((x+y)&1)?null:[c[0]-8,c[1]-8,c[2]-8]));
  tile(T.white,[255,255,255],0);
+ /* ---- 신규 블록 텍스처 (기존 타일을 다 그린 뒤에 그려서 기존 모양은 그대로) ---- */
+ const edge=(x,y)=>x===0||y===0||x===15||y===15;
+ const spotsOf=[[3,3],[4,3],[3,4],[10,4],[11,4],[11,5],[6,10],[7,10],[6,11],[12,11],[12,12],[2,12],[9,8]];
+ const ore=col=>(x,y)=>spotsOf.some(p=>p[0]===x&&p[1]===y)?col:null;
+ tile(T.stoneBrick,[124,124,124],16,(x,y)=>{const off=((y>>3)&1)*4;return (y%8===0||(x+off)%8===0)?[86,86,86]:null});
+ tile(T.smooth,[142,142,142],6);
+ tile(T.sandTop,[220,206,152],10);
+ tile(T.sandSide,[214,200,146],10,(x,y)=>(y===3||y===12)?[192,176,122]:(y<3?[226,212,158]:null));
+ tile(T.sandBot,[200,186,134],8);
+ tile(T.obsidian,[24,14,38],10,(x,y)=>((x*7+y*13)%11===0)?[64,34,100]:null);
+ tile(T.quartzTop,[238,234,226],5,(x,y)=>edge(x,y)?[220,214,204]:null);
+ tile(T.quartzSide,[238,234,226],5,(x,y)=>(y===15||y===0)?[214,208,198]:((x===7||x===8)&&y>1&&y<14?[226,221,211]:null));
+ tile(T.clay,[158,164,176],10);
+ tile(T.terracotta,[152,94,68],10);
+ tile(T.birchPlanks,[216,203,155],12,(x,y)=>y%4===3?[168,150,104]:null);
+ tile(T.darkPlanks,[68,44,22],12,(x,y)=>y%4===3?[40,26,12]:null);
+ tile(T.birchSide,[226,224,216],8,(x,y)=>((x*3+y*5)%9===0)?[72,70,64]:null);
+ tile(T.birchTop,[204,180,124],12,(x,y)=>{const d=Math.max(Math.abs(x-7.5),Math.abs(y-7.5));return (d>6||((d|0)%2===1))?[172,148,98]:null});
+ const books=[[150,40,40],[40,84,150],[60,134,62],[176,134,50]];
+ tile(T.bookshelf,[178,140,84],10,(x,y)=>(y===0||y===7||y===8||y===15)?[110,82,46]:books[(x*3+(y>8?1:0)*2)%4].map(v=>v+((x+y)%3)*6));
+ tile(T.ironBlock,[222,222,224],6,(x,y)=>edge(x,y)?[190,190,194]:((x>3&&x<12&&y>3&&y<12)?[232,232,234]:null));
+ tile(T.goldBlock,[246,208,54],10,(x,y)=>edge(x,y)?[212,168,22]:((x>3&&x<12&&y>3&&y<12)?[255,226,96]:null));
+ tile(T.diamondBlock,[98,226,214],10,(x,y)=>edge(x,y)?[58,176,172]:((x>3&&x<12&&y>3&&y<12)?[150,246,238]:null));
+ tile(T.coalOre,[128,128,128],26,ore([28,28,30]));
+ tile(T.ironOre,[128,128,128],26,ore([218,176,148]));
+ tile(T.goldOre,[128,128,128],26,ore([250,214,60]));
+ tile(T.diamondOre,[128,128,128],26,ore([92,240,230]));
+ tile(T.mossy,[112,118,106],34,(x,y)=>{const cx=(x+(y>>2&1)*3)%8,cy=y%5;return (cx===0||cy===0)?[70,76,66]:(rnd()<.22?[72,114,52]:null)});
+ tile(T.ice,[150,200,250,170],8,(x,y)=>((x+y)%7===0)?[222,242,255,205]:null);
+ tile(T.cactusTop,[60,132,52],8,(x,y)=>edge(x,y)?[38,96,34]:((x>=6&&x<=9&&y>=6&&y<=9)?[90,160,70]:null));
+ tile(T.cactusSide,[50,124,44],8,(x,y)=>x%4===0?[30,92,30]:(((x+y*3)%9===0)?[204,232,152]:null));
+ tile(T.pumpkinTop,[200,120,20],10,(x,y)=>(x>=6&&x<=9&&y>=6&&y<=9)?[96,122,40]:(x%4===0?[170,98,12]:null));
+ tile(T.pumpkinSide,[214,126,22],10,(x,y)=>x%4===0?[184,104,14]:null);
+ tile(T.melonTop,[100,162,50],12,(x,y)=>((x+y)%4===0)?[60,120,36]:null);
+ tile(T.melonSide,[112,172,62],10,(x,y)=>(x%4<2)?[66,128,42]:null);
+ tile(T.hayTop,[212,182,60],14,(x,y)=>edge(x,y)?[172,142,30]:null);
+ tile(T.haySide,[216,184,62],12,(x,y)=>(y===7||y===8)?[170,72,44]:(y%4===0?[184,152,40]:null));
+ tile(T.netherrack,[114,46,46],30,(x,y)=>rnd()<.18?[80,28,30]:null);
+ tile(T.redSand,[192,104,48],20);
+ tile(T.seaLantern,[172,220,208],8,(x,y)=>edge(x,y)?[110,170,160]:((x>3&&x<12&&y>3&&y<12)?[238,255,248]:null));
+ tile(T.lantern,[255,200,90],18,(x,y)=>(x%8===0||y%8===0)?[100,70,32]:null);
+ tile(T.magma,[122,30,12],28,(x,y)=>((x*5+y*3)%7===0)?[255,152,32]:(((x+y*2)%5===0)?[222,82,18]:null));
+ tile(T.redLamp,[214,92,42],14,(x,y)=>edge(x,y)?[122,60,30]:((x>3&&x<12&&y>3&&y<12)?[255,216,112]:null));
+ tile(T.jackFace,[214,126,22],10,(x,y)=>{const eye=(y>=4&&y<=6)&&((x>=3&&x<=5)||(x>=10&&x<=12)),mouth=(y>=9&&y<=11)&&x>=4&&x<=11&&!(x===7&&y===9);return (eye||mouth)?[255,226,112]:(x%4===0?[184,104,14]:null)});
+ const neon=(t,c)=>tile(t,c,10,(x,y)=>edge(x,y)?[c[0]*.62|0,c[1]*.62|0,c[2]*.62|0]:((x>3&&x<12&&y>3&&y<12)?[Math.min(255,c[0]+60),Math.min(255,c[1]+60),Math.min(255,c[2]+60)]:null));
+ neon(T.neonWhite,[226,232,250]);neon(T.neonBlue,[56,116,255]);neon(T.neonGreen,[56,240,110]);neon(T.neonPurple,[176,70,250]);neon(T.neonRed,[255,58,66]);
+ const cglass=(t,c)=>tile(t,[c[0],c[1],c[2],80],0,(x,y)=>edge(x,y)?[Math.min(255,c[0]+20),Math.min(255,c[1]+20),Math.min(255,c[2]+20),230]:(((x+y)%8===0&&x<8)?[255,255,255,130]:[c[0],c[1],c[2],80]));
+ cglass(T.glassRed,[220,50,50]);cglass(T.glassBlue,[50,90,220]);cglass(T.glassGreen,[50,190,70]);cglass(T.glassYellow,[236,206,50]);
  g.putImageData(img,0,0);
 })();
 const tileUV=t=>{const e=.0006,s=1/16,u=(t%16)*s,v=((t/16)|0)*s;return [u+e,v+e,u+s-e,v+s-e]};
@@ -248,9 +344,9 @@ function genChunk(cx,cz){
    }
   }
  }
- const ed=edits.get(ckey(cx,cz));
- if(ed)for(const [idx,v] of ed){d[idx]=v[0];const y=idx>>8;if(v[0]&&y>maxY)maxY=y}
- return {cx,cz,d,maxY:Math.min(WH-1,maxY+1),dirty:true,m:null};
+ const ed=edits.get(ckey(cx,cz)),ems=new Set(); // ems: 이 청크의 발광 블록 위치(idx) 모음
+ if(ed)for(const [idx,v] of ed){d[idx]=v[0];if(EMIT[v[0]])ems.add(idx);const y=idx>>8;if(v[0]&&y>maxY)maxY=y}
+ return {cx,cz,d,maxY:Math.min(WH-1,maxY+1),dirty:true,m:null,ems};
 }
 function getChunk(cx,cz){return chunks.get(ckey(cx,cz))}
 function getBlock(x,y,z){
@@ -262,10 +358,14 @@ function getBlock(x,y,z){
 function markDirty(cx,cz){const c=getChunk(cx,cz);if(c)c.dirty=true}
 function setLoaded(x,y,z,b){
  const c=getChunk(x>>4,z>>4);if(!c)return;
- c.d[(y*CH+(z&15))*CH+(x&15)]=b;if(b&&y>c.maxY)c.maxY=Math.min(WH-1,y+1);
+ const idx=(y*CH+(z&15))*CH+(x&15),old=c.d[idx];
+ c.d[idx]=b;if(b&&y>c.maxY)c.maxY=Math.min(WH-1,y+1);
+ if(EMIT[old])c.ems.delete(idx);if(EMIT[b])c.ems.add(idx);
  c.dirty=true;const lx=x&15,lz=z&15;
  if(lx===0)markDirty(c.cx-1,c.cz);if(lx===15)markDirty(c.cx+1,c.cz);
  if(lz===0)markDirty(c.cx,c.cz-1);if(lz===15)markDirty(c.cx,c.cz+1);
+ // 빛: 발광 블록이 바뀌거나 근처에 발광 블록이 있으면, 빛이 닿는 이웃 청크도 다시 계산한다
+ if(EMIT[old]||EMIT[b]||lightNear(c.cx,c.cz))for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(c.cx+dx,c.cz+dz);
 }
 /* 편집 적용 (마지막에 쓴 사람이 이기는 LWW). 변경되면 true */
 function applyEdit(x,y,z,b,t){
@@ -314,7 +414,8 @@ in vec2 v_uv;in vec4 v_col;in float v_d;
 uniform sampler2D u_tex;uniform float u_light;uniform vec3 u_fog;uniform vec2 u_fd;
 out vec4 o;
 void main(){vec4 t=texture(u_tex,v_uv);if(t.a<0.08)discard;
- vec3 c=t.rgb*v_col.rgb*mix(u_light,1.0,v_col.a);
+ float bl=v_col.a;vec3 wt=mix(vec3(1.0),vec3(1.0+.30*bl,1.0+.11*bl,1.0-.18*bl),(1.0-u_light)*(1.0-step(.999,bl)));
+ vec3 c=t.rgb*v_col.rgb*wt*mix(u_light,1.0,bl);
  float f=clamp((v_d-u_fd.x)/(u_fd.y-u_fd.x),0.0,1.0);
  o=vec4(mix(c,u_fog,f),t.a);}`));
 gl.linkProgram(prog);if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
@@ -350,7 +451,34 @@ const PW=18,PS=PW*PW;
 const pad=new Uint8Array(PW*(WH+2)*PW);
 const bufs={s:{v:new Float32Array(14000*4*SF),i:new Uint32Array(14000*6),nf:0,cap:14000},t:{v:new Float32Array(5000*4*SF),i:new Uint32Array(5000*6),nf:0,cap:5000}};
 const AOF=[.5,.7,.86,1];
+/* ---- 블록 빛: 발광 블록에서 1칸마다 1씩 약해지며 퍼진다 (불투명 블록은 막음, 최대 15칸) ----
+   주변 3x3 청크(48x48)를 한 번에 계산. 근처에 발광 블록이 없으면 계산 자체를 건너뜀 */
+const LW=48,LS=LW*LW,LB=new Uint8Array(LS*WH),LG=new Uint8Array(LS*WH),LBK=[];for(let i=0;i<=15;i++)LBK.push([]);
+function lightNear(cx,cz){for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const n=getChunk(cx+dx,cz+dz);if(n&&n.ems.size)return true}return false}
+function lgStep(nc,L,nq){const nb=LB[nc];if(nb&&!TRANS[nb])return;if(LG[nc]<L-1){LG[nc]=L-1;nq.push(nc)}}
+function computeLight(c){
+ if(!lightNear(c.cx,c.cz))return false;
+ LB.fill(0);LG.fill(0);for(let i=0;i<=15;i++)LBK[i].length=0;
+ for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){
+  const n=getChunk(c.cx+dx,c.cz+dz);if(!n)continue;const bx=(dx+1)*16,bz=(dz+1)*16;
+  for(let y=0;y<WH;y++)for(let z=0;z<16;z++)LB.set(n.d.subarray((y*16+z)*16,(y*16+z)*16+16),(y*LW+bz+z)*LW+bx);
+  for(const idx of n.ems){const y=idx>>8,lz=(idx>>4)&15,lx=idx&15,cell=(y*LW+bz+lz)*LW+bx+lx,lv=LUM[n.d[idx]];if(lv>LG[cell]){LG[cell]=lv;LBK[lv].push(cell)}}
+ }
+ for(let L=15;L>=2;L--){
+  const q=LBK[L],nq=LBK[L-1];
+  for(let i=0;i<q.length;i++){
+   const cell=q[i];if(LG[cell]!==L)continue;
+   const gx=cell%LW,t=(cell-gx)/LW,gz=t%LW,y=(t-gz)/LW;
+   if(gx>0)lgStep(cell-1,L,nq);if(gx<LW-1)lgStep(cell+1,L,nq);
+   if(gz>0)lgStep(cell-LW,L,nq);if(gz<LW-1)lgStep(cell+LW,L,nq);
+   if(y>0)lgStep(cell-LS,L,nq);if(y<WH-1)lgStep(cell+LS,L,nq);
+  }
+ }
+ return true;
+}
+const lgv=(gx,gy,gz)=>gy<0||gy>=WH?0:LG[(gy*LW+gz)*LW+gx];
 function meshChunk(c){
+ const hasL=computeLight(c);
  // 패딩 배열 채우기 (주변 청크 포함)
  pad.fill(0);
  for(let pz=0;pz<PW;pz++)for(let px=0;px<PW;px++){
@@ -391,7 +519,15 @@ function meshChunk(c){
     const o=(vi+k)*SF,A=B.v;
     A[o]=px_;A[o+1]=py_;A[o+2]=pz_;
     A[o+3]=a?tl[2]:tl[0];A[o+4]=(F.k==='top'||F.k==='bot')?(bb?tl[3]:tl[1]):(bb?tl[1]:tl[3]);
-    A[o+5]=A[o+6]=A[o+7]=em?1:sd;A[o+8]=em;
+    let bl=em?1:0;
+    if(hasL&&!em){ // 이 꼭짓점 주변 4칸의 빛을 평균 (부드러운 조명)
+     const bx=x+16+nx,by=y+ny,bz=z+16+nz;let sum=lgv(bx,by,bz),cnt=1;
+     if(!o1){sum+=lgv(bx+F.u[0]*su,by+F.u[1]*su,bz+F.u[2]*su);cnt++}
+     if(!o2){sum+=lgv(bx+F.v[0]*sv,by+F.v[1]*sv,bz+F.v[2]*sv);cnt++}
+     if(!o1&&!o2&&!o3){sum+=lgv(bx+F.u[0]*su+F.v[0]*sv,by+F.u[1]*su+F.v[1]*sv,bz+F.u[2]*su+F.v[2]*sv);cnt++}
+     bl=sum/cnt/15;
+    }
+    A[o+5]=A[o+6]=A[o+7]=em?1:sd;A[o+8]=bl;
    }
    const I=B.i,io=B.nf*6;
    if(ao[0]+ao[2]<ao[1]+ao[3]){I[io]=vi+1;I[io+1]=vi+2;I[io+2]=vi+3;I[io+3]=vi+1;I[io+4]=vi+3;I[io+5]=vi}
@@ -403,6 +539,7 @@ function meshChunk(c){
  c.m={s:bufs.s.nf?mkMesh(bufs.s.v,bufs.s.nf*4,bufs.s.i,bufs.s.nf*6):null,t:bufs.t.nf?mkMesh(bufs.t.v,bufs.t.nf*4,bufs.t.i,bufs.t.nf*6):null};
  c.dirty=false;
 }
+function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
 function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz))}
 
 /* ---- 청크 로딩 관리 ---- */
@@ -423,7 +560,7 @@ function updateChunks(px,pz,budgetMs){
  const t0=performance.now();
  for(const e of chunkList){
   if(performance.now()-t0>budgetMs)return;
-  if(!getChunk(e.x,e.z))chunks.set(ckey(e.x,e.z),genChunk(e.x,e.z));
+  if(!getChunk(e.x,e.z))addChunk(e.x,e.z);
  }
  for(const e of chunkList){
   if(e.d>RD+.5)continue;
@@ -432,7 +569,7 @@ function updateChunks(px,pz,budgetMs){
   meshChunk(c);
  }
 }
-function ensureAround(cx,cz,r){for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){const x=cx+dx,z=cz+dz;if(x<0||z<0||x>=625||z>=625)continue;if(!getChunk(x,z))chunks.set(ckey(x,z),genChunk(x,z))}}
+function ensureAround(cx,cz,r){for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){const x=cx+dx,z=cz+dz;if(x<0||z<0||x>=625||z>=625)continue;if(!getChunk(x,z))addChunk(x,z)}}
 
 /* ===================== 행렬 / 카메라 ===================== */
 const cam={x:5000,y:40,z:5000,yaw:0,pitch:0};
@@ -449,9 +586,14 @@ function buildVP(w,h){
 }
 
 /* ===================== 낮/밤 (Date.now 기준이라 접속자 모두 같은 시각) ===================== */
-const DAY_LEN=600;let DAY_OFF=0;
+const DAY_LEN=600;let DAY_OFF=0,TLOCK=null,TTOUCH=false; // TLOCK: 시간 고정(시각) / TTOUCH: 관리자가 시간을 바꾼 적 있음
+const curHour=()=>TLOCK!==null?TLOCK:((((Date.now()/1000+DAY_OFF)/DAY_LEN)%1)*24+6)%24; // 0=자정, 6=일출, 12=정오, 18=일몰
+function applyTime(h,lock){ // 모든 접속자가 같은 시각이 되도록 DAY_OFF 를 맞춘다
+ h=((h%24)+24)%24;const ph=((h-6+24)%24)/24,now=Date.now()/1000;
+ DAY_OFF=(((ph*DAY_LEN-now%DAY_LEN)%DAY_LEN)+DAY_LEN)%DAY_LEN;TLOCK=lock?h:null;TTOUCH=true;
+}
 function skyState(){
- const ph=(((Date.now()/1000)+DAY_OFF)/DAY_LEN)%1,sun=Math.sin(ph*Math.PI*2),k=clamp((sun+.18)/.5,0,1),s=k*k*(3-2*k);
+ const ph=TLOCK!==null?((TLOCK-6+24)%24)/24:(((Date.now()/1000)+DAY_OFF)/DAY_LEN)%1,sun=Math.sin(ph*Math.PI*2),k=clamp((sun+.18)/.5,0,1),s=k*k*(3-2*k);
  const day=[.52,.74,.96],night=[.02,.03,.09],dusk=[.95,.5,.25];
  const dd=clamp(1-Math.abs(sun)/.22,0,1)*.55;
  const c=[0,1,2].map(i=>(night[i]+(day[i]-night[i])*s)*(1-dd)+dusk[i]*dd*(s>0||sun>-.2?1:0));
@@ -460,7 +602,7 @@ function skyState(){
 
 /* ===================== 플레이어 / 물리 ===================== */
 const P={x:5000.5,y:40,z:5000.5,vx:0,vy:0,vz:0,ground:false,fly:false,sel:0,walk:0,inWater:false};
-const hotbar=[4,8,6,9,11,5,2,15,17];
+const hotbar=[4,8,6,9,11,24,15,50,54];
 const keys={};
 let state='title',ui='',locked=false;
 const HW=.3,PH=1.8,EYE=1.62;
@@ -469,13 +611,13 @@ function boxHit(x,y,z){
  for(let yy=y0;yy<=y1;yy++)for(let zz=z0;zz<=z1;zz++)for(let xx=x0;xx<=x1;xx++){const b=getBlock(xx,yy,zz);if(b&&SOLID[b])return true}
  return false;
 }
-let lastSpace=0;
+let lastSpace=0,SPDM=1; // SPDM: /speed 배율
 function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
  const sp=Math.sin(cam.yaw),cp=Math.cos(cam.yaw);
  let wx=(-sp)*mv.f+cp*mv.s,wz=(-cp)*mv.f+(-sp)*mv.s;const l=Math.hypot(wx,wz);if(l>1){wx/=l;wz/=l}
  const feet=getBlock(Math.floor(P.x),Math.floor(P.y+.2),Math.floor(P.z)),head=getBlock(Math.floor(P.x),Math.floor(P.y+1.4),Math.floor(P.z));
  P.inWater=feet===B_WATER||head===B_WATER;
- let spd=P.fly?(mv.sprint?18:9):(mv.sprint?5.8:4.3);if(P.inWater&&!P.fly)spd*=.6;
+ let spd=P.fly?(mv.sprint?18:9):(mv.sprint?5.8:4.3);if(P.inWater&&!P.fly)spd*=.6;spd*=SPDM;
  const tx=wx*spd,tz=wz*spd,ac=Math.min(1,dt*(P.ground||P.fly?14:3.5));
  P.vx+=(tx-P.vx)*ac;P.vz+=(tz-P.vz)*ac;
  if(P.fly){const ty=((mv.jump?1:0)-(mv.down?1:0))*(mv.sprint?14:8);P.vy+=(ty-P.vy)*Math.min(1,dt*10)}
@@ -720,6 +862,8 @@ function mkPeer(id,att,init){
  p.rx=mono();p.rx_=0;
  p.dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
  p.dE=pc.createDataChannel('e',{negotiated:true,id:1});
+ if(init){try{p.aTx=pc.addTransceiver('audio',{direction:'sendrecv'})}catch(e){}} // 음성용 오디오 줄 (마이크는 나중에 replaceTrack 으로 끼움 → 재협상 없음)
+ pc.ontrack=e=>{if(e.track&&e.track.kind==='audio')voiceAttach(p,e.track)};
  p.dE.onopen=()=>{if(peers.get(id)===p)peerOpen(p)};
  p.dS.onclose=p.dE.onclose=()=>{if(peers.get(id)===p)peerDown(p,'closed')};
  p.dS.onmessage=p.dE.onmessage=e=>{if(peers.get(id)===p)peerMsg(p,e.data)};
@@ -751,6 +895,7 @@ async function onSignal(m){
    if(peers.size>=MAXP-1)return;
    p=mkPeer(id,m.a,false);
    await p.pc.setRemoteDescription({type:'offer',sdp:m.d.sdp});
+   {const tx=p.pc.getTransceivers().find(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='audio');if(tx){try{tx.direction='sendrecv'}catch(e){}p.aTx=tx}}
    const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,2500);
    if(peers.get(id)!==p)return;
    sendSig(id,{k:'sd',a:m.a,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
@@ -761,6 +906,7 @@ async function onSignal(m){
  }catch(e){const p=peers.get(id);if(p)peerDown(p,'sig')}
 }
 function peerClose(p,notify){
+ voiceDrop(p);
  if(notify&&p.dE&&p.dE.readyState==='open')try{p.dE.send('{"k":"bye"}')}catch(e){}
  try{p.dS.close()}catch(e){}try{p.dE.close()}catch(e){}try{p.pc.close()}catch(e){}
  if(peers.get(p.id)===p)peers.delete(p.id);
@@ -807,6 +953,9 @@ function peerMsg(p,s){
    }break;
   case 'hi':p.name=cleanName(m.n)||'PLAYER';p.mt=fin(m.mt)?m.mt:0;
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
+   // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
+   if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
+   if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
@@ -814,6 +963,18 @@ function peerMsg(p,s){
   case 'sr':streamEdits(p,allEdits());break;
   case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
   case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
+  case 'tm': // 시간 변경 (어드민 이상만 / s=1 은 입장 동기화: 아직 시간을 받은 적 없을 때만)
+   if(fin(m.h)&&m.h>=0&&m.h<=24){
+    if(m.s){if(!TTOUCH)applyTime(m.h,!!m.lk)}
+    else if(lvOf(p.name)>=1){applyTime(m.h,!!m.lk);chatAdd('',p.name+' 님이 시간을 '+Math.floor(m.h)+'시로 변경했습니다'+(m.lk?' (고정)':''),'sys')}
+   }break;
+  case 'rl':{ // 권한 변경: 보낸 사람의 권한으로 가능한 변경만 받아들임
+   const n=cleanName(m.n).toLowerCase(),lv=m.lv;
+   if(!n||n===OWNER||typeof lv!=='number'||lv<0||lv>3||lv%1)break;
+   if(canSetRole(lvOf(p.name),lvOf(n),lv)){setRole(n,lv);if(!m.s&&n===String(net.name).toLowerCase())chatAdd('',lv?RNAME[lv]+' 권한이 부여되었습니다':'관리자 권한이 해제되었습니다','sys')}
+  }break;
+  case 'say':if(lvOf(p.name)>=1){const t=cleanText(m.t);if(t)chatAdd('[공지] '+p.name,t,'sys')}break;
+  case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
   case 'po':if(fin(m.t))p.ping=Math.round(mono()-m.t);break;
   case 'bye':peerDown(p,'bye');break;
@@ -827,14 +988,170 @@ function updateStat(){
 }
 setInterval(()=>{if(state==='play')updateStat()},1000);
 
+/* ===================== 근접 음성 대화 (M 키로 마이크 켜기/끄기) =====================
+   · 가까울수록 크게, 멀어질수록 점점 작아지다가 VOICE_MAX 칸 밖에서는 안 들림 (좌우 방향도 반영)
+   · 멀리 있는 사람에게는 내 목소리를 아예 보내지 않음 */
+const VOICE_FULL=4,VOICE_MAX=30;
+const voiceGain=d=>{const t=clamp((VOICE_MAX-d)/(VOICE_MAX-VOICE_FULL),0,1);return t*t};
+let micTrack=null,micOn=false,micBusy=false,vctx=null,voiceT=0;
+function voiceCtx(){if(!vctx){try{vctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{});return vctx}
+['pointerdown','keydown','touchstart'].forEach(ev=>addEventListener(ev,()=>{if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{})},true));
+function voiceAttach(p,track){
+ voiceDrop(p);const ctx=voiceCtx();if(!ctx)return;
+ try{
+  const st=new MediaStream([track]),el=new Audio();el.srcObject=st;el.muted=true;try{const r=el.play();if(r&&r.catch)r.catch(()=>{})}catch(e){} // 일부 브라우저는 요소에 붙여야 WebAudio 로 소리가 흐름
+  const src=ctx.createMediaStreamSource(st),gn=ctx.createGain(),pn=ctx.createStereoPanner?ctx.createStereoPanner():null;
+  gn.gain.value=0;src.connect(gn);if(pn){gn.connect(pn);pn.connect(ctx.destination)}else gn.connect(ctx.destination);
+  p.vo={el,src,gn,pn};
+ }catch(e){p.vo=null}
+}
+function voiceDrop(p){const v=p&&p.vo;if(!v)return;try{v.src.disconnect();v.gn.disconnect();if(v.pn)v.pn.disconnect();v.el.srcObject=null}catch(e){}p.vo=null}
+function sendMicTo(p,on){const want=on&&micTrack?micTrack:null;if(!p.aTx||!p.aTx.sender||p.micT===want)return;p.micT=want;try{p.aTx.sender.replaceTrack(want).catch(()=>{})}catch(e){}}
+function updateVoice(dt){
+ voiceT-=dt;if(voiceT>0)return;voiceT=.08;
+ const rx=Math.cos(cam.yaw),rz=-Math.sin(cam.yaw);
+ for(const p of peers.values()){
+  if(!p.open)continue;
+  const dx=p.rx_-P.x,dz=p.rz-P.z,d=p.has?Math.hypot(dx,p.ry-P.y,dz):1e9;
+  sendMicTo(p,micOn&&d<VOICE_MAX+6);
+  const v=p.vo;if(v&&vctx){
+   v.gn.gain.setTargetAtTime(voiceGain(d),vctx.currentTime,.06);
+   if(v.pn){const h=Math.hypot(dx,dz);v.pn.pan.setTargetAtTime(h>.5?clamp((dx*rx+dz*rz)/h,-1,1)*Math.min(1,h/3)*.85:0,vctx.currentTime,.06)}
+  }
+ }
+}
+function micOff(){micOn=false;if(micTrack){try{micTrack.onended=null;micTrack.stop()}catch(e){}micTrack=null}for(const p of peers.values())sendMicTo(p,false)}
+async function toggleMic(){
+ if(state!=='play'||micBusy)return;
+ if(micOn){micOff();return toast('마이크 OFF',1200)}
+ if(!net.on)return toast('마이크 대화는 멀티플레이에서 쓸 수 있습니다',2500);
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return toast('이 주소에서는 마이크를 쓸 수 없습니다 (https 또는 localhost 필요)',3500);
+ micBusy=true;
+ try{
+  const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+  micTrack=st.getAudioTracks()[0];micTrack.onended=()=>{if(micOn)micOff()};
+  micOn=true;voiceCtx();voiceT=0;toast('마이크 ON — 가까이 있는 사람에게만 들립니다 (M 으로 끄기)',2500);
+ }catch(e){toast('마이크를 켤 수 없습니다: '+(e&&e.name==='NotAllowedError'?'권한이 거부되었습니다':'장치를 확인하세요'),3500)}
+ micBusy=false;
+}
+
 /* ===================== 채팅 ===================== */
 let chatOpen=false;
 // 권한은 현재 클라이언트 닉네임 기반입니다. 실제 보안 권한은 인증 서버가 필요합니다.
-const OPS=new Set(['joon0824']);
-const isAdmin=()=>String(net.name||'').toLowerCase()==='joon0824';
-function updateAdminMenu(){const show=isAdmin();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
-function exportWebcraft(){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
-function importWebcraft(file){if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
+const OWNER='joon0824',RNAME=['플레이어','어드민','슈퍼어드민','소유자']; // 권한 1=어드민 2=슈퍼어드민 3=소유자
+const roles=new Map(); // 소유자(joon0824) 외에 권한을 받은 닉네임(소문자) -> 1~3
+try{const r=JSON.parse(localStorage.getItem('wc_roles_'+ROOM)||'[]');if(Array.isArray(r))for(const e of r)if(Array.isArray(e)&&typeof e[0]==='string'&&e[1]>=1&&e[1]<=3)roles.set(e[0],e[1]|0)}catch(e){}
+const saveRoles=()=>{try{localStorage.setItem('wc_roles_'+ROOM,JSON.stringify([...roles]))}catch(e){}};
+const lvOf=n=>{n=cleanName(n).toLowerCase();return n===OWNER?3:(roles.get(n)||0)};
+const myRole=()=>lvOf(net.name);
+const isOwner=()=>myRole()>=3;
+const canSetRole=(sl,cur,lv)=>sl>=3||(sl>=2&&lv<2&&cur<2); // 소유자: 전부 / 슈퍼어드민: 어드민 부여·해제만
+function setRole(n,lv){n=cleanName(n).toLowerCase();if(!n||n===OWNER)return false;if(lv>0)roles.set(n,lv);else roles.delete(n);saveRoles();return true}
+const sys=t=>chatAdd('',t,'sys');
+const peerByName=n=>{n=String(n||'').toLowerCase();return [...peers.values()].find(p=>p.open&&String(p.name).toLowerCase()===n)};
+const num=(s,base)=>{s=String(s);if(s[0]==='~'){const v=s.length>1?parseFloat(s.slice(1)):0;return isFinite(v)?base+v:NaN}const v=parseFloat(s);return isFinite(v)?v:NaN};
+function findBlock(s){ // 번호 또는 이름(띄어쓰기 무시, 일부만 써도 됨). 못 찾으면 -1, 공기는 0
+ s=String(s||'').replace(/\s/g,'').toLowerCase();if(!s)return -1;
+ if(/^\d+$/.test(s)){const n=+s;return n>=0&&n<=NB?n:-1}
+ if(s==='공기'||s==='air')return 0;
+ let r=-1;for(let i=1;i<=NB;i++){const nm=DEF[i].name.replace(/\s/g,'').toLowerCase();if(nm===s)return i;if(r<0&&nm.includes(s))r=i}
+ return r;
+}
+function teleport(x,y,z){x=clamp(x,1,WORLD-2);z=clamp(z,1,WORLD-2);y=clamp(y,1,WH+40);ensureAround(x>>4,z>>4,1);P.x=x;P.y=y;P.z=z;P.vx=P.vy=P.vz=0;cam.x=P.x;cam.y=P.y+EYE;cam.z=P.z}
+const TPRESET={'일출':6,sunrise:6,'아침':8,morning:8,day:8,'낮':8,'정오':12,noon:12,'일몰':18,sunset:18,'저녁':19,'밤':21,night:21,'자정':0,midnight:0,'새벽':4};
+function parseHour(s){s=String(s||'').toLowerCase();if(Object.prototype.hasOwnProperty.call(TPRESET,s))return TPRESET[s];const v=parseFloat(s.replace('시',''));return isFinite(v)&&v>=0&&v<=24?v:NaN}
+const CMDS={},CLIST=[];
+function cmd(names,lv,use,desc,run){const o={names,lv,use,desc,run};CLIST.push(o);for(const n of names)CMDS[n]=o}
+function runCommand(raw){
+ const a=raw.slice(1).trim().split(/\s+/),name=(a.shift()||'').toLowerCase(),c=CMDS[name];
+ if(!c||!Object.prototype.hasOwnProperty.call(CMDS,name))return sys('알 수 없는 명령어입니다: /'+name+'  (/help 로 목록 확인)');
+ if(myRole()<c.lv)return sys('권한이 없습니다. '+RNAME[c.lv]+' 이상만 사용할 수 있습니다.');
+ try{c.run(a)}catch(e){sys('명령 실행 중 오류가 났습니다: '+(e&&e.message||e))}
+}
+/* ---- 모두 ---- */
+cmd(['help','도움말','?'],0,'/help [명령어]','사용할 수 있는 명령어 목록',a=>{
+ if(a[0]){const c=CMDS[a[0].replace(/^\//,'').toLowerCase()];if(!c)return sys('없는 명령어입니다');return sys(c.use+' — '+c.desc+' ['+RNAME[c.lv]+' 이상] 별칭: '+c.names.map(n=>'/'+n).join(' '))}
+ sys('내 권한: '+RNAME[myRole()]+' — 사용 가능한 명령어');
+ for(const c of CLIST)if(c.lv<=myRole())sys(c.use+' — '+c.desc);
+});
+cmd(['list','접속자'],0,'/list','접속자 목록',()=>{const l=[net.name+(myRole()?' ['+RNAME[myRole()]+']':'')+' (나)'];for(const p of peers.values())if(p.open){const r=lvOf(p.name);l.push(p.name+(r?' ['+RNAME[r]+']':''))}sys('접속자 '+l.length+'명: '+l.join(', '))});
+cmd(['pos','좌표'],0,'/pos','내 좌표 보기',()=>sys('내 위치 X '+P.x.toFixed(1)+' / Y '+P.y.toFixed(1)+' / Z '+P.z.toFixed(1)));
+cmd(['role','권한'],0,'/role [닉]','권한 확인',a=>{const n=a[0]||net.name;sys(n+' 님의 권한: '+RNAME[lvOf(n)])});
+cmd(['blocks','블록'],0,'/blocks [검색어]','블록 번호/이름 보기 (★ = 빛나는 블록)',a=>{
+ const q=a.join('').toLowerCase(),out=[];
+ for(let i=1;i<=NB;i++)if(!q||DEF[i].name.replace(/\s/g,'').toLowerCase().includes(q))out.push(i+':'+DEF[i].name+(EMIT[i]?'★':''));
+ if(!out.length)return sys('검색 결과가 없습니다');
+ for(let i=0;i<out.length;i+=6)sys(out.slice(i,i+6).join('   '));
+});
+/* ---- 어드민 이상 ---- */
+cmd(['time','시간'],1,'/time [set|add|lock|unlock] ...','시간 변경 (예: /time set 밤, /time set 12, /time add 3, /time lock)',a=>{
+ const sub=(a[0]||'').toLowerCase();let h=curHour(),lock=TLOCK!==null;
+ if(!sub||sub==='query')return sys('현재 시각 '+Math.floor(h)+'시 '+Math.floor((h%1)*60)+'분'+(lock?' (고정됨)':'')+' — /time set <0~24|일출|아침|정오|일몰|밤|자정>, add <시간>, lock, unlock');
+ if(sub==='set'||sub==='설정'){const v=parseHour(a[1]);if(isNaN(v))return sys('사용법: /time set <0~24 또는 일출|아침|정오|일몰|밤|자정>');h=v}
+ else if(sub==='add'||sub==='더하기'){const v=parseFloat(a[1]);if(!isFinite(v))return sys('사용법: /time add <시간>');h+=v}
+ else if(sub==='lock'||sub==='고정')lock=true;
+ else if(sub==='unlock'||sub==='해제')lock=false;
+ else{const v=parseHour(sub);if(isNaN(v))return sys('사용법: /time set|add|lock|unlock ...');h=v}
+ applyTime(h,lock);netBroadcast({k:'tm',h:curHour(),lk:lock?1:0},true);
+ sys('시간을 '+Math.floor(curHour())+'시로 변경했습니다'+(lock?' (고정)':''));
+});
+cmd(['tp','텔레포트'],1,'/tp <닉> | <x> <z> | <x> <y> <z>','순간이동 (~ 는 현재 위치 기준)',a=>{
+ if(a.length===1){const p=peerByName(a[0]);if(!p||!p.has)return sys('그런 접속자가 없거나 위치를 모릅니다: '+a[0]);teleport(p.rx_,p.ry+.05,p.rz);return sys(p.name+' 님에게 이동했습니다')}
+ if(a.length===2){const x=num(a[0],P.x),z=num(a[1],P.z);if(isNaN(x)||isNaN(z))return sys('사용법: /tp x z');const xi=Math.floor(clamp(x,1,WORLD-2)),zi=Math.floor(clamp(z,1,WORLD-2));placeAtSurface(xi,zi);return sys('지표면으로 이동했습니다: '+xi+' / '+zi)}
+ if(a.length===3){const x=num(a[0],P.x),y=num(a[1],P.y),z=num(a[2],P.z);if(isNaN(x)||isNaN(y)||isNaN(z))return sys('사용법: /tp x y z');teleport(x,y,z);return sys('이동했습니다: '+x.toFixed(1)+' / '+y.toFixed(1)+' / '+z.toFixed(1))}
+ sys('사용법: /tp <닉> | /tp <x> <z> | /tp <x> <y> <z>');
+});
+cmd(['spawn','스폰'],1,'/spawn','월드 중앙(스폰)으로 이동',()=>{placeAtSurface(5000,5000);sys('스폰으로 이동했습니다')});
+cmd(['fly','비행'],1,'/fly','비행 모드 켜기/끄기',()=>{P.fly=!P.fly;P.vy=0;sys(P.fly?'비행 모드 ON':'비행 모드 OFF')});
+cmd(['speed','속도'],1,'/speed <0.5~10|reset>','이동 속도 배율',a=>{if(a[0]==='reset'||a[0]==='초기화'){SPDM=1;return sys('이동 속도를 원래대로 돌렸습니다')}const v=parseFloat(a[0]);if(!isFinite(v)||v<.5||v>10)return sys('사용법: /speed 0.5~10 (또는 reset)');SPDM=v;sys('이동 속도 x'+v)});
+cmd(['give','지급'],1,'/give <블록> [슬롯 1~9]','블록을 핫바에 넣기 (/blocks 로 번호 확인)',a=>{
+ let slot=P.sel;if(a.length>1&&/^[1-9]$/.test(a[a.length-1])){slot=+a.pop()-1}
+ const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ hotbar[slot]=b;renderHotbar();sys((slot+1)+'번 칸에 '+DEF[b].name+' 지급');
+});
+cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하나 설치/제거 (공기 = 제거, ~ 상대좌표)',a=>{
+ if(a.length<4)return sys('사용법: /setblock x y z 블록');
+ const x=Math.floor(num(a[0],P.x)),y=Math.floor(num(a[1],P.y)),z=Math.floor(num(a[2],P.z)),b=findBlock(a.slice(3).join(''));
+ if(![x,y,z].every(Number.isFinite))return sys('좌표가 올바르지 않습니다');
+ if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH)return sys('월드 밖입니다 (y 는 1~'+(WH-1)+')');
+ localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
+});
+cmd(['say','공지'],1,'/say <메시지>','모두에게 공지',a=>{const t=cleanText(a.join(' '));if(!t)return sys('사용법: /say 메시지');chatAdd('[공지] '+net.name,t,'sys');netBroadcast({k:'say',t},true)});
+/* ---- 슈퍼어드민 이상 ---- */
+cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블록으로 채움 (최대 30000칸, 공기 = 지우기)',a=>{
+ if(a.length<7)return sys('사용법: /fill x1 y1 z1 x2 y2 z2 블록   (~ 는 내 위치 기준)');
+ const base=[P.x,P.y,P.z,P.x,P.y,P.z],n=base.map((v,i)=>Math.floor(num(a[i],v)));
+ if(!n.every(Number.isFinite))return sys('좌표가 올바르지 않습니다');
+ const b=findBlock(a.slice(6).join(''));if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ const x1=Math.max(0,Math.min(n[0],n[3])),x2=Math.min(WORLD-1,Math.max(n[0],n[3])),y1=Math.max(1,Math.min(n[1],n[4])),y2=Math.min(WH-1,Math.max(n[1],n[4])),z1=Math.max(0,Math.min(n[2],n[5])),z2=Math.min(WORLD-1,Math.max(n[2],n[5]));
+ const vol=(x2-x1+1)*(y2-y1+1)*(z2-z1+1);
+ if(!(vol>0))return sys('영역이 월드 밖입니다');if(vol>30000)return sys('너무 큽니다: '+vol+'칸 (최대 30000칸)');
+ const t=nextT(),list=[];
+ for(let y=y1;y<=y2;y++)for(let z=z1;z<=z2;z++)for(let x=x1;x<=x2;x++){
+  if(getChunk(x>>4,z>>4)&&getBlock(x,y,z)===b)continue;
+  if(applyEdit(x,y,z,b,t)){markRegion(x,z);list.push([x,y,z,b,t])}
+ }
+ for(const p of peers.values())if(p.open)streamEdits(p,list);
+ sys(list.length+'칸을 '+(b?DEF[b].name:'공기')+'(으)로 바꿨습니다');
+});
+cmd(['tphere','소환'],2,'/tphere <닉>','접속자를 내 위치로 소환',a=>{const p=peerByName(a[0]);if(!p)return sys('그런 접속자가 없습니다');peerSend(p,{k:'tp',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2)},true);sys(p.name+' 님을 소환했습니다')});
+cmd(['roles','권한목록'],2,'/roles','권한을 받은 사람 목록',()=>{const l=['소유자: '+OWNER];for(const [n,lv] of roles)l.push(n+' = '+RNAME[lv]);sys(l.join(' / '))});
+function grant(a,lv){
+ const n=cleanName(a[0]||'').toLowerCase();if(!n)return sys('사용법: /'+(lv?RNAME[lv]:'강등')+' 대상자닉네임');
+ if(n===OWNER)return sys('기본 소유자('+OWNER+')의 권한은 바꿀 수 없습니다');
+ if(!canSetRole(myRole(),lvOf(n),lv))return sys('권한이 부족합니다 ('+((lv>=2||lvOf(n)>=2)?'소유자':'슈퍼어드민')+' 이상만 가능)');
+ setRole(n,lv);netBroadcast({k:'rl',n,lv},true);
+ sys(lv?n+' 님에게 '+RNAME[lv]+' 권한을 부여했습니다':n+' 님의 관리자 권한을 해제했습니다');
+}
+cmd(['어드민','admin','op'],2,'/어드민 <닉>','어드민 권한 부여',a=>grant(a,1));
+cmd(['강등','deop','demote'],2,'/강등 <닉>','관리자 권한 해제',a=>grant(a,0));
+/* ---- 소유자 ---- */
+cmd(['슈퍼어드민','superadmin'],3,'/슈퍼어드민 <닉>','슈퍼어드민 권한 부여',a=>grant(a,2));
+cmd(['소유자','owner'],3,'/소유자 <닉>','소유자 권한 부여',a=>grant(a,3));
+function updateAdminMenu(){const show=isOwner();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
+function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
+function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
 function chatAdd(who,txt,cls){
  const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
  if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
@@ -846,7 +1163,7 @@ function openChat(){if(state!=='play'||chatOpen)return;chatOpen=true;ui='chat';f
 function closeChat(relock){if(!chatOpen)return;chatOpen=false;ui='';$('chat').classList.remove('open');$('chatIn').blur();if(relock)lockPointer()}
 $('chatIn').addEventListener('keydown',e=>{
  e.stopPropagation();
- if(e.key==='Enter'){e.preventDefault();const raw=String($('chatIn').value||'').trim();const t=cleanText(raw);if(t){if(/^\/op\s+/i.test(raw)){if(!isAdmin()){chatAdd('','권한이 없습니다. joon0824만 /op 명령을 사용할 수 있습니다.','sys')}else{const target=cleanName(raw.replace(/^\/op\s+/i,'')).toLowerCase();if(!target)chatAdd('','사용법: /op 대상자','sys');else{OPS.add(target);chatAdd('','관리자 권한(OP)을 부여했습니다: '+target,'sys')}}}else{chatAdd(net.name,t,'me');netBroadcast({k:'ct',t},true)}}closeChat(true)}
+ if(e.key==='Enter'){e.preventDefault();const raw=String($('chatIn').value||'').trim();const t=cleanText(raw);if(t){if(t[0]==='/')runCommand(t);else{chatAdd(net.name,t,'me');netBroadcast({k:'ct',t},true)}}closeChat(true)}
  else if(e.key==='Escape'){e.preventDefault();closeChat(true)}
 });
 $('chatIn').addEventListener('keyup',e=>e.stopPropagation());
@@ -922,7 +1239,7 @@ function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플�
 function resume(){if(ui==='pause'){ui='';showOv('ovPause',false);lockPointer()}}
 $('bResume').onclick=resume;
 $('bExport').onclick=exportWebcraft;
-$('bImport').onclick=()=>{if(!isAdmin())return toast('관리자 joon0824만 사용할 수 있습니다');$('mapFile').click()};
+$('bImport').onclick=()=>{if(!isOwner())return toast('소유자만 사용할 수 있습니다');$('mapFile').click()};
 $('mapFile').addEventListener('change',e=>{importWebcraft(e.target.files&&e.target.files[0]);e.target.value=''});
 $('ovMap').addEventListener('click',()=>toggleMap(false));
 $('rd').oninput=e=>{RD=+e.target.value;$('rdv').textContent=RD;try{localStorage.setItem('wc_rd',RD)}catch(x){}};
@@ -933,7 +1250,8 @@ document.addEventListener('keydown',e=>{
  if(e.code==='Tab'){e.preventDefault();if(!ui)showTab(true);return}
  if(chatOpen)return;
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
- if(e.code==='KeyM'){toggleMap();return}
+ if(e.code==='KeyM'){toggleMic();return}
+ if(e.code==='KeyN'){toggleMap();return}
  if(ui==='pause'&&e.code==='Escape'){resume();return}
  if(e.code==='Escape'&&(ui==='pal'||ui==='map')){ui==='pal'?togglePal(false):toggleMap(false);return}
  if(ui)return;
@@ -988,6 +1306,7 @@ if(isTouch){
  btn('tbPal',()=>togglePal());
  btn('tbChat',()=>{if(state==='play'&&!ui)openChat()});
  btn('tbMap',()=>toggleMap());
+ btn('tbMic',()=>toggleMic());
  btn('tbMenu',()=>{if(state==='play'&&!ui){ui='pause';openPause()}});
  btn('tbDown',()=>{keys.ShiftLeft=true},()=>{keys.ShiftLeft=false});
  btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
@@ -1099,12 +1418,13 @@ function enterGame(){
  else{for(let i=0;i<40;i++){const [x,z]=findSpawn();if(placeAtSurface(x,z,true))break}cam.yaw=Math.random()*6.28}
  cam.pitch=0;P.fly=false;
  net.offline=allEdits();renderHotbar();buildPalette();updateStat();
- chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · M 지도','sys');
+ chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행 · 채팅에 /help':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · /help 명령어 · N 지도 · M 마이크','sys');
  if(isTouch)goFS();else lockPointer();
  if(net.on)toast('대기열 통과! 다른 플레이어와 P2P 연결 중…');
 }
 function goFS(){try{const e=document.documentElement;(e.requestFullscreen||e.webkitRequestFullscreen||(()=>{})).call(e)}catch(x){}}
 function leaveGame(){
+ micOff();
  try{localStorage.setItem('wc_pos_'+ROOM,JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}
  netDisconnect();net.synced=false;
  state='title';ui='';chatOpen=false;if(document.pointerLockElement)document.exitPointerLock();
@@ -1153,6 +1473,7 @@ function frame(t){
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
   cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
  }
+ if(state==='play')updateVoice(dt);
  updateChunks(cam.x,cam.z,state==='play'?7:12);
  // ---- 렌더 ----
  const sk=skyState(),fogFar=RD*CH*.92,fogNear=fogFar*.55;
@@ -1176,11 +1497,11 @@ function frame(t){
  gl.depthMask(true);gl.disable(gl.BLEND);
  if(state==='play'){
   updateTags(innerWidth,innerHeight);
-  $('pos').textContent=`XYZ ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   FPS ${fps}   ${P.fly?'[비행]':''}`+'\n'+`월드 ${WORLD}×${WORLD} · 변경 ${editCount}개 · ${Math.floor((((Date.now()/1000+DAY_OFF)/DAY_LEN%1)*24+6)%24)}시`;
+  $('pos').textContent=`XYZ ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   FPS ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 ${WORLD}×${WORLD} · 변경 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
  }
 }
 /* 시작 */
-window.__wc={setDay(v){DAY_OFF=v},P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
+window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
 loadSaved().then(()=>csLoad());
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
