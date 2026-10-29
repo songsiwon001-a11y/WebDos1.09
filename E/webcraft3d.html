@@ -220,10 +220,108 @@ def('빨간 유리',T.glassRed,T.glassRed,T.glassRed,{trans:true});             
 def('파란 유리',T.glassBlue,T.glassBlue,T.glassBlue,{trans:true});          //61
 def('초록 유리',T.glassGreen,T.glassGreen,T.glassGreen,{trans:true});       //62
 def('노란 유리',T.glassYellow,T.glassYellow,T.glassYellow,{trans:true});    //63
+/* ===================================================================
+   확장 블록 (번호는 저장된 맵과 호환되도록 항상 뒤에만 추가하세요)
+   · 블록 번호는 최대 1023 까지 (편집 기록 인코딩이 10비트)
+   · shape = 박스 목록 [x0,y0,z0,x1,y1,z1] (0~1) 또는 이웃 블록을 보고 모양을 바꾸는 함수
+   · col = 충돌 박스, hide = 블록 목록(E)에는 안 나오는 변형 블록
+   =================================================================== */
+const XTILES=[]; // 새 타일 (타일 번호 80번부터)
+function xt(c,v,p,fn){XTILES.push({c,v,p,fn});return 79+XTILES.length}
+const SHP=[],COLB=[],FAMI=[],DINFO=[],STAIRS=[],SLABTOP=[],SLABFULL=[],BASEOF=[],LADB=[];
+function defx(name,top,side,bot,o){def(name,top,side,bot,o);const id=DEF.length-1;if(o&&o.shape)SHP[id]=o.shape;if(o&&o.col)COLB[id]=o.col;return id}
+const cube=(name,t,o)=>defx(name,t,t,t,o);
+const XID={};
+const xc=(name,c,v,p,o)=>{XID[name]=cube(name,xt(c,v,p),o);return XID[name]};
+const mixc=(a,b,t)=>a.map((v,i)=>Math.round(v*(1-t)+b[i]*t));
+/* ---- 색깔 블록 (콘크리트 / 색 테라코타 16색) ---- */
+const C16=[['흰색',[236,238,240]],['주황색',[224,120,30]],['자홍색',[190,70,180]],['하늘색',[60,170,220]],['노란색',[240,200,40]],['연두색',[110,190,30]],['분홍색',[236,140,170]],['회색',[70,76,80]],['연회색',[150,150,146]],['청록색',[20,140,150]],['보라색',[120,50,170]],['파란색',[50,60,170]],['갈색',[100,64,36]],['초록색',[84,110,40]],['빨간색',[170,44,40]],['검은색',[22,22,26]]];
+C16.forEach(([n,c])=>xc(n+' 콘크리트',c,4,'p'));
+C16.forEach(([n,c])=>xc(n+' 테라코타',mixc(c,[110,66,48],.45),9,'p'));
+/* ---- 나무 · 돌 · 광물 · 기타 ---- */
+[['가문비나무 판자',[114,84,50]],['정글 판자',[160,110,76]],['아카시아 판자',[170,92,50]],['벚나무 판자',[228,176,170]],['진홍빛 판자',[110,50,70]],['뒤틀린 판자',[40,110,104]],['대나무 판자',[200,180,80]]].forEach(([n,c])=>xc(n,c,12,'h'));
+[['심층암',[70,70,76],20,'s'],['조약 심층암',[64,64,70],26,'c'],['심층암 벽돌',[60,60,66],14,'b'],['응회암',[108,106,96],18,'s'],['방해석',[226,226,220],8,'p'],['블랙스톤',[42,38,46],14,'s'],['광택 블랙스톤',[52,48,58],8,'e'],['현무암',[72,72,76],14,'l'],['안산암',[136,136,130],18,'s'],['섬록암',[190,190,188],18,'s'],['화강암',[150,106,90],18,'s'],
+ ['네더 벽돌',[70,30,34],14,'b'],['붉은 네더 벽돌',[120,24,28],14,'b'],['엔드 스톤',[222,224,164],16,'s'],['엔드 스톤 벽돌',[226,228,172],10,'b'],['프리즈머린',[96,170,150],16,'s'],['다크 프리즈머린',[50,100,86],14,'s'],['퍼퍼 블록',[170,120,170],10,'e'],['붉은 사암',[188,100,46],12,'p'],['진흙 벽돌',[136,104,84],12,'b'],['석영 벽돌',[236,232,224],6,'b'],
+ ['구리 블록',[196,106,70],10,'e'],['녹슨 구리',[72,160,130],10,'e'],['청금석 블록',[34,70,170],12,'e'],['에메랄드 블록',[40,190,90],10,'e'],['석탄 블록',[22,22,24],8,'e'],['네더라이트 블록',[60,54,60],8,'e'],['자수정 블록',[134,90,196],12,'k'],['레드스톤 블록',[190,24,10],14,'e'],
+ ['뼈 블록',[226,222,200],8,'l'],['스펀지',[200,196,70],24,'s'],['영혼 모래',[84,64,52],16,'s'],['균사체',[110,92,110],18,'s'],['포드졸',[110,76,40],18,'s'],['거친 흙',[120,86,60],24,'s'],['이끼 블록',[80,124,40],20,'s'],['꽁꽁 얼음',[130,180,244],8,'p'],['푸른 얼음',[90,140,240],8,'p']
+].forEach(([n,c,v,p])=>xc(n,c,v,p));
+xc('버섯등',[240,140,70],18,'s',{emit:true,lum:14});
+xc('황색 개구리등',[250,220,120],10,'p',{emit:true,lum:15});
+xc('울는 흑요석',[50,10,90],12,'s',{emit:true,lum:10});
+cube('슬라임 블록',xt([110,190,80,175],8,null,(x,y,c)=>(x===0||y===0||x===15||y===15)?[80,150,60,235]:null),{trans:true});
+/* ---- 반블록 · 계단 (재질마다) ---- */
+function mkSlabStairs(mi,label){
+ const d=DEF[mi],nm=label||d.name,hi=[[0,.5,0,1,1,.5],[.5,.5,0,1,1,1],[0,.5,.5,1,1,1],[0,.5,0,.5,1,1]];
+ const lo=[[0,0,0,1,.5,1]],up=[[0,.5,0,1,1,1]];
+ const sb=defx(nm+' 반블록',d.top,d.side,d.bot,{shape:lo,col:lo}),st=defx(nm+' 반블록(위)',d.top,d.side,d.bot,{shape:up,col:up,hide:1});
+ SLABTOP[sb]=st;BASEOF[st]=sb;SLABFULL[sb]=SLABFULL[st]=mi;
+ const arr=[];
+ for(let f=0;f<4;f++){const bx=[[0,0,0,1,.5,1],hi[f]],id=defx(nm+' 계단'+(f?'('+'동남서'[f-1]+')':''),d.top,d.side,d.bot,{shape:bx,col:bx,hide:f>0?1:0});arr.push(id);BASEOF[id]=arr[0]}
+ STAIRS[arr[0]]=arr;
+}
+[4,3,8,11,24,25,26,28,31,32,42,27].forEach(i=>mkSlabStairs(i));
+['가문비나무 판자','정글 판자','아카시아 판자','벚나무 판자','진홍빛 판자','뒤틀린 판자','대나무 판자','심층암 벽돌','조약 심층암','블랙스톤','네더 벽돌','붉은 네더 벽돌','엔드 스톤 벽돌','프리즈머린','퍼퍼 블록','진흙 벽돌','석영 벽돌','구리 블록','응회암','안산암','화강암','섬록암','붉은 사암'].forEach(n=>mkSlabStairs(XID[n],n));
+/* ---- 울타리 · 담 · 유리판 · 철창 (이웃과 이어짐) ---- */
+function postShape(fam,pw,ph,aw,rails){
+ const a=.5-pw,b=.5+pw,c=.5-aw,d=.5+aw,k=x=>FAMI[x]===fam||OPQ[x];
+ return (n0,n1,n2,n3)=>{ // 북(-z) 동(+x) 남(+z) 서(-x)
+  const L=[[a,0,a,b,ph,b]];
+  for(const r of rails){
+   if(k(n0))L.push([c,r[0],0,d,r[1],a]);
+   if(k(n1))L.push([b,r[0],c,1,r[1],d]);
+   if(k(n2))L.push([c,r[0],b,d,r[1],1]);
+   if(k(n3))L.push([0,r[0],c,a,r[1],d]);
+  }
+  return L;
+ };
+}
+const FENCE_R=[[.375,.5625],[.75,.9375]];
+[[8,'참나무'],[31,'자작나무'],[32,'짙은참나무'],[XID['가문비나무 판자'],'가문비나무'],[XID['정글 판자'],'정글'],[XID['아카시아 판자'],'아카시아'],[XID['벚나무 판자'],'벚나무'],[XID['대나무 판자'],'대나무']].forEach(([mi,n])=>{
+ const t=DEF[mi].top;defx(n+' 울타리',t,t,t,{shape:postShape(1,.125,1,.0625,FENCE_R),col:[[.375,0,.375,.625,1,.625]]});
+});
+[[4,'조약돌'],[24,'석재 벽돌'],[11,'벽돌'],[26,'사암'],[42,'이끼 낀 조약돌'],[XID['네더 벽돌'],'네더 벽돌'],[XID['심층암 벽돌'],'심층암 벽돌'],[XID['석영 벽돌'],'석영 벽돌'],[XID['블랙스톤'],'블랙스톤']].forEach(([mi,n])=>{
+ const d=DEF[mi];defx(n+' 담',d.top,d.side,d.bot,{shape:postShape(2,.25,1,.1875,[[0,.875]]),col:[[.25,0,.25,.75,1,.75]]});
+});
+const PANE_T=xt([200,225,235,70],0,null,(x,y)=>(x===7||x===8||y===7||y===8)?[232,242,248,235]:null);
+defx('유리판',PANE_T,PANE_T,PANE_T,{trans:true,shape:postShape(3,.0625,1,.0625,[[0,1]]),col:[[.4375,0,.4375,.5625,1,.5625]]});
+const BARS_T=xt([0,0,0,0],0,null,(x,y)=>(x===7||x===8||y===7||y===8)?[150,152,156]:null);
+defx('철창',BARS_T,BARS_T,BARS_T,{shape:postShape(4,.0625,1,.0625,[[0,1]]),col:[[.4375,0,.4375,.5625,1,.5625]]});
+['흰색','빨간','주황','노란','초록','파란','보라','검정'].forEach((n,i)=>{const t=T.wool+i;defx(n+(i?' 카펫':' 카펫'),t,t,t,{solid:false,shape:[[0,0,0,1,.0625,1]]})});
+/* ---- 사다리 · 횃불 ---- */
+const LADDER_T=xt([0,0,0,0],0,null,(x,y)=>((x===2||x===3||x===12||x===13)||(y%4===1&&x>3&&x<12))?[132,100,56]:null);
+const LADP=[[0,0,0,1,1,.0625],[.9375,0,0,1,1,1],[0,0,.9375,1,1,1],[0,0,0,.0625,1,1]];
+{const ids=[];for(let f=0;f<4;f++){const id=defx('사다리'+(f?'('+'동남서'[f-1]+')':''),LADDER_T,LADDER_T,LADDER_T,{solid:false,shape:[LADP[f]],hide:f>0?1:0,ladder:1});ids.push(id);BASEOF[id]=ids[0]}LADB[ids[0]]=ids}
+const TORCH_T=xt([0,0,0,0],0,null,(x,y)=>(x>=7&&x<=8)?((y>=6&&y<=7)?[255,y===6?240:170,60]:(y>=8?[124,88,48]:null)):null);
+defx('횃불',TORCH_T,TORCH_T,TORCH_T,{solid:false,emit:true,lum:14,shape:[[.4375,0,.4375,.5625,.625,.5625]]});
+/* ---- 문 (나무 3종 + 철문): 아래/위 × 열림/닫힘 × 방향4 = 16개 ---- */
+const DOORBOX=[[0,0,0,1,1,.1875],[.8125,0,0,1,1,1],[0,0,.8125,1,1,1],[0,0,0,.1875,1,1]];
+function doorTile(c,top,metal){
+ const dk=[c[0]*.68|0,c[1]*.68|0,c[2]*.68|0],lt=[Math.min(255,c[0]*1.1|0),Math.min(255,c[1]*1.1|0),Math.min(255,c[2]*1.1|0)];
+ return xt(c,10,null,(x,y)=>{
+  if(x===0||x===15||y===0||y===15)return dk;
+  if(top&&x>=3&&x<=12&&y>=3&&y<=9&&!metal)return (x%5===3||y%4===3)?dk:[184,222,234];
+  if(top&&metal&&x>=4&&x<=11&&y>=4&&y<=8)return ((x+y)%2)?[90,94,100]:[120,124,130];
+  if(!top&&x>=3&&x<=12&&y>=3&&y<=12)return (x===3||x===12||y===3||y===12)?dk:lt;
+  if(x===13&&(y===(top?15:0)))return dk;
+  return null;
+ });
+}
+const DOORBASE=[];
+function mkDoor(name,c,metal){
+ const tb=doorTile(c,false,metal),tt=doorTile(c,true,metal),base=DEF.length;
+ for(let h=0;h<2;h++)for(let o=0;o<2;o++)for(let f=0;f<4;f++){
+  const box=[DOORBOX[o?(f+1)%4:f]],t=h?tt:tb;
+  const id=defx(name+(h?' 위':'')+(o?' 열림':'')+['N','E','S','W'][f],t,t,t,{shape:box,col:box,hide:(h||o||f)?1:0,door:1,iron:metal?1:0});
+  DINFO[id]={base,h,o,f};if(id!==base)BASEOF[id]=base;
+ }
+ DOORBASE.push(base);DEF[base].name=name;
+}
+mkDoor('참나무 문',[178,140,84]);mkDoor('자작나무 문',[216,203,155]);mkDoor('짙은참나무 문',[88,60,32]);mkDoor('철문',[205,205,210],true);
+
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
-const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&i!==B_BED)PALETTE.push(i);
-const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1);
-for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0}
+const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide)PALETTE.push(i);
+const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
+for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
 
 const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
 (function drawAtlas(){
@@ -299,6 +397,19 @@ const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
  neon(T.neonWhite,[226,232,250]);neon(T.neonBlue,[56,116,255]);neon(T.neonGreen,[56,240,110]);neon(T.neonPurple,[176,70,250]);neon(T.neonRed,[255,58,66]);
  const cglass=(t,c)=>tile(t,[c[0],c[1],c[2],80],0,(x,y)=>edge(x,y)?[Math.min(255,c[0]+20),Math.min(255,c[1]+20),Math.min(255,c[2]+20),230]:(((x+y)%8===0&&x<8)?[255,255,255,130]:[c[0],c[1],c[2],80]));
  cglass(T.glassRed,[220,50,50]);cglass(T.glassBlue,[50,90,220]);cglass(T.glassGreen,[50,190,70]);cglass(T.glassYellow,[236,206,50]);
+ /* ---- 확장 블록 타일 ---- */
+ const shd=(c,k)=>[c[0]*k|0,c[1]*k|0,c[2]*k|0,c[3]];
+ const patFn=(pt,c)=>{const dk=shd(c,.72),lt=shd(c,1.14);switch(pt){
+  case 'b':return (x,y)=>{const off=((y>>2)&1)*4;return (y%4===3||(x+off)%8===0)?dk:null};
+  case 'h':return (x,y)=>y%4===3?dk:null;
+  case 'l':return (x,y)=>x%4===0?dk:null;
+  case 'c':return (x,y)=>{const cx=(x+(y>>2&1)*3)%8,cy=y%5;return (cx===0||cy===0)?dk:null};
+  case 's':return ()=>rnd()<.18?dk:(rnd()<.08?lt:null);
+  case 'e':return (x,y)=>(x===0||y===0||x===15||y===15)?dk:((x>3&&x<12&&y>3&&y<12)?lt:null);
+  case 'k':return (x,y)=>(((x>>2)+(y>>2))&1)?lt:null;
+  case 'g':return (x,y)=>(x%8===0||y%8===0)?dk:null;
+  default:return null}};
+ XTILES.forEach((d,i)=>{const c=d.c;tile(80+i,c,d.v,d.fn?(x,y)=>d.fn(x,y,c):patFn(d.p,c))});
  g.putImageData(img,0,0);
 })();
 const tileUV=t=>{const e=.0006,s=1/16,u=(t%16)*s,v=((t/16)|0)*s;return [u+e,v+e,u+s-e,v+s-e]};
@@ -315,7 +426,7 @@ function treeAt(wx,wz){ // 이 칼럼에 나무가 서는가 (결정적)
  return {h,th:4+(hash2(wx,wz,SEED+8)*3|0)};
 }
 function genChunk(cx,cz){
- const d=new Uint8Array(CH*WH*CH);let maxY=0;
+ const d=new Uint16Array(CH*WH*CH);let maxY=0;
  for(let z=0;z<CH;z++)for(let x=0;x<CH;x++){
   const wx=cx*CH+x,wz=cz*CH+z,h=terrainH(wx,wz),beach=h<=SEA+1,i0=z*CH+x;
   d[i0]=B_BED;
@@ -448,14 +559,14 @@ const FACES=[ // n, u, v, 원점오프셋, 음영
  {n:[0,0,1],u:[1,0,0],v:[0,1,0],o:[0,0,1],sh:.84,k:'side'},
  {n:[0,0,-1],u:[1,0,0],v:[0,1,0],o:[0,0,0],sh:.84,k:'side'}];
 const PW=18,PS=PW*PW;
-const pad=new Uint8Array(PW*(WH+2)*PW);
+const pad=new Uint16Array(PW*(WH+2)*PW);
 const bufs={s:{v:new Float32Array(14000*4*SF),i:new Uint32Array(14000*6),nf:0,cap:14000},t:{v:new Float32Array(5000*4*SF),i:new Uint32Array(5000*6),nf:0,cap:5000}};
 const AOF=[.5,.7,.86,1];
 /* ---- 블록 빛: 발광 블록에서 1칸마다 1씩 약해지며 퍼진다 (불투명 블록은 막음, 최대 15칸) ----
    주변 3x3 청크(48x48)를 한 번에 계산. 근처에 발광 블록이 없으면 계산 자체를 건너뜀 */
-const LW=48,LS=LW*LW,LB=new Uint8Array(LS*WH),LG=new Uint8Array(LS*WH),LBK=[];for(let i=0;i<=15;i++)LBK.push([]);
+const LW=48,LS=LW*LW,LB=new Uint16Array(LS*WH),LG=new Uint8Array(LS*WH),LBK=[];for(let i=0;i<=15;i++)LBK.push([]);
 function lightNear(cx,cz){for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const n=getChunk(cx+dx,cz+dz);if(n&&n.ems.size)return true}return false}
-function lgStep(nc,L,nq){const nb=LB[nc];if(nb&&!TRANS[nb])return;if(LG[nc]<L-1){LG[nc]=L-1;nq.push(nc)}}
+function lgStep(nc,L,nq){const nb=LB[nc];if(nb&&!TRANS[nb]&&!PART[nb])return;if(LG[nc]<L-1){LG[nc]=L-1;nq.push(nc)}}
 function computeLight(c){
  if(!lightNear(c.cx,c.cz))return false;
  LB.fill(0);LG.fill(0);for(let i=0;i<=15;i++)LBK[i].length=0;
@@ -477,6 +588,41 @@ function computeLight(c){
  return true;
 }
 const lgv=(gx,gy,gz)=>gy<0||gy>=WH?0:LG[(gy*LW+gz)*LW+gx];
+function meshShape(b,x,y,z,pi,hasL){
+ const df=DEF[b],tr=TRANS[b],B=tr?bufs.t:bufs.s,em=EMIT[b]?1:0;
+ let boxes=SHP[b];if(typeof boxes==='function')boxes=boxes(pad[pi-PW],pad[pi+1],pad[pi+PW],pad[pi-1]);
+ for(let bi=0;bi<boxes.length;bi++){
+  const bx=boxes[bi];
+  for(let f=0;f<6;f++){
+   const F=FACES[f],n=F.n,ax=n[0]?0:n[1]?1:2,sg=n[0]+n[1]+n[2],pv=sg>0?bx[3+ax]:bx[ax];
+   let hid=false; // 같은 모양 안의 다른 박스에 딱 붙은 면은 생략
+   for(let j=0;j<boxes.length&&!hid;j++){
+    if(j===bi)continue;const o=boxes[j];
+    if((sg>0?o[ax]:o[3+ax])!==pv)continue;
+    let cov=true;for(let k=0;k<3;k++){if(k===ax)continue;if(o[k]>bx[k]+1e-6||o[3+k]<bx[3+k]-1e-6){cov=false;break}}
+    if(cov)hid=true;
+   }
+   if(hid)continue;
+   if((sg>0&&pv>=1)||(sg<0&&pv<=0)){if(OPQ[pad[pi+n[1]*PS+n[2]*PW+n[0]]])continue} // 이웃이 꽉 찬 블록이면 생략
+   if(B.nf>=B.cap)continue;
+   const tl=tileUV(F.k==='top'?df.top:F.k==='bot'?df.bot:df.side);
+   const org=[0,0,0];for(let i=0;i<3;i++)org[i]=n[i]>0?bx[3+i]:bx[i];
+   const ui=F.u[0]?0:F.u[1]?1:2,vj=F.v[0]?0:F.v[1]?1:2,su=bx[3+ui]-bx[ui],sv=bx[3+vj]-bx[vj];
+   let bl=em?1:0;
+   if(hasL&&!em){const gx=x+16,gz=z+16;let m=lgv(gx,y,gz);const l2=lgv(gx+n[0],y+n[1],gz+n[2]);if(l2>m)m=l2;bl=m/15}
+   const sd=em?1:F.sh,vb=B.nf*4,A=B.v;
+   for(let k=0;k<4;k++){
+    const a=k===1||k===2?1:0,bb=k>=2?1:0,o=(vb+k)*SF;
+    A[o]=x+org[0]+a*F.u[0]*su+bb*F.v[0]*sv;A[o+1]=y+org[1]+a*F.u[1]*su+bb*F.v[1]*sv;A[o+2]=z+org[2]+a*F.u[2]*su+bb*F.v[2]*sv;
+    const uu=bx[ui]+a*su,vv=bx[vj]+bb*sv;
+    A[o+3]=tl[0]+uu*(tl[2]-tl[0]);
+    A[o+4]=(F.k==='top'||F.k==='bot')?tl[1]+vv*(tl[3]-tl[1]):tl[3]-vv*(tl[3]-tl[1]);
+    A[o+5]=A[o+6]=A[o+7]=sd;A[o+8]=bl;
+   }
+   const I=B.i,io=B.nf*6;I[io]=vb;I[io+1]=vb+1;I[io+2]=vb+2;I[io+3]=vb;I[io+4]=vb+2;I[io+5]=vb+3;B.nf++;
+  }
+ }
+}
 function meshChunk(c){
  const hasL=computeLight(c);
  // 패딩 배열 채우기 (주변 청크 포함)
@@ -493,11 +639,12 @@ function meshChunk(c){
  const top=Math.min(WH-1,c.maxY+1);
  for(let y=0;y<=top;y++)for(let z=0;z<CH;z++)for(let x=0;x<CH;x++){
   const pi=(y+1)*PS+(z+1)*PW+x+1,b=pad[pi];if(!b)continue;
+  if(PART[b]){meshShape(b,x,y,z,pi,hasL);continue}
   const df=DEF[b],tr=TRANS[b],B=tr?bufs.t:bufs.s;
   for(let f=0;f<6;f++){
    const F=FACES[f],nx=F.n[0],ny=F.n[1],nz=F.n[2];
    const nb=pad[pi+ny*PS+nz*PW+nx];
-   if(!(nb===0||(TRANS[nb]&&nb!==b)))continue;
+   if(!(nb===0||PART[nb]||(TRANS[nb]&&nb!==b)))continue;
    if(B.nf>=B.cap)continue;
    const tl=tileUV(F.k==='top'?df.top:F.k==='bot'?df.bot:df.side);
    const em=EMIT[b]?1:0;
@@ -513,7 +660,7 @@ function meshChunk(c){
     const s1=pad[pi+ny*PS+nz*PW+nx+0+F.u[0]*su+F.u[1]*su*PS+F.u[2]*su*PW];
     const s2=pad[pi+ny*PS+nz*PW+nx+F.v[0]*sv+F.v[1]*sv*PS+F.v[2]*sv*PW];
     const cr=pad[pi+ny*PS+nz*PW+nx+F.u[0]*su+F.v[0]*sv+(F.u[1]*su+F.v[1]*sv)*PS+(F.u[2]*su+F.v[2]*sv)*PW];
-    const o1=s1&&!TRANS[s1]?1:0,o2=s2&&!TRANS[s2]?1:0,o3=cr&&!TRANS[cr]?1:0;
+    const o1=s1&&!TRANS[s1]&&!PART[s1]?1:0,o2=s2&&!TRANS[s2]&&!PART[s2]?1:0,o3=cr&&!TRANS[cr]&&!PART[cr]?1:0;
     const av=(o1&&o2)?0:3-(o1+o2+o3);ao[k]=av;
     const sd=tr||em?F.sh:F.sh*AOF[av];
     const o=(vi+k)*SF,A=B.v;
@@ -606,28 +753,35 @@ const hotbar=[4,8,6,9,11,24,15,50,54];
 const keys={};
 let state='title',ui='',locked=false;
 const HW=.3,PH=1.8,EYE=1.62;
-function boxHit(x,y,z){
+function hitTop(x,y,z){ // 부딪히는 블록 중 가장 높은 윗면 높이 (없으면 -1)
  const x0=Math.floor(x-HW),x1=Math.floor(x+HW),y0=Math.floor(y),y1=Math.floor(y+PH-1e-4),z0=Math.floor(z-HW),z1=Math.floor(z+HW);
- for(let yy=y0;yy<=y1;yy++)for(let zz=z0;zz<=z1;zz++)for(let xx=x0;xx<=x1;xx++){const b=getBlock(xx,yy,zz);if(b&&SOLID[b])return true}
- return false;
+ const px0=x-HW,px1=x+HW,py1=y+PH,pz0=z-HW,pz1=z+HW;let top=-1;
+ for(let yy=y0;yy<=y1;yy++)for(let zz=z0;zz<=z1;zz++)for(let xx=x0;xx<=x1;xx++){
+  const b=getBlock(xx,yy,zz);if(!b)continue;const cb=COLB[b];
+  if(cb){for(const q of cb)if(px1>xx+q[0]&&px0<xx+q[3]&&py1>yy+q[1]&&y<yy+q[4]&&pz1>zz+q[2]&&pz0<zz+q[5]){if(yy+q[4]>top)top=yy+q[4]}}
+  else if(SOLID[b]){if(yy+1>top)top=yy+1}
+ }
+ return top;
 }
+const boxHit=(x,y,z)=>hitTop(x,y,z)>=0;
 let lastSpace=0,SPDM=1; // SPDM: /speed 배율
 function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
  const sp=Math.sin(cam.yaw),cp=Math.cos(cam.yaw);
  let wx=(-sp)*mv.f+cp*mv.s,wz=(-cp)*mv.f+(-sp)*mv.s;const l=Math.hypot(wx,wz);if(l>1){wx/=l;wz/=l}
  const feet=getBlock(Math.floor(P.x),Math.floor(P.y+.2),Math.floor(P.z)),head=getBlock(Math.floor(P.x),Math.floor(P.y+1.4),Math.floor(P.z));
- P.inWater=feet===B_WATER||head===B_WATER;
+ P.inWater=feet===B_WATER||head===B_WATER;const onLad=!P.fly&&(LAD[feet]||LAD[head]);
  let spd=P.fly?(mv.sprint?18:9):(mv.sprint?5.8:4.3);if(P.inWater&&!P.fly)spd*=.6;spd*=SPDM;
  const tx=wx*spd,tz=wz*spd,ac=Math.min(1,dt*(P.ground||P.fly?14:3.5));
  P.vx+=(tx-P.vx)*ac;P.vz+=(tz-P.vz)*ac;
  if(P.fly){const ty=((mv.jump?1:0)-(mv.down?1:0))*(mv.sprint?14:8);P.vy+=(ty-P.vy)*Math.min(1,dt*10)}
+ else if(onLad){P.vy=mv.jump?3.6:(mv.down?-4:0)}
  else if(P.inWater){P.vy-=9*dt;P.vy*=Math.pow(.15,dt);if(mv.jump)P.vy=Math.min(P.vy+30*dt,3.6)}
  else{P.vy-=28*dt;if(P.vy<-40)P.vy=-40;if(mv.jump&&P.ground){P.vy=8.6;P.ground=false}}
- P.ground=false;
- const nx=P.x+P.vx*dt;if(!boxHit(nx,P.y,P.z))P.x=nx;else P.vx=0;
- const nz=P.z+P.vz*dt;if(!boxHit(P.x,P.y,nz))P.z=nz;else P.vz=0;
+ const wasG=P.ground;P.ground=false;
+ const nx=P.x+P.vx*dt;if(!boxHit(nx,P.y,P.z))P.x=nx;else if(wasG&&!boxHit(nx,P.y+.5001,P.z)&&!boxHit(P.x,P.y+.5001,P.z)){P.x=nx;P.y+=.5001}else P.vx=0;
+ const nz=P.z+P.vz*dt;if(!boxHit(P.x,P.y,nz))P.z=nz;else if(wasG&&!boxHit(P.x,P.y+.5001,nz)&&!boxHit(P.x,P.y+.5001,P.z)){P.z=nz;P.y+=.5001}else P.vz=0;
  const ny=P.y+P.vy*dt;
- if(!boxHit(P.x,ny,P.z))P.y=ny;else{if(P.vy<0){P.ground=true;P.y=Math.floor(ny)+1}P.vy=0}
+ if(!boxHit(P.x,ny,P.z))P.y=ny;else{if(P.vy<0){P.ground=true;const tp=hitTop(P.x,ny,P.z);P.y=tp>=0?tp:Math.floor(ny)+1}P.vy=0}
  P.x=clamp(P.x,HW+.01,WORLD-HW-.01);P.z=clamp(P.z,HW+.01,WORLD-HW-.01);
  if(P.y<-30)P.y=WH+4;
  P.walk+=Math.hypot(P.vx,P.vz)*dt;
@@ -652,20 +806,50 @@ function localEdit(x,y,z,b){
 }
 function breakBlock(){
  const h=ray(6);if(!h||h.y<1)return;
- localEdit(h.x,h.y,h.z,0);sfx(.12,260);
+ if(h.b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 부술 수 있습니다',1500);
+ localEdit(h.x,h.y,h.z,0);
+ const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
+ sfx(.12,260);
 }
+function dirOfYaw(){const f=fwdOf(cam.yaw,0);return Math.abs(f[2])>Math.abs(f[0])?(f[2]<0?0:2):(f[0]>0?1:3)} // 0 북(-z) 1 동(+x) 2 남(+z) 3 서(-x)
+function variantFor(b,h){ // 설치할 때 방향/위아래 변형 고르기
+ if(STAIRS[b])return STAIRS[b][dirOfYaw()];
+ if(SLABTOP[b]!==undefined&&h.ny<0)return SLABTOP[b];
+ if(LADB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return LADB[b][f]}
+ return b;
+}
+function toggleDoor(x,y,z){
+ const b=getBlock(x,y,z),di=DINFO[b];if(!di)return;
+ const oy=y+(di.h?-1:1),od=DINFO[getBlock(x,oy,z)];
+ localEdit(x,y,z,di.base+di.h*8+(1-di.o)*4+di.f);
+ if(od&&od.base===di.base&&od.f===di.f&&od.o===di.o)localEdit(x,oy,z,od.base+od.h*8+(1-od.o)*4+od.f);
+ sfx(.1,160);
+}
+function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 true
+ const h=ray(6);if(!h)return false;
+ if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
+ return false;
+}
+const usableAt=()=>{const h=ray(6);return !!(h&&DINFO[h.b])};
 function placeBlock(){
  const h=ray(6);if(!h)return;
+ let b=hotbar[P.sel];
+ if(SLABTOP[b]!==undefined&&((h.b===b&&h.ny>0)||(h.b===SLABTOP[b]&&h.ny<0))){localEdit(h.x,h.y,h.z,SLABFULL[b]);sfx(.1,420);return} // 반블록 + 반블록 = 꽉 찬 블록
  const x=h.x+h.nx,y=h.y+h.ny,z=h.z+h.nz;if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)return;
  const cur=getBlock(x,y,z);if(cur&&cur!==B_WATER)return;
- const b=hotbar[P.sel];
+ if(b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 설치할 수 있습니다',1500);
+ if(DINFO[b]){ // 문: 위 칸도 비어 있어야 함
+  const up=getBlock(x,y+1,z);if(y+1>=WH||(up&&up!==B_WATER))return;
+  const base=DINFO[b].base,f=dirOfYaw();localEdit(x,y,z,base+f);localEdit(x,y+1,z,base+8+f);sfx(.1,420);return;
+ }
+ b=variantFor(b,h);
  if(SOLID[b]){ // 내 몸과 겹치면 불가
   if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return;
   for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return;
  }
  localEdit(x,y,z,b);sfx(.1,420);
 }
-function pickBlock(){const h=ray(6);if(!h)return;const i=hotbar.indexOf(h.b);if(i>=0)selectSlot(i);else if(PALETTE.includes(h.b)){hotbar[P.sel]=h.b;renderHotbar()}}
+function pickBlock(){const h=ray(6);if(!h)return;const pb=BASEOF[h.b]!==undefined?BASEOF[h.b]:h.b,i=hotbar.indexOf(pb);if(i>=0)selectSlot(i);else if(PALETTE.includes(pb)){hotbar[P.sel]=pb;renderHotbar()}}
 
 /* ===================== 소리 ===================== */
 let actx=null;
@@ -703,7 +887,7 @@ function csEncode(r){
   for(const [idx,v] of m)list.push([cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15),v[0],v[1]]);
  }
  const buf=new ArrayBuffer(list.length*14),dv=new DataView(buf);let mt=0;
- list.forEach((e,i)=>{const o=i*14;dv.setUint16(o,e[0]);dv.setUint8(o+2,e[1]);dv.setUint16(o+3,e[2]);dv.setUint8(o+5,e[3]);dv.setFloat64(o+6,e[4]);if(e[4]>mt)mt=e[4]});
+ list.forEach((e,i)=>{const o=i*14;dv.setUint16(o,e[0]);dv.setUint8(o+2,e[1]|((e[3]>>8)<<6));dv.setUint16(o+3,e[2]);dv.setUint8(o+5,e[3]&255);dv.setFloat64(o+6,e[4]);if(e[4]>mt)mt=e[4]});
  const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));
  return {n:list.length,d:btoa(s),mt};
 }
@@ -711,7 +895,7 @@ function csDecode(str){ // 문서의 변경 기록을 월드에 적용(LWW), 가
  const s=atob(str),n=Math.floor(s.length/14),u=new Uint8Array(n*14);
  for(let i=0;i<u.length;i++)u[i]=s.charCodeAt(i);
  const dv=new DataView(u.buffer);let mt=0;
- for(let i=0;i<n;i++){const o=i*14,t=dv.getFloat64(o+6);applyEdit(dv.getUint16(o),dv.getUint8(o+2),dv.getUint16(o+3),dv.getUint8(o+5),t);if(t>mt)mt=t}
+ for(let i=0;i<n;i++){const o=i*14,t=dv.getFloat64(o+6);{const yb=dv.getUint8(o+2);applyEdit(dv.getUint16(o),yb&63,dv.getUint16(o+3),dv.getUint8(o+5)|((yb>>6)<<8),t)};if(t>mt)mt=t}
  return mt;
 }
 function csText(){
@@ -940,6 +1124,7 @@ function streamEdits(p,list){
   if(i>=list.length)clearInterval(iv);
  },30);
 }
+function bedEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&v[0]===B_BED)}
 function peerMsg(p,s){
  if(typeof s!=='string'||s.length>40000)return;
  let m;try{m=JSON.parse(s)}catch(e){return}
@@ -962,7 +1147,7 @@ function peerMsg(p,s){
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
-  case 'bk':applyEdit(m.x,m.y,m.z,m.b,m.t);break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;applyEdit(m.x,m.y,m.z,m.b,m.t);break;
   case 'sr':streamEdits(p,allEdits());break;
   case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
   case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
@@ -1234,14 +1419,14 @@ function renderHotbar(){
 function selectSlot(i){P.sel=(i+9)%9;renderHotbar();const n=$('bname');n.textContent=DEF[hotbar[P.sel]].name;n.style.opacity=1;clearTimeout(selectSlot.h);selectSlot.h=setTimeout(()=>{n.style.opacity=0},1400)}
 function buildPalette(){
  const g=$('palGrid');g.textContent='';
- for(const b of PALETTE){const c=iconCanvas(b,32);c.title=DEF[b].name;c.onclick=()=>{hotbar[P.sel]=b;renderHotbar();togglePal(false)};g.appendChild(c)}
+ for(const b of PALETTE){if(b===B_BED&&myRole()<1)continue;const c=iconCanvas(b,32);c.title=DEF[b].name;c.onclick=()=>{hotbar[P.sel]=b;renderHotbar();togglePal(false)};g.appendChild(c)}
 }
 function showOv(id,on){$(id).style.display=on?'flex':'none'}
 function togglePal(on){
  if(state!=='play')return;
  if(on===undefined)on=ui!=='pal';
  if(on&&ui)return;
- ui=on?'pal':'';showOv('pal',on);
+ ui=on?'pal':'';if(on)buildPalette();showOv('pal',on);
  if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
 }
 /* ---- 전체 지도 ---- */
@@ -1326,7 +1511,7 @@ cv.addEventListener('mousedown',e=>{
  if(state!=='play'||ui)return;
  if(!locked&&!isTouch){lockPointer();return}
  if(e.button===0){breakBlock();hold.b=1;hold.t=.28}
- else if(e.button===2){placeBlock();hold.p=1;hold.t=.28}
+ else if(e.button===2){if(!useBlock())placeBlock();hold.p=1;hold.t=.28}
  else if(e.button===1){pickBlock();e.preventDefault()}
 });
 document.addEventListener('mouseup',e=>{if(e.button===0)hold.b=0;if(e.button===2)hold.p=0});
@@ -1352,7 +1537,7 @@ if(isTouch){
  const btn=(id,dn,up)=>{const b=$(id);b.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&(!ui||id==='tbPal'||id==='tbMap'))dn()},{passive:false});if(up){b.addEventListener('touchend',up);b.addEventListener('touchcancel',up)}};
  btn('tbJump',()=>{keys.Space=true;const now=mono();if(now-lastSpace<300){P.fly=!P.fly;toast(P.fly?'비행 모드 ON':'비행 모드 OFF',1200)}lastSpace=now},()=>{keys.Space=false});
  btn('tbBreak',()=>{breakBlock();hold.b=1;hold.t=.3},()=>{hold.b=0});
- btn('tbPlace',()=>{placeBlock();hold.p=1;hold.t=.3},()=>{hold.p=0});
+ btn('tbPlace',()=>{if(!useBlock())placeBlock();hold.p=1;hold.t=.3},()=>{hold.p=0});
  btn('tbPal',()=>togglePal());
  btn('tbChat',()=>{if(state==='play'&&!ui)openChat()});
  btn('tbMap',()=>toggleMap());
@@ -1523,7 +1708,7 @@ function frame(t){
    mv.f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joy.y;mv.s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joy.x;
    mv.jump=!!keys.Space;mv.down=!!(keys.ShiftLeft||keys.ShiftRight);mv.sprint=!!(keys.ControlLeft||keys.ControlRight||keys.sprintLock||touchSprint)&&mv.f>0;
    if(joy.a&&Math.hypot(joy.x,joy.y)>.95)mv.sprint=true;
-   hold.t-=dt;if(hold.t<=0){if(hold.b){breakBlock();hold.t=.17}else if(hold.p){placeBlock();hold.t=.2}}
+   hold.t-=dt;if(hold.t<=0){if(hold.b){breakBlock();hold.t=.17}else if(hold.p){if(!usableAt())placeBlock();hold.t=.2}}
   }
   let rem=dt;while(rem>0){const s=Math.min(rem,.016);stepPlayer(s,mv);rem-=s}
   cam.x=P.x;cam.y=P.y+EYE;cam.z=P.z;
