@@ -1,0 +1,2244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>WebCreat</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",monospace;color:#fff;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;image-rendering:pixelated}
+#tags{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.tag{position:absolute;transform:translate(-50%,-100%);font-size:13px;padding:1px 6px;background:rgba(0,0,0,.45);white-space:nowrap;text-shadow:1px 1px 0 #000}
+#hud{position:fixed;inset:0;pointer-events:none;display:none}
+#cross{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);mix-blend-mode:difference}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff}
+#cross:before{left:10px;top:2px;width:2px;height:18px}#cross:after{top:10px;left:2px;height:2px;width:18px}
+#info{display:none;position:absolute;left:8px;top:6px;font-size:13px;line-height:1.5;text-shadow:1px 1px 0 #000;white-space:pre}
+#stat.ok{color:#8f8}
+#hot{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:3px;background:rgba(0,0,0,.45);padding:4px;border:2px solid #222}
+.slot{width:44px;height:44px;border:3px solid #555;background:rgba(60,60,60,.6);position:relative;pointer-events:auto}
+.slot.sel{border-color:#fff}
+.slot canvas{width:100%;height:100%;image-rendering:pixelated;display:block}
+.slot i{position:absolute;left:2px;top:0;font:normal 10px monospace;color:#ddd}
+#bname{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);font-size:14px;text-shadow:1px 1px 0 #000;opacity:0;transition:opacity .4s}
+#chat{position:absolute;left:8px;bottom:70px;width:min(520px,60vw);font-size:14px;text-shadow:1px 1px 0 #000;pointer-events:none}
+#chatLog div{background:rgba(0,0,0,.35);padding:1px 6px;margin-top:1px;word-break:break-all}
+#chatLog div.old{display:none}
+#chat.open #chatLog div.old{display:block}
+#chatIn{display:none;width:100%;margin-top:4px;background:rgba(0,0,0,.6);color:#fff;border:1px solid #888;padding:4px 6px;font:inherit;pointer-events:auto;user-select:text}
+#chat.open #chatIn{display:block}
+#toast{position:fixed;left:50%;top:14%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border:1px solid #888;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;text-align:center;max-width:90vw}
+#tab{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:rgba(0,0,0,.65);border:1px solid #777;padding:10px 16px;min-width:260px;display:none;font-size:14px;line-height:1.7}
+.ov{z-index:5;position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.55);text-align:center}
+.card{background:rgba(25,25,25,.94);border:2px solid #777;padding:22px 26px;width:min(460px,92vw);max-height:92vh;overflow:auto}
+h1{font-size:44px;letter-spacing:4px;color:#7ddc4a;text-shadow:3px 3px 0 #2a4a14;margin-bottom:4px}
+.sub{font-size:13px;color:#bbb;margin-bottom:16px;line-height:1.5}
+input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;font:inherit;font-size:16px;text-align:center;margin-bottom:12px;user-select:text}
+.b{display:block;width:100%;padding:11px;margin-top:8px;background:#3a7a22;border:2px solid #9d9;color:#fff;font:inherit;font-size:16px;cursor:pointer;pointer-events:auto}
+.b:hover{background:#4a9a2c}.b.dim{background:#444;border-color:#888}
+.small{font-size:12px;color:#aaa;margin-top:12px;line-height:1.6}
+#qList{margin:10px 0;text-align:left;font-size:14px;max-height:200px;overflow:auto}
+#qList div{padding:3px 8px;border-bottom:1px solid #333}
+#pal .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:10px 0}
+#pal .grid canvas{width:100%;aspect-ratio:1;border:3px solid #555;background:#333;image-rendering:pixelated;cursor:pointer}
+#pal .grid canvas:hover{border-color:#fff}
+#mapc{width:min(80vh,92vw);height:min(80vh,92vw);image-rendering:pixelated;border:2px solid #aaa;background:#123}
+#touch{position:fixed;inset:0;display:none;pointer-events:none}
+.tb{position:absolute;pointer-events:auto;width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.2);border:2px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;font-size:13px}
+@media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#bname{bottom:52px}#chat{bottom:52px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
+#joy{position:absolute;left:24px;bottom:70px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
+#joyk{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.4)}
+#lkDisp{font-size:34px;letter-spacing:6px;margin:6px 0 14px}
+#lkPad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+#lkPad div{padding:14px 0;background:#333;border:2px solid #777;font-size:22px;cursor:pointer;pointer-events:auto}
+#lkPad div:active{background:#666}
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .8s;z-index:6}
+#pcHead{color:#6f6;font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:8px}
+#pcMemo{width:100%;height:150px;background:#031a0c;color:#7f7;border:1px solid #3a6;font:inherit;font-size:14px;padding:6px;user-select:text;-webkit-user-select:text;resize:none;touch-action:auto;display:block}
+.grid9{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin:8px 0}
+.dcell{aspect-ratio:1;border:3px solid #555;background:rgba(60,60,60,.7);cursor:pointer;pointer-events:auto}
+.dcell.sel{border-color:#fd4}
+.dcell canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="tags"></div>
+<div id="hud">
+ <div id="cross"></div>
+ <div id="info"><span id="pos"></span>
+<span id="stat"></span></div>
+ <div id="bname"></div>
+ <div id="hot"></div>
+ <div id="chat"><div id="chatLog"></div><input id="chatIn" maxlength="80" autocomplete="off" placeholder="채팅 (Enter 전송 / Esc 취소)"></div>
+</div>
+<div id="toast"></div>
+<div id="tab"></div>
+
+<div class="ov" id="ovTitle" style="display:flex">
+ <div class="card">
+  <h1>WebCreat</h1>
+  <div class="sub">10000 × 10000 블록 월드 · 서버 없는 P2P 멀티플레이<br>대기열만 Firebase, 게임은 브라우저끼리 직접 연결 (최대 16명)</div>
+  <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
+  <div class="b" id="bMulti">멀티플레이 (대기열 입장)</div>
+  <div class="b dim" id="bSolo">혼자 플레이</div>
+  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 하강 · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅(/help 명령어) · N 전체 지도 · M 마이크 · Tab 접속자 · ~ 좌표/정보</div>
+ </div>
+</div>
+<div class="ov" id="ovQueue">
+ <div class="card">
+  <h1 style="font-size:30px">대기열</h1>
+  <div class="sub" id="qMsg">Firebase 에 연결하는 중…</div>
+  <div id="qList"></div>
+  <div class="b dim" id="bQSolo" style="display:none">연결 실패 — 혼자 플레이로 시작</div>
+  <div class="b dim" id="bQBack">뒤로</div>
+ </div>
+</div>
+<div class="ov" id="ovPause">
+ <div class="card">
+  <h1 style="font-size:30px">일시정지</h1>
+  <div class="sub" id="pStat"></div>
+  <div class="sub">시야 거리: <span id="rdv"></span> 청크<br><input type="range" id="rd" min="3" max="12" step="1" style="width:90%"></div>
+  <div class="b" id="bResume">계속하기</div>
+  <div class="b" id="bExport" style="display:none">맵 내보내기 (.webcraft)</div>
+  <div class="b" id="bImport" style="display:none">맵 불러오기 (.webcraft)</div>
+  <input id="mapFile" type="file" accept=".webcraft,application/json" style="display:none">
+  <div class="b dim" id="bLeave">나가기 (타이틀)</div>
+ </div>
+</div>
+<div class="ov" id="pal">
+ <div class="card"><div class="sub">블록 선택 — 현재 슬롯에 넣을 블록을 클릭 (E 로 닫기)</div><div class="grid" id="palGrid"></div></div>
+</div>
+<div class="ov" id="ovMap">
+ <canvas id="mapc" width="200" height="200"></canvas>
+ <div class="sub" style="margin-top:8px">전체 월드 (10000×10000) — 노란 점: 나 · 흰 점: 다른 플레이어 · N 으로 닫기</div>
+</div>
+<div class="ov" id="ovLock">
+ <div class="card" style="width:min(320px,92vw)">
+  <h1 style="font-size:26px">도어락</h1>
+  <div class="sub" id="lkMsg"></div>
+  <div id="lkDisp"></div>
+  <div id="lkPad"></div>
+  <div class="b dim" id="lkSet" style="display:none"></div>
+  <div class="b dim" id="lkClose">닫기 (Esc)</div>
+ </div>
+</div>
+<div id="fade"></div>
+<div class="ov" id="ovPC">
+ <div class="card" style="width:min(520px,94vw);text-align:left;background:rgba(5,16,9,.96);border-color:#3c8">
+  <div id="pcHead"></div>
+  <textarea id="pcMemo" maxlength="300" placeholder="여기에 메모를 적으세요…" autocomplete="off"></textarea>
+  <div class="b" id="pcSave">저장하고 닫기</div>
+  <div class="b dim" id="pcClose">저장 없이 닫기</div>
+ </div>
+</div>
+<div class="ov" id="ovDr">
+ <div class="card" style="width:min(540px,96vw)">
+  <div class="sub">서랍장 — 칸을 눌러 선택한 뒤 다른 칸을 누르면 서로 바뀝니다 (E / Esc 로 닫기)</div>
+  <div class="grid9" id="drGrid"></div>
+  <div class="sub" style="margin:8px 0 0">내 핫바</div>
+  <div class="grid9" id="drHot"></div>
+  <div class="b dim" id="drClose">닫기</div>
+ </div>
+</div>
+<div id="touch">
+ <div id="joy"><div id="joyk"></div></div>
+ <div class="tb" id="tbJump" style="right:26px;bottom:150px">점프</div>
+ <div class="tb" id="tbBreak" style="right:96px;bottom:84px">파괴</div>
+ <div class="tb" id="tbPlace" style="right:26px;bottom:84px">설치</div>
+ <div class="tb" id="tbPal" style="right:96px;bottom:154px;width:46px;height:46px">E</div>
+ <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">채팅</div>
+ <div class="tb" id="tbMap" style="right:80px;top:14px;width:46px;height:46px">지도</div>
+ <div class="tb" id="tbInfo" style="right:242px;top:14px;width:46px;height:46px">정보</div>
+ <div class="tb" id="tbMic" style="right:188px;top:14px;width:46px;height:46px">마이크</div>
+ <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
+ <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
+ <div class="tb" id="tbRun" style="left:60px;bottom:228px;width:50px;height:50px">달리기</div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script>
+'use strict';
+/* =====================================================================
+   WebCreat — 마인크래프트식 블록 샌드박스 (HTML/JS 단일 파일, raw WebGL2)
+   · 월드 10000 x 10000 x 64, 시드로 결정되는 절차 생성 (모든 접속자가 같은 지형)
+   · 서버 없음: 블록 변경은 접속자끼리 WebRTC 로 직접 주고받고, 각자 IndexedDB 에 저장
+   · Firebase(Firestore)는 '대기열'(접속 인원 16명 제한/순번)과 WebRTC 연결 신호 교환에만 사용
+   · ?room=이름 으로 별도 월드/대기열 (친구끼리만)
+   ===================================================================== */
+const $=id=>document.getElementById(id);
+const Q=new URLSearchParams(location.search);
+const ROOM=(Q.get('room')||'main').replace(/[^\w-]/g,'').slice(0,24)||'main';
+const WORLD=10000,CH=16,WH=64,SEA=22,MAXP=16;
+let SEED=0x57ebc;for(const c of ROOM)SEED=(Math.imul(SEED,31)+c.charCodeAt(0))|0;
+const isTouch=matchMedia('(pointer:coarse)').matches||'ontouchstart' in window;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const fin=v=>typeof v==='number'&&isFinite(v);
+const cleanName=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f<>&"'`]/g,'').trim().slice(0,12);
+const cleanText=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,80);
+const rid=()=>{const a='abcdefghijklmnopqrstuvwxyz0123456789';let s='';for(let i=0;i<8;i++)s+=a[Math.random()*36|0];return s};
+function toast(t,ms){const e=$('toast');e.textContent=t;e.style.opacity=1;clearTimeout(toast.h);toast.h=setTimeout(()=>{e.style.opacity=0},ms||3000)}
+
+/* ===================== 절차적 지형 ===================== */
+function hash2(x,y,s){let h=Math.imul(x|0,374761393)^Math.imul(y|0,668265263)^Math.imul(s|0,1274126177);h=Math.imul(h^(h>>>13),1274126177);h^=h>>>16;return (h>>>0)/4294967296}
+function vnoise(x,y,s){const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi,u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+ const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v}
+function fbm(x,z,s,o){let a=0,f=1,amp=1,n=0;for(let i=0;i<o;i++){a+=vnoise(x*f,z*f,s+i*17)*amp;n+=amp;f*=2;amp*=.5}return a/n}
+function terrainH(x,z){
+ const c=fbm(x/700,z/700,SEED+1,3),h=fbm(x/140,z/140,SEED+2,4),m=fbm(x/380,z/380,SEED+3,3);
+ let v=11+c*30+(h-.5)*30;const mt=Math.max(0,m-.5)*2.4;v+=mt*mt*70;
+ return clamp(Math.floor(v),2,WH-4);
+}
+
+/* ===================== 블록 정의 · 텍스처 아틀라스 ===================== */
+// 타일: 0 grassTop 1 grassSide 2 dirt 3 stone 4 cobble 5 sand 6 logSide 7 logTop 8 leaves 9 planks 10 glass 11 water 12 bricks 13 snow 14 bedrock 15 gravel 16 glow 17..24 wool 31 white
+const T={grassTop:0,grassSide:1,dirt:2,stone:3,cobble:4,sand:5,logSide:6,logTop:7,leaves:8,planks:9,glass:10,water:11,bricks:12,snow:13,bedrock:14,gravel:15,glow:16,wool:17,white:31};
+// 신규 타일: 32번부터 차례대로 (기존 타일 번호/모양은 그대로)
+['stoneBrick','smooth','sandTop','sandSide','sandBot','obsidian','quartzTop','quartzSide','clay','terracotta','birchPlanks','darkPlanks','birchSide','birchTop','bookshelf','ironBlock','goldBlock','diamondBlock','coalOre','ironOre','goldOre','diamondOre','mossy','ice','cactusTop','cactusSide','pumpkinTop','pumpkinSide','melonTop','melonSide','hayTop','haySide','netherrack','redSand','seaLantern','lantern','magma','redLamp','jackFace','neonWhite','neonBlue','neonGreen','neonPurple','neonRed','glassRed','glassBlue','glassGreen','glassYellow'].forEach((n,i)=>{T[n]=32+i});
+const DEF=[null];
+function def(name,top,side,bot,o){DEF.push(Object.assign({name,top,side,bot,trans:false,solid:true,emit:false,lum:0},o||{}))} // lum: 발광 밝기 1~15 (emit 블록만)
+def('잔디',T.grassTop,T.grassSide,T.dirt);          //1
+def('흙',T.dirt,T.dirt,T.dirt);                    //2
+def('돌',T.stone,T.stone,T.stone);                  //3
+def('조약돌',T.cobble,T.cobble,T.cobble);           //4
+def('모래',T.sand,T.sand,T.sand);                   //5
+def('통나무',T.logTop,T.logSide,T.logTop);          //6
+def('나뭇잎',T.leaves,T.leaves,T.leaves);           //7
+def('판자',T.planks,T.planks,T.planks);             //8
+def('유리',T.glass,T.glass,T.glass,{trans:true});   //9
+def('물',T.water,T.water,T.water,{trans:true,solid:false}); //10
+def('벽돌',T.bricks,T.bricks,T.bricks);             //11
+def('눈',T.snow,T.snow,T.snow);                     //12
+def('기반암',T.bedrock,T.bedrock,T.bedrock);        //13
+def('자갈',T.gravel,T.gravel,T.gravel);             //14
+def('발광석',T.glow,T.glow,T.glow,{emit:true,lum:15});     //15
+['흰색 양털','빨간 양털','주황 양털','노란 양털','초록 양털','파란 양털','보라 양털','검정 양털'].forEach((n,i)=>def(n,T.wool+i,T.wool+i,T.wool+i)); //16..23
+/* ---- 신규 블록 (24~): 번호는 저장된 맵과 호환되도록 항상 뒤에만 추가하세요 ---- */
+// 건축용
+def('석재 벽돌',T.stoneBrick,T.stoneBrick,T.stoneBrick);     //24
+def('매끈한 돌',T.smooth,T.smooth,T.smooth);                 //25
+def('사암',T.sandTop,T.sandSide,T.sandBot);                  //26
+def('흑요석',T.obsidian,T.obsidian,T.obsidian);              //27
+def('석영 블록',T.quartzTop,T.quartzSide,T.quartzTop);       //28
+def('점토',T.clay,T.clay,T.clay);                            //29
+def('테라코타',T.terracotta,T.terracotta,T.terracotta);      //30
+def('자작나무 판자',T.birchPlanks,T.birchPlanks,T.birchPlanks); //31
+def('짙은 참나무 판자',T.darkPlanks,T.darkPlanks,T.darkPlanks); //32
+def('자작나무 통나무',T.birchTop,T.birchSide,T.birchTop);    //33
+def('책장',T.planks,T.bookshelf,T.planks);                   //34
+def('철 블록',T.ironBlock,T.ironBlock,T.ironBlock);          //35
+def('금 블록',T.goldBlock,T.goldBlock,T.goldBlock);          //36
+def('다이아몬드 블록',T.diamondBlock,T.diamondBlock,T.diamondBlock); //37
+// 광석 · 야생
+def('석탄 광석',T.coalOre,T.coalOre,T.coalOre);              //38
+def('철 광석',T.ironOre,T.ironOre,T.ironOre);                //39
+def('금 광석',T.goldOre,T.goldOre,T.goldOre);                //40
+def('다이아몬드 광석',T.diamondOre,T.diamondOre,T.diamondOre); //41
+def('이끼 낀 조약돌',T.mossy,T.mossy,T.mossy);               //42
+def('얼음',T.ice,T.ice,T.ice,{trans:true});                  //43
+def('선인장',T.cactusTop,T.cactusSide,T.cactusTop);          //44
+def('호박',T.pumpkinTop,T.pumpkinSide,T.pumpkinTop);         //45
+def('수박',T.melonTop,T.melonSide,T.melonTop);               //46
+def('건초 더미',T.hayTop,T.haySide,T.hayTop);                //47
+def('네더랙',T.netherrack,T.netherrack,T.netherrack);        //48
+def('붉은 모래',T.redSand,T.redSand,T.redSand);              //49
+// 빛을 내는 블록 (주변까지 밝힘, lum = 밝기)
+def('바다 랜턴',T.seaLantern,T.seaLantern,T.seaLantern,{emit:true,lum:15}); //50
+def('등불 블록',T.lantern,T.lantern,T.lantern,{emit:true,lum:14});          //51
+def('마그마 블록',T.magma,T.magma,T.magma,{emit:true,lum:12});              //52
+def('붉은 램프',T.redLamp,T.redLamp,T.redLamp,{emit:true,lum:13});          //53
+def('호박등',T.pumpkinTop,T.jackFace,T.pumpkinTop,{emit:true,lum:14});      //54
+def('흰 네온',T.neonWhite,T.neonWhite,T.neonWhite,{emit:true,lum:15});      //55
+def('파란 네온',T.neonBlue,T.neonBlue,T.neonBlue,{emit:true,lum:13});       //56
+def('초록 네온',T.neonGreen,T.neonGreen,T.neonGreen,{emit:true,lum:13});    //57
+def('보라 네온',T.neonPurple,T.neonPurple,T.neonPurple,{emit:true,lum:13}); //58
+def('빨간 네온',T.neonRed,T.neonRed,T.neonRed,{emit:true,lum:13});          //59
+// 색유리
+def('빨간 유리',T.glassRed,T.glassRed,T.glassRed,{trans:true});             //60
+def('파란 유리',T.glassBlue,T.glassBlue,T.glassBlue,{trans:true});          //61
+def('초록 유리',T.glassGreen,T.glassGreen,T.glassGreen,{trans:true});       //62
+def('노란 유리',T.glassYellow,T.glassYellow,T.glassYellow,{trans:true});    //63
+/* ===================================================================
+   확장 블록 (번호는 저장된 맵과 호환되도록 항상 뒤에만 추가하세요)
+   · 블록 번호는 최대 1023 까지 (편집 기록 인코딩이 10비트)
+   · shape = 박스 목록 [x0,y0,z0,x1,y1,z1] (0~1) 또는 이웃 블록을 보고 모양을 바꾸는 함수
+   · col = 충돌 박스, hide = 블록 목록(E)에는 안 나오는 변형 블록
+   =================================================================== */
+const XTILES=[]; // 새 타일 (타일 번호 80번부터)
+function xt(c,v,p,fn){XTILES.push({c,v,p,fn});return 79+XTILES.length}
+const SHP=[],COLB=[],FAMI=[],DINFO=[],STAIRS=[],SLABTOP=[],SLABFULL=[],BASEOF=[],LADB=[];
+function defx(name,top,side,bot,o){def(name,top,side,bot,o);const id=DEF.length-1;if(o&&o.shape)SHP[id]=o.shape;if(o&&o.col)COLB[id]=o.col;return id}
+const cube=(name,t,o)=>defx(name,t,t,t,o);
+const XID={};
+const xc=(name,c,v,p,o)=>{XID[name]=cube(name,xt(c,v,p),o);return XID[name]};
+const mixc=(a,b,t)=>a.map((v,i)=>Math.round(v*(1-t)+b[i]*t));
+/* ---- 색깔 블록 (콘크리트 / 색 테라코타 16색) ---- */
+const C16=[['흰색',[236,238,240]],['주황색',[224,120,30]],['자홍색',[190,70,180]],['하늘색',[60,170,220]],['노란색',[240,200,40]],['연두색',[110,190,30]],['분홍색',[236,140,170]],['회색',[70,76,80]],['연회색',[150,150,146]],['청록색',[20,140,150]],['보라색',[120,50,170]],['파란색',[50,60,170]],['갈색',[100,64,36]],['초록색',[84,110,40]],['빨간색',[170,44,40]],['검은색',[22,22,26]]];
+C16.forEach(([n,c])=>xc(n+' 콘크리트',c,4,'p'));
+C16.forEach(([n,c])=>xc(n+' 테라코타',mixc(c,[110,66,48],.45),9,'p'));
+/* ---- 나무 · 돌 · 광물 · 기타 ---- */
+[['가문비나무 판자',[114,84,50]],['정글 판자',[160,110,76]],['아카시아 판자',[170,92,50]],['벚나무 판자',[228,176,170]],['진홍빛 판자',[110,50,70]],['뒤틀린 판자',[40,110,104]],['대나무 판자',[200,180,80]]].forEach(([n,c])=>xc(n,c,12,'h'));
+[['심층암',[70,70,76],20,'s'],['조약 심층암',[64,64,70],26,'c'],['심층암 벽돌',[60,60,66],14,'b'],['응회암',[108,106,96],18,'s'],['방해석',[226,226,220],8,'p'],['블랙스톤',[42,38,46],14,'s'],['광택 블랙스톤',[52,48,58],8,'e'],['현무암',[72,72,76],14,'l'],['안산암',[136,136,130],18,'s'],['섬록암',[190,190,188],18,'s'],['화강암',[150,106,90],18,'s'],
+ ['네더 벽돌',[70,30,34],14,'b'],['붉은 네더 벽돌',[120,24,28],14,'b'],['엔드 스톤',[222,224,164],16,'s'],['엔드 스톤 벽돌',[226,228,172],10,'b'],['프리즈머린',[96,170,150],16,'s'],['다크 프리즈머린',[50,100,86],14,'s'],['퍼퍼 블록',[170,120,170],10,'e'],['붉은 사암',[188,100,46],12,'p'],['진흙 벽돌',[136,104,84],12,'b'],['석영 벽돌',[236,232,224],6,'b'],
+ ['구리 블록',[196,106,70],10,'e'],['녹슨 구리',[72,160,130],10,'e'],['청금석 블록',[34,70,170],12,'e'],['에메랄드 블록',[40,190,90],10,'e'],['석탄 블록',[22,22,24],8,'e'],['네더라이트 블록',[60,54,60],8,'e'],['자수정 블록',[134,90,196],12,'k'],['레드스톤 블록',[190,24,10],14,'e'],
+ ['뼈 블록',[226,222,200],8,'l'],['스펀지',[200,196,70],24,'s'],['영혼 모래',[84,64,52],16,'s'],['균사체',[110,92,110],18,'s'],['포드졸',[110,76,40],18,'s'],['거친 흙',[120,86,60],24,'s'],['이끼 블록',[80,124,40],20,'s'],['꽁꽁 얼음',[130,180,244],8,'p'],['푸른 얼음',[90,140,240],8,'p']
+].forEach(([n,c,v,p])=>xc(n,c,v,p));
+xc('버섯등',[240,140,70],18,'s',{emit:true,lum:14});
+xc('황색 개구리등',[250,220,120],10,'p',{emit:true,lum:15});
+xc('울는 흑요석',[50,10,90],12,'s',{emit:true,lum:10});
+cube('슬라임 블록',xt([110,190,80,175],8,null,(x,y,c)=>(x===0||y===0||x===15||y===15)?[80,150,60,235]:null),{trans:true});
+/* ---- 반블록 · 계단 (재질마다) ---- */
+function mkSlabStairs(mi,label){
+ const d=DEF[mi],nm=label||d.name,hi=[[0,.5,0,1,1,.5],[.5,.5,0,1,1,1],[0,.5,.5,1,1,1],[0,.5,0,.5,1,1]];
+ const lo=[[0,0,0,1,.5,1]],up=[[0,.5,0,1,1,1]];
+ const sb=defx(nm+' 반블록',d.top,d.side,d.bot,{shape:lo,col:lo}),st=defx(nm+' 반블록(위)',d.top,d.side,d.bot,{shape:up,col:up,hide:1});
+ SLABTOP[sb]=st;BASEOF[st]=sb;SLABFULL[sb]=SLABFULL[st]=mi;
+ const arr=[];
+ for(let f=0;f<4;f++){const bx=[[0,0,0,1,.5,1],hi[f]],id=defx(nm+' 계단'+(f?'('+'동남서'[f-1]+')':''),d.top,d.side,d.bot,{shape:bx,col:bx,hide:f>0?1:0});arr.push(id);BASEOF[id]=arr[0]}
+ STAIRS[arr[0]]=arr;
+}
+[4,3,8,11,24,25,26,28,31,32,42,27].forEach(i=>mkSlabStairs(i));
+['가문비나무 판자','정글 판자','아카시아 판자','벚나무 판자','진홍빛 판자','뒤틀린 판자','대나무 판자','심층암 벽돌','조약 심층암','블랙스톤','네더 벽돌','붉은 네더 벽돌','엔드 스톤 벽돌','프리즈머린','퍼퍼 블록','진흙 벽돌','석영 벽돌','구리 블록','응회암','안산암','화강암','섬록암','붉은 사암'].forEach(n=>mkSlabStairs(XID[n],n));
+/* ---- 울타리 · 담 · 유리판 · 철창 (이웃과 이어짐) ---- */
+function postShape(fam,pw,ph,aw,rails){
+ const a=.5-pw,b=.5+pw,c=.5-aw,d=.5+aw,k=x=>FAMI[x]===fam||OPQ[x];
+ return (n0,n1,n2,n3)=>{ // 북(-z) 동(+x) 남(+z) 서(-x)
+  const L=[[a,0,a,b,ph,b]];
+  for(const r of rails){
+   if(k(n0))L.push([c,r[0],0,d,r[1],a]);
+   if(k(n1))L.push([b,r[0],c,1,r[1],d]);
+   if(k(n2))L.push([c,r[0],b,d,r[1],1]);
+   if(k(n3))L.push([0,r[0],c,a,r[1],d]);
+  }
+  return L;
+ };
+}
+const FENCE_R=[[.375,.5625],[.75,.9375]];
+[[8,'참나무'],[31,'자작나무'],[32,'짙은참나무'],[XID['가문비나무 판자'],'가문비나무'],[XID['정글 판자'],'정글'],[XID['아카시아 판자'],'아카시아'],[XID['벚나무 판자'],'벚나무'],[XID['대나무 판자'],'대나무']].forEach(([mi,n])=>{
+ const t=DEF[mi].top;defx(n+' 울타리',t,t,t,{shape:postShape(1,.125,1,.0625,FENCE_R),col:[[.375,0,.375,.625,1,.625]]});
+});
+[[4,'조약돌'],[24,'석재 벽돌'],[11,'벽돌'],[26,'사암'],[42,'이끼 낀 조약돌'],[XID['네더 벽돌'],'네더 벽돌'],[XID['심층암 벽돌'],'심층암 벽돌'],[XID['석영 벽돌'],'석영 벽돌'],[XID['블랙스톤'],'블랙스톤']].forEach(([mi,n])=>{
+ const d=DEF[mi];defx(n+' 담',d.top,d.side,d.bot,{shape:postShape(2,.25,1,.1875,[[0,.875]]),col:[[.25,0,.25,.75,1,.75]]});
+});
+const PANE_T=xt([200,225,235,70],0,null,(x,y)=>(x===7||x===8||y===7||y===8)?[232,242,248,235]:null);
+defx('유리판',PANE_T,PANE_T,PANE_T,{trans:true,shape:postShape(3,.0625,1,.0625,[[0,1]]),col:[[.4375,0,.4375,.5625,1,.5625]]});
+const BARS_T=xt([0,0,0,0],0,null,(x,y)=>(x===7||x===8||y===7||y===8)?[150,152,156]:null);
+defx('철창',BARS_T,BARS_T,BARS_T,{shape:postShape(4,.0625,1,.0625,[[0,1]]),col:[[.4375,0,.4375,.5625,1,.5625]]});
+['흰색','빨간','주황','노란','초록','파란','보라','검정'].forEach((n,i)=>{const t=T.wool+i;defx(n+(i?' 카펫':' 카펫'),t,t,t,{solid:false,shape:[[0,0,0,1,.0625,1]]})});
+/* ---- 사다리 · 횃불 ---- */
+const LADDER_T=xt([0,0,0,0],0,null,(x,y)=>((x===2||x===3||x===12||x===13)||(y%4===1&&x>3&&x<12))?[132,100,56]:null);
+const LADP=[[0,0,0,1,1,.0625],[.9375,0,0,1,1,1],[0,0,.9375,1,1,1],[0,0,0,.0625,1,1]];
+{const ids=[];for(let f=0;f<4;f++){const id=defx('사다리'+(f?'('+'동남서'[f-1]+')':''),LADDER_T,LADDER_T,LADDER_T,{solid:false,shape:[LADP[f]],hide:f>0?1:0,ladder:1});ids.push(id);BASEOF[id]=ids[0]}LADB[ids[0]]=ids}
+const TORCH_T=xt([0,0,0,0],0,null,(x,y)=>(x>=7&&x<=8)?((y>=6&&y<=7)?[255,y===6?240:170,60]:(y>=8?[124,88,48]:null)):null);
+defx('횃불',TORCH_T,TORCH_T,TORCH_T,{solid:false,emit:true,lum:14,shape:[[.4375,0,.4375,.5625,.625,.5625]]});
+/* ---- 문 (나무 3종 + 철문): 아래/위 × 열림/닫힘 × 방향4 = 16개 ---- */
+const DOORBOX=[[0,0,0,1,1,.1875],[.8125,0,0,1,1,1],[0,0,.8125,1,1,1],[0,0,0,.1875,1,1]];
+function doorTile(c,top,metal){
+ const dk=[c[0]*.68|0,c[1]*.68|0,c[2]*.68|0],lt=[Math.min(255,c[0]*1.1|0),Math.min(255,c[1]*1.1|0),Math.min(255,c[2]*1.1|0)];
+ return xt(c,10,null,(x,y)=>{
+  if(x===0||x===15||y===0||y===15)return dk;
+  if(top&&x>=3&&x<=12&&y>=3&&y<=9&&!metal)return (x%5===3||y%4===3)?dk:[184,222,234];
+  if(top&&metal&&x>=4&&x<=11&&y>=4&&y<=8)return ((x+y)%2)?[90,94,100]:[120,124,130];
+  if(!top&&x>=3&&x<=12&&y>=3&&y<=12)return (x===3||x===12||y===3||y===12)?dk:lt;
+  if(x===13&&(y===(top?15:0)))return dk;
+  return null;
+ });
+}
+const DOORBASE=[];
+function mkDoor(name,c,metal){
+ const tb=doorTile(c,false,metal),tt=doorTile(c,true,metal),base=DEF.length;
+ for(let h=0;h<2;h++)for(let o=0;o<2;o++)for(let f=0;f<4;f++){
+  const box=[DOORBOX[o?(f+1)%4:f]],t=h?tt:tb;
+  const id=defx(name+(h?' 위':'')+(o?' 열림':'')+['N','E','S','W'][f],t,t,t,{shape:box,col:box,hide:(h||o||f)?1:0,door:1,iron:metal?1:0});
+  DINFO[id]={base,h,o,f};if(id!==base)BASEOF[id]=base;
+ }
+ DOORBASE.push(base);DEF[base].name=name;
+}
+mkDoor('참나무 문',[178,140,84]);mkDoor('자작나무 문',[216,203,155]);mkDoor('짙은참나무 문',[88,60,32]);mkDoor('철문',[205,205,210],true);
+
+/* ---- 도어락 (벽에 붙는 키패드): 슈퍼어드민 이상만 설치/부수기/비밀번호 설정, 맞는 번호 → 2칸 안 철문에 신호 ---- */
+const DLB=[],DLINFO=[],DLIDS=[];
+const DL_T=xt([44,46,52],6,null,(x,y)=>{
+ if(x<3||x>12||y<2||y>13)return null;
+ if(x===3||x===12||y===2||y===13)return [100,102,114];
+ if(y===3&&x>=5&&x<=10)return [60,235,100];
+ if((x===5||x===7||x===9)&&(y===5||y===7||y===9||y===11))return [205,205,212];
+ return null;
+});
+const DLP=[[.1875,.125,0,.8125,.875,.125],[.875,.125,.1875,1,.875,.8125],[.1875,.125,.875,.8125,.875,1],[0,.125,.1875,.125,.875,.8125]];
+{const ids=[];for(let f=0;f<4;f++){const id=defx('도어락'+(f?'('+'동남서'[f-1]+')':''),DL_T,DL_T,DL_T,{solid:false,shape:[DLP[f]],hide:f>0?1:0,dlock:1});ids.push(id);DLIDS.push(id)}
+ for(const id of ids){DLINFO[id]=ids[0];BASEOF[id]=ids[0]}DLB[ids[0]]=ids}
+
+/* ---- 가구: 침대 · 컴퓨터 · 소파 · 서랍장 ----
+   · 방향 f: 0 북(-z) 1 동(+x) 2 남(+z) 3 서(-x). 변형 블록은 hide 로 목록에서 숨김
+   · FURN[id] = {t:종류, f:방향, base:대표 블록}, FVAR[base] = 방향별 블록 4개, FBED[base] = 침대 8개(발 4 + 머리 4)
+   · 상호작용: 침대=잠자기(밤→아침) / 컴퓨터=메모장 / 소파=앉기 / 서랍장=수납 */
+const DX=[0,1,0,-1],DZ=[-1,0,1,0];
+const FURN=[],FVAR=[],FBED=[],FRONT=[5,0,4,1]; // FRONT: 방향 -> 앞면(FACES 번호)
+const kOf=f=>(6-f)%4; // 기준(앞이 +z)에서 f 방향으로 돌리는 횟수
+function rotBoxes(bs,k){return bs.map(b=>{let [x0,y0,z0,x1,y1,z1]=b;for(let i=0;i<k;i++){const a0=z0,a1=z1,c0=1-x1,c1=1-x0;x0=a0;x1=a1;z0=c0;z1=c1}return [x0,y0,z0,x1,y1,z1]})}
+function rotTile(fn,k){return (x,y)=>{let a=x-7.5,b=y-7.5;for(let i=0;i<k;i++){const t=a;a=-b;b=t}return fn(Math.round(a+7.5),Math.round(b+7.5))}}
+const shd2=(c,k)=>[Math.min(255,c[0]*k|0),Math.min(255,c[1]*k|0),Math.min(255,c[2]*k|0)];
+const SFX4=f=>f?'('+'동남서'[f-1]+')':'';
+/* 침대 (2칸): 발쪽(설치한 칸) + 머리쪽(바라보는 방향) */
+[['빨간',[190,46,46]],['파란',[52,84,196]]].forEach(([nm,c])=>{
+ const dk=shd2(c,.78),wood=[120,86,50],pil=[246,246,250],pe=[212,212,224];
+ const headBase=(x,y)=>(y>=9&&y<=14&&x>=2&&x<=13)?((y===9||y===14||x===2||x===13)?pe:pil):((x===0||x===15||y===15)?dk:null);
+ const footBase=(x,y)=>(x===0||x===15||y===0||y===12)?dk:null;
+ const side=xt(c,10,null,(x,y)=>y>=12?wood:(y===8?dk:null)),bot=xt(wood,10,'h');
+ const heads=[0,1,2,3].map(f=>xt(c,8,null,rotTile(headBase,kOf(f)))),foots=[0,1,2,3].map(f=>xt(c,8,null,rotTile(footBase,kOf(f))));
+ const box=[[0,0,0,1,.5,1]],ids=[];
+ for(let part=0;part<2;part++)for(let f=0;f<4;f++){
+  const id=defx(nm+' 침대'+(part?' 머리':' 발')+SFX4(f),(part?heads:foots)[f],side,bot,{shape:box,col:box,hide:(part||f)?1:0});
+  ids.push(id);FURN[id]={t:'bed',part,f,base:ids[0]};if(id!==ids[0])BASEOF[id]=ids[0];
+ }
+ DEF[ids[0]].name=nm+' 침대';DEF[ids[0]].icon=heads[2];FBED[ids[0]]=ids;
+});
+/* 컴퓨터 (책상 + 모니터 + 키보드, 화면이 앞면) */
+{
+ const wood=[150,112,66],gray=[52,56,62],scr=[40,120,200],glow=[130,205,255];
+ const topBase=(x,y)=>{
+  if(y>=3&&y<=6&&x>=2&&x<=13)return gray;
+  if(y>=9&&y<=12&&x>=4&&x<=11)return ((x+y)&1)?[96,100,106]:gray;
+  if(x===0||x===15||y===0||y===15)return shd2(wood,.78);
+  return null;
+ };
+ const front=xt(wood,10,null,(x,y)=>{if(y<=4&&x>=2&&x<=13){if(x===2||x===13||y===0||y===4)return gray;return ((x*3+y*5)%4===0)?glow:scr}return null});
+ const side=xt(wood,10,null,(x,y)=>(y<=4&&x>=2&&x<=13)?gray:null);
+ const tops=[0,1,2,3].map(f=>xt(wood,10,null,rotTile(topBase,kOf(f))));
+ const BASE=[[0,.5,0,1,.625,1],[0,0,0,.125,.5,.125],[.875,0,0,1,.5,.125],[0,0,.875,.125,.5,1],[.875,0,.875,1,.5,1],[.1,.7,.1875,.9,1,.4],[.4,.625,.25,.6,.7,.4],[.25,.625,.55,.75,.675,.8]];
+ const COL=[[0,0,0,1,.625,1],[.1,.625,.1875,.9,1,.4]],ids=[];
+ for(let f=0;f<4;f++){
+  const k=kOf(f),ft=[];ft[FRONT[f]]=front;
+  const id=defx('컴퓨터'+SFX4(f),tops[f],side,side,{shape:rotBoxes(BASE,k),col:rotBoxes(COL,k),hide:f?1:0,emit:true,lum:8,ft,icon:front});
+  ids.push(id);FURN[id]={t:'pc',f,base:ids[0]};if(id!==ids[0])BASEOF[id]=ids[0];
+ }
+ FVAR[ids[0]]=ids;
+}
+/* 소파 (옆에 같은 소파를 붙이면 팔걸이가 합쳐짐) */
+function sofaShape(f,base){
+ const k=kOf(f),core=rotBoxes([[0,0,0,1,.5,1],[0,.5,0,1,1,.3]],k),arms=rotBoxes([[0,.5,.3,.25,.8,1],[.75,.5,.3,1,.8,1]],k);
+ const rk=i=>{for(let j=0;j<k;j++)i=[3,0,1,2][i];return i},iw=rk(3),ie=rk(1);
+ const same=q=>{const d=FURN[q];return !!(d&&d.t==='sofa'&&d.base===base&&d.f===f)};
+ return (...n)=>{const L=core.slice();if(!same(n[iw]))L.push(arms[0]);if(!same(n[ie]))L.push(arms[1]);return L};
+}
+[['빨간',[176,40,44]],['파란',[44,84,170]],['회색',[110,114,122]]].forEach(([nm,c])=>{
+ const t=xt(c,10,null,(x,y)=>((x+y)&1)?null:shd2(c,.92)),base=DEF.length,ids=[];
+ for(let f=0;f<4;f++){
+  const k=kOf(f),id=defx(nm+' 소파'+SFX4(f),t,t,t,{shape:sofaShape(f,base),col:rotBoxes([[0,0,0,1,.5,1],[0,.5,0,1,1,.3],[0,.5,.3,.25,.8,1],[.75,.5,.3,1,.8,1]],k),hide:f?1:0});
+  ids.push(id);FURN[id]={t:'sofa',f,base:ids[0]};if(id!==ids[0])BASEOF[id]=ids[0];
+ }
+ DEF[ids[0]].name=nm+' 소파';DEF[ids[0]].icon=t;FVAR[ids[0]]=ids;
+});
+/* 서랍장 (앞면에 서랍) */
+[['참나무',[178,140,84]],['짙은 참나무',[88,60,32]],['자작나무',[216,203,155]]].forEach(([nm,c])=>{
+ const dk=shd2(c,.6),lt=shd2(c,1.12);
+ const top=xt(c,10,'h'),side=xt(shd2(c,.94),10,'l');
+ const front=xt(c,8,null,(x,y)=>{
+  if(x===0||x===15||y===0||y===15||y===5||y===10)return dk;
+  const ky=(y<5?0:y<10?1:2)*5+2;
+  if((x===7||x===8)&&(y===ky||y===ky+1))return [224,194,92];
+  return (x===1||x===14)?lt:null;
+ });
+ const ids=[];
+ for(let f=0;f<4;f++){
+  const ft=[];ft[FRONT[f]]=front;
+  const id=defx(nm+' 서랍장'+SFX4(f),top,side,top,{hide:f?1:0,ft,icon:front});
+  ids.push(id);FURN[id]={t:'dresser',f,base:ids[0]};if(id!==ids[0])BASEOF[id]=ids[0];
+ }
+ DEF[ids[0]].name=nm+' 서랍장';FVAR[ids[0]]=ids;
+});
+
+const NB=DEF.length-1,B_WATER=10,B_BED=13;
+const DLSET=new Set(DLIDS);
+const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide)PALETTE.push(i);
+const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
+for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
+
+const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
+(function drawAtlas(){
+ const g=atlas.getContext('2d'),img=g.createImageData(256,256),D=img.data;
+ let rs=12345;const rnd=()=>{rs=(Math.imul(rs,1103515245)+12345)>>>0;return rs/4294967296};
+ const put=(t,x,y,r,gg,b,a)=>{const X=(t%16)*16+x,Y=((t/16)|0)*16+y,i=(Y*256+X)*4;D[i]=clamp(r,0,255);D[i+1]=clamp(gg,0,255);D[i+2]=clamp(b,0,255);D[i+3]=a===undefined?255:a};
+ const tile=(t,base,v,fn)=>{for(let y=0;y<16;y++)for(let x=0;x<16;x++){const n=(rnd()-.5)*v;let c=base;if(fn){const r=fn(x,y);if(r)c=r}put(t,x,y,c[0]+n,c[1]+n,c[2]+n,c[3])}};
+ tile(T.grassTop,[84,160,52],34);
+ tile(T.dirt,[134,96,64],30);
+ tile(T.grassSide,[134,96,64],30,(x,y)=>{const edge=3+((x*7+3)%3);return y<edge?[84,160,52]:null});
+ tile(T.stone,[128,128,128],26);
+ tile(T.cobble,[120,120,120],34,(x,y)=>{const cx=(x+(y>>2&1)*3)%8,cy=y%5;return (cx===0||cy===0)?[78,78,78]:null});
+ tile(T.sand,[222,208,150],20);
+ tile(T.logSide,[102,78,46],22,(x)=>x%4===0?[78,58,32]:null);
+ tile(T.logTop,[176,140,86],18,(x,y)=>{const d=Math.max(Math.abs(x-7.5),Math.abs(y-7.5));return (d>6||((d|0)%2===1))?[110,84,50]:null});
+ tile(T.leaves,[46,120,38],40,(x,y)=>rnd()<.18?[24,80,22]:null);
+ tile(T.planks,[178,140,84],16,(x,y)=>y%4===3?[120,90,50]:null);
+ tile(T.glass,[200,230,240,40],0,(x,y)=>(x===0||y===0||x===15||y===15)?[230,245,250,230]:((x+y)%8===0&&x<8?[255,255,255,120]:[200,230,240,40]));
+ tile(T.water,[44,90,200,150],12);
+ tile(T.bricks,[150,70,54],18,(x,y)=>{const row=y>>2,off=(row&1)*4;return (y%4===3||(x+off)%8===0)?[190,185,175]:null});
+ tile(T.snow,[244,246,250],10);
+ tile(T.bedrock,[50,50,54],40);
+ tile(T.gravel,[136,130,126],40,(x,y)=>rnd()<.25?[92,88,86]:null);
+ tile(T.glow,[240,200,100],24,(x,y)=>((x+y)%5===0)?[255,240,170]:((x*y)%7===1?[200,150,60]:null));
+ const wool=[[236,236,236],[170,50,48],[222,120,40],[228,200,50],[70,150,50],[50,80,190],[130,60,170],[34,34,38]];
+ wool.forEach((c,i)=>tile(T.wool+i,c,14,(x,y)=>((x+y)&1)?null:[c[0]-8,c[1]-8,c[2]-8]));
+ tile(T.white,[255,255,255],0);
+ /* ---- 신규 블록 텍스처 (기존 타일을 다 그린 뒤에 그려서 기존 모양은 그대로) ---- */
+ const edge=(x,y)=>x===0||y===0||x===15||y===15;
+ const spotsOf=[[3,3],[4,3],[3,4],[10,4],[11,4],[11,5],[6,10],[7,10],[6,11],[12,11],[12,12],[2,12],[9,8]];
+ const ore=col=>(x,y)=>spotsOf.some(p=>p[0]===x&&p[1]===y)?col:null;
+ tile(T.stoneBrick,[124,124,124],16,(x,y)=>{const off=((y>>3)&1)*4;return (y%8===0||(x+off)%8===0)?[86,86,86]:null});
+ tile(T.smooth,[142,142,142],6);
+ tile(T.sandTop,[220,206,152],10);
+ tile(T.sandSide,[214,200,146],10,(x,y)=>(y===3||y===12)?[192,176,122]:(y<3?[226,212,158]:null));
+ tile(T.sandBot,[200,186,134],8);
+ tile(T.obsidian,[24,14,38],10,(x,y)=>((x*7+y*13)%11===0)?[64,34,100]:null);
+ tile(T.quartzTop,[238,234,226],5,(x,y)=>edge(x,y)?[220,214,204]:null);
+ tile(T.quartzSide,[238,234,226],5,(x,y)=>(y===15||y===0)?[214,208,198]:((x===7||x===8)&&y>1&&y<14?[226,221,211]:null));
+ tile(T.clay,[158,164,176],10);
+ tile(T.terracotta,[152,94,68],10);
+ tile(T.birchPlanks,[216,203,155],12,(x,y)=>y%4===3?[168,150,104]:null);
+ tile(T.darkPlanks,[68,44,22],12,(x,y)=>y%4===3?[40,26,12]:null);
+ tile(T.birchSide,[226,224,216],8,(x,y)=>((x*3+y*5)%9===0)?[72,70,64]:null);
+ tile(T.birchTop,[204,180,124],12,(x,y)=>{const d=Math.max(Math.abs(x-7.5),Math.abs(y-7.5));return (d>6||((d|0)%2===1))?[172,148,98]:null});
+ const books=[[150,40,40],[40,84,150],[60,134,62],[176,134,50]];
+ tile(T.bookshelf,[178,140,84],10,(x,y)=>(y===0||y===7||y===8||y===15)?[110,82,46]:books[(x*3+(y>8?1:0)*2)%4].map(v=>v+((x+y)%3)*6));
+ tile(T.ironBlock,[222,222,224],6,(x,y)=>edge(x,y)?[190,190,194]:((x>3&&x<12&&y>3&&y<12)?[232,232,234]:null));
+ tile(T.goldBlock,[246,208,54],10,(x,y)=>edge(x,y)?[212,168,22]:((x>3&&x<12&&y>3&&y<12)?[255,226,96]:null));
+ tile(T.diamondBlock,[98,226,214],10,(x,y)=>edge(x,y)?[58,176,172]:((x>3&&x<12&&y>3&&y<12)?[150,246,238]:null));
+ tile(T.coalOre,[128,128,128],26,ore([28,28,30]));
+ tile(T.ironOre,[128,128,128],26,ore([218,176,148]));
+ tile(T.goldOre,[128,128,128],26,ore([250,214,60]));
+ tile(T.diamondOre,[128,128,128],26,ore([92,240,230]));
+ tile(T.mossy,[112,118,106],34,(x,y)=>{const cx=(x+(y>>2&1)*3)%8,cy=y%5;return (cx===0||cy===0)?[70,76,66]:(rnd()<.22?[72,114,52]:null)});
+ tile(T.ice,[150,200,250,170],8,(x,y)=>((x+y)%7===0)?[222,242,255,205]:null);
+ tile(T.cactusTop,[60,132,52],8,(x,y)=>edge(x,y)?[38,96,34]:((x>=6&&x<=9&&y>=6&&y<=9)?[90,160,70]:null));
+ tile(T.cactusSide,[50,124,44],8,(x,y)=>x%4===0?[30,92,30]:(((x+y*3)%9===0)?[204,232,152]:null));
+ tile(T.pumpkinTop,[200,120,20],10,(x,y)=>(x>=6&&x<=9&&y>=6&&y<=9)?[96,122,40]:(x%4===0?[170,98,12]:null));
+ tile(T.pumpkinSide,[214,126,22],10,(x,y)=>x%4===0?[184,104,14]:null);
+ tile(T.melonTop,[100,162,50],12,(x,y)=>((x+y)%4===0)?[60,120,36]:null);
+ tile(T.melonSide,[112,172,62],10,(x,y)=>(x%4<2)?[66,128,42]:null);
+ tile(T.hayTop,[212,182,60],14,(x,y)=>edge(x,y)?[172,142,30]:null);
+ tile(T.haySide,[216,184,62],12,(x,y)=>(y===7||y===8)?[170,72,44]:(y%4===0?[184,152,40]:null));
+ tile(T.netherrack,[114,46,46],30,(x,y)=>rnd()<.18?[80,28,30]:null);
+ tile(T.redSand,[192,104,48],20);
+ tile(T.seaLantern,[172,220,208],8,(x,y)=>edge(x,y)?[110,170,160]:((x>3&&x<12&&y>3&&y<12)?[238,255,248]:null));
+ tile(T.lantern,[255,200,90],18,(x,y)=>(x%8===0||y%8===0)?[100,70,32]:null);
+ tile(T.magma,[122,30,12],28,(x,y)=>((x*5+y*3)%7===0)?[255,152,32]:(((x+y*2)%5===0)?[222,82,18]:null));
+ tile(T.redLamp,[214,92,42],14,(x,y)=>edge(x,y)?[122,60,30]:((x>3&&x<12&&y>3&&y<12)?[255,216,112]:null));
+ tile(T.jackFace,[214,126,22],10,(x,y)=>{const eye=(y>=4&&y<=6)&&((x>=3&&x<=5)||(x>=10&&x<=12)),mouth=(y>=9&&y<=11)&&x>=4&&x<=11&&!(x===7&&y===9);return (eye||mouth)?[255,226,112]:(x%4===0?[184,104,14]:null)});
+ const neon=(t,c)=>tile(t,c,10,(x,y)=>edge(x,y)?[c[0]*.62|0,c[1]*.62|0,c[2]*.62|0]:((x>3&&x<12&&y>3&&y<12)?[Math.min(255,c[0]+60),Math.min(255,c[1]+60),Math.min(255,c[2]+60)]:null));
+ neon(T.neonWhite,[226,232,250]);neon(T.neonBlue,[56,116,255]);neon(T.neonGreen,[56,240,110]);neon(T.neonPurple,[176,70,250]);neon(T.neonRed,[255,58,66]);
+ const cglass=(t,c)=>tile(t,[c[0],c[1],c[2],80],0,(x,y)=>edge(x,y)?[Math.min(255,c[0]+20),Math.min(255,c[1]+20),Math.min(255,c[2]+20),230]:(((x+y)%8===0&&x<8)?[255,255,255,130]:[c[0],c[1],c[2],80]));
+ cglass(T.glassRed,[220,50,50]);cglass(T.glassBlue,[50,90,220]);cglass(T.glassGreen,[50,190,70]);cglass(T.glassYellow,[236,206,50]);
+ /* ---- 확장 블록 타일 ---- */
+ const shd=(c,k)=>[c[0]*k|0,c[1]*k|0,c[2]*k|0,c[3]];
+ const patFn=(pt,c)=>{const dk=shd(c,.72),lt=shd(c,1.14);switch(pt){
+  case 'b':return (x,y)=>{const off=((y>>2)&1)*4;return (y%4===3||(x+off)%8===0)?dk:null};
+  case 'h':return (x,y)=>y%4===3?dk:null;
+  case 'l':return (x,y)=>x%4===0?dk:null;
+  case 'c':return (x,y)=>{const cx=(x+(y>>2&1)*3)%8,cy=y%5;return (cx===0||cy===0)?dk:null};
+  case 's':return ()=>rnd()<.18?dk:(rnd()<.08?lt:null);
+  case 'e':return (x,y)=>(x===0||y===0||x===15||y===15)?dk:((x>3&&x<12&&y>3&&y<12)?lt:null);
+  case 'k':return (x,y)=>(((x>>2)+(y>>2))&1)?lt:null;
+  case 'g':return (x,y)=>(x%8===0||y%8===0)?dk:null;
+  default:return null}};
+ XTILES.forEach((d,i)=>{const c=d.c;tile(80+i,c,d.v,d.fn?(x,y)=>d.fn(x,y,c):patFn(d.p,c))});
+ g.putImageData(img,0,0);
+})();
+const tileUV=t=>{const e=.0006,s=1/16,u=(t%16)*s,v=((t/16)|0)*s;return [u+e,v+e,u+s-e,v+s-e]};
+
+/* ===================== 월드 데이터 / 편집 기록 ===================== */
+const chunks=new Map();           // key -> {cx,cz,d,maxY,dirty,m:{s,t}}
+const edits=new Map();            // chunkKey -> Map(idx -> [b,t])  (서버 없이 접속자끼리 동기화되는 변경 기록)
+let editCount=0,maxT=0,lastT=0,saveDirty=false;
+const ckey=(cx,cz)=>cx*1024+cz;
+const nextT=()=>{lastT=Math.max(Date.now(),lastT+1);return lastT};
+function treeAt(wx,wz){ // 이 칼럼에 나무가 서는가 (결정적)
+ if(wx<0||wz<0||wx>=WORLD||wz>=WORLD||hash2(wx,wz,SEED+7)>=.011)return 0;
+ const h=terrainH(wx,wz);if(h<SEA+2||h>44)return 0;
+ return {h,th:4+(hash2(wx,wz,SEED+8)*3|0)};
+}
+function genChunk(cx,cz){
+ const d=new Uint16Array(CH*WH*CH);let maxY=0;
+ for(let z=0;z<CH;z++)for(let x=0;x<CH;x++){
+  const wx=cx*CH+x,wz=cz*CH+z,h=terrainH(wx,wz),beach=h<=SEA+1,i0=z*CH+x;
+  d[i0]=B_BED;
+  for(let y=1;y<=h;y++){
+   let b=3;
+   if(y===h)b=h>=50?12:(beach?5:1);
+   else if(y>h-4)b=beach?5:2;
+   else if(y===h-4&&beach)b=14;
+   d[(y*CH)*CH+i0]=b;
+  }
+  for(let y=h+1;y<=SEA;y++)d[(y*CH)*CH+i0]=B_WATER;
+  maxY=Math.max(maxY,h,h<SEA?SEA:0);
+ }
+ for(let tz=-2;tz<CH+2;tz++)for(let tx=-2;tx<CH+2;tx++){
+  const wx=cx*CH+tx,wz=cz*CH+tz,t=treeAt(wx,wz);if(!t)continue;
+  const top=t.h+t.th;maxY=Math.max(maxY,top+2);
+  if(tx>=0&&tx<CH&&tz>=0&&tz<CH)for(let y=t.h+1;y<=top&&y<WH;y++)d[(y*CH+tz)*CH+tx]=6;
+  for(let dy=-2;dy<=1;dy++){
+   const y=top+dy;if(y>=WH)continue;
+   const r=dy<=-1?2:1;
+   for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){
+    if(dy===1&&Math.abs(dx)+Math.abs(dz)>1)continue;
+    if(r===2&&Math.abs(dx)===2&&Math.abs(dz)===2)continue;
+    const lx=tx+dx,lz=tz+dz;if(lx<0||lx>=CH||lz<0||lz>=CH)continue;
+    const i=(y*CH+lz)*CH+lx;if(d[i]===0)d[i]=7;
+   }
+  }
+ }
+ const ed=edits.get(ckey(cx,cz)),ems=new Set(); // ems: 이 청크의 발광 블록 위치(idx) 모음
+ if(ed)for(const [idx,v] of ed){d[idx]=v[0];if(EMIT[v[0]])ems.add(idx);const y=idx>>8;if(v[0]&&y>maxY)maxY=y}
+ return {cx,cz,d,maxY:Math.min(WH-1,maxY+1),dirty:true,m:null,ems};
+}
+function getChunk(cx,cz){return chunks.get(ckey(cx,cz))}
+function getBlock(x,y,z){
+ if(y<0)return B_BED;if(y>=WH)return 0;
+ if(x<0||z<0||x>=WORLD||z>=WORLD)return B_BED;
+ const c=chunks.get(ckey(x>>4,z>>4));if(!c)return B_BED;
+ return c.d[(y*CH+(z&15))*CH+(x&15)];
+}
+function markDirty(cx,cz){const c=getChunk(cx,cz);if(c)c.dirty=true}
+function setLoaded(x,y,z,b){
+ const c=getChunk(x>>4,z>>4);if(!c)return;
+ const idx=(y*CH+(z&15))*CH+(x&15),old=c.d[idx];
+ c.d[idx]=b;if(b&&y>c.maxY)c.maxY=Math.min(WH-1,y+1);
+ if(EMIT[old])c.ems.delete(idx);if(EMIT[b])c.ems.add(idx);
+ c.dirty=true;const lx=x&15,lz=z&15;
+ if(lx===0)markDirty(c.cx-1,c.cz);if(lx===15)markDirty(c.cx+1,c.cz);
+ if(lz===0)markDirty(c.cx,c.cz-1);if(lz===15)markDirty(c.cx,c.cz+1);
+ // 빛: 발광 블록이 바뀌거나 근처에 발광 블록이 있으면, 빛이 닿는 이웃 청크도 다시 계산한다
+ if(EMIT[old]||EMIT[b]||lightNear(c.cx,c.cz))for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(c.cx+dx,c.cz+dz);
+}
+/* 편집 적용 (마지막에 쓴 사람이 이기는 LWW). 변경되면 true */
+function applyEdit(x,y,z,b,t){
+ if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z)||!Number.isInteger(b)||!fin(t))return false;
+ if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH||b<0||b>NB)return false;
+ const k=ckey(x>>4,z>>4),idx=(y*CH+(z&15))*CH+(x&15);
+ let m=edits.get(k);if(!m){m=new Map();edits.set(k,m)}
+ const old=m.get(idx);if(old&&old[1]>=t)return false;
+ if(!old)editCount++;
+ m.set(idx,[b,t]);if(t>maxT)maxT=t;saveDirty=true;
+ setLoaded(x,y,z,b);return true;
+}
+function allEdits(){const out=[];for(const [k,m] of edits){const cx=Math.floor(k/1024),cz=k%1024;for(const [idx,v] of m)out.push([cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15),v[0],v[1]])}return out}
+
+/* ---- 내 브라우저에 저장 (IndexedDB) ---- */
+const store={db:null,
+ open(){return new Promise(res=>{try{const r=indexedDB.open('webcreat',1);r.onupgradeneeded=()=>r.result.createObjectStore('w');r.onsuccess=()=>{store.db=r.result;res(true)};r.onerror=()=>res(false)}catch(e){res(false)}})},
+ get(k){return new Promise(res=>{if(!store.db)return res(null);try{const q=store.db.transaction('w').objectStore('w').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
+ put(k,v){try{if(store.db)store.db.transaction('w','readwrite').objectStore('w').put(v,k)}catch(e){}}};
+const SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM;
+/* ---- 도어락 비밀번호 기록: 위치 -> {c:'1234'|null, t:시각}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase 에 저장 ---- */
+const locks=new Map();let lockDirty=false;const LK={dirty:false,loaded:false,busy:false};
+const lkKey=(x,y,z)=>x+'_'+y+'_'+z;
+const lockGet=(x,y,z)=>{const r=locks.get(lkKey(x,y,z));return r&&r.c?r:null};
+function lockApply(key,c,t){if(!fin(t))return false;const r=locks.get(key);if(r&&r.t>=t)return false;locks.set(key,{c,t});lockDirty=true;LK.dirty=true;return true}
+function lockSetLocal(x,y,z,c){const t=nextT();lockApply(lkKey(x,y,z),c,t);netBroadcast({k:'lk',x,y,z,c,t},true)}
+function lockClear(x,y,z){const r=locks.get(lkKey(x,y,z));if(r&&r.c)lockSetLocal(x,y,z,null)}
+const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t]);
+function lkMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5))}
+/* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase(도어락 문서에 함께) 저장 ---- */
+const FD_KEY='fd_'+ROOM,fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
+const fdGet=(x,y,z)=>{const r=fdata.get(lkKey(x,y,z));return r&&r.v!=null?r.v:null};
+function drItems(v){const a=Array.isArray(v)?v:[],o=[];for(let i=0;i<27;i++){const n=a[i]|0;o.push(n>0&&n<=NB?n:0)}return o}
+function fdClean(v){
+ if(typeof v==='string'){const s=v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g,'').slice(0,300);return s||null}
+ if(Array.isArray(v)){const o=drItems(v);return o.some(Boolean)?o:null}
+ return null;
+}
+function fdApply(key,v,t){
+ if(!fin(t))return false;const r=fdata.get(key);if(r&&r.t>=t)return false;
+ fdata.set(key,{v,t});fdDirty=true;LK.dirty=true;
+ if(ui==='dr'&&DRS.key===key){DRS.items=drItems(v);drRender()}
+ return true;
+}
+function fdSet(x,y,z,v){v=fdClean(v);const t=nextT();fdApply(lkKey(x,y,z),v,t);netBroadcast({k:'fd',x,y,z,v,t},true)}
+function fdClear(x,y,z){const r=fdata.get(lkKey(x,y,z));if(r&&r.v!=null)fdSet(x,y,z,null)}
+const fdDump=()=>[...fdata].map(([k,r])=>[k,r.v,r.t]);
+function fdMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))fdApply(e[0],fdClean(e[1]),Math.min(+e[2],Date.now()+864e5))}
+async function loadSaved(){
+ await store.open();const a=await store.get(SAVE_KEY);const lkSaved=await store.get(LOCK_KEY);if(Array.isArray(lkSaved))lkMerge(lkSaved);
+ const fdSaved=await store.get(FD_KEY);if(Array.isArray(fdSaved))fdMerge(fdSaved);
+ if(a&&a.length)for(let i=0;i+4<a.length;i+=5)applyEdit(a[i],a[i+1],a[i+2],a[i+3],a[i+4]);
+ saveDirty=false;lockDirty=false;fdDirty=false;
+}
+function saveNow(){
+ if(lockDirty){lockDirty=false;store.put(LOCK_KEY,lkDump())}
+ if(fdDirty){fdDirty=false;store.put(FD_KEY,fdDump())}
+ if(!saveDirty)return;saveDirty=false;const e=allEdits(),a=new Float64Array(e.length*5);
+ e.forEach((v,i)=>a.set(v,i*5));store.put(SAVE_KEY,a);
+}
+setInterval(saveNow,3000);
+
+/* ===================== WebGL ===================== */
+const cv=$('gl');
+const gl=cv.getContext('webgl2',{antialias:false,alpha:false,powerPreference:'high-performance'});
+if(!gl){document.body.innerHTML='<div style="padding:40px;font-size:18px">이 브라우저는 WebGL2 를 지원하지 않습니다.</div>';throw new Error('no webgl2')}
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,`#version 300 es
+layout(location=0) in vec3 a_pos;layout(location=1) in vec2 a_uv;layout(location=2) in vec4 a_col;
+uniform mat4 u_vp;uniform vec3 u_off;
+out vec2 v_uv;out vec4 v_col;out float v_d;
+void main(){vec3 p=a_pos+u_off;gl_Position=u_vp*vec4(p,1.0);v_uv=a_uv;v_col=a_col;v_d=length(p);}`));
+gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,`#version 300 es
+precision mediump float;
+in vec2 v_uv;in vec4 v_col;in float v_d;
+uniform sampler2D u_tex;uniform float u_light;uniform vec3 u_fog;uniform vec2 u_fd;
+out vec4 o;
+void main(){vec4 t=texture(u_tex,v_uv);if(t.a<0.08)discard;
+ float bl=v_col.a;vec3 wt=mix(vec3(1.0),vec3(1.0+.30*bl,1.0+.11*bl,1.0-.18*bl),(1.0-u_light)*(1.0-step(.999,bl)));
+ vec3 c=t.rgb*v_col.rgb*wt*mix(u_light,1.0,bl);
+ float f=clamp((v_d-u_fd.x)/(u_fd.y-u_fd.x),0.0,1.0);
+ o=vec4(mix(c,u_fog,f),t.a);}`));
+gl.linkProgram(prog);if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const U={vp:gl.getUniformLocation(prog,'u_vp'),off:gl.getUniformLocation(prog,'u_off'),tex:gl.getUniformLocation(prog,'u_tex'),light:gl.getUniformLocation(prog,'u_light'),fog:gl.getUniformLocation(prog,'u_fog'),fd:gl.getUniformLocation(prog,'u_fd')};
+const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,atlas);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+gl.uniform1i(U.tex,0);
+gl.enable(gl.DEPTH_TEST);
+const SF=9,STR=SF*4;
+function mkMesh(vdata,nv,idata,ni,dyn){
+ const vao=gl.createVertexArray(),vb=gl.createBuffer(),ib=gl.createBuffer();
+ gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,vb);gl.bufferData(gl.ARRAY_BUFFER,vdata.subarray(0,nv*SF),dyn?gl.DYNAMIC_DRAW:gl.STATIC_DRAW);
+ gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idata.subarray(0,ni),dyn?gl.DYNAMIC_DRAW:gl.STATIC_DRAW);
+ gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,STR,0);
+ gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,2,gl.FLOAT,false,STR,12);
+ gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,4,gl.FLOAT,false,STR,20);
+ gl.bindVertexArray(null);return {vao,vb,ib,n:ni};
+}
+function updDyn(m,vdata,nv,idata,ni){
+ if(!m)return mkMesh(vdata,nv,idata,ni,true);
+ gl.bindVertexArray(m.vao);gl.bindBuffer(gl.ARRAY_BUFFER,m.vb);gl.bufferData(gl.ARRAY_BUFFER,vdata.subarray(0,nv*SF),gl.DYNAMIC_DRAW);
+ gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,m.ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idata.subarray(0,ni),gl.DYNAMIC_DRAW);m.n=ni;return m;
+}
+const delMesh=m=>{if(m){gl.deleteVertexArray(m.vao);gl.deleteBuffer(m.vb);gl.deleteBuffer(m.ib)}};
+
+/* ---- 청크 메시 (면 컬링 + 정점 AO) ---- */
+const FACES=[ // n, u, v, 원점오프셋, 음영
+ {n:[1,0,0],u:[0,0,1],v:[0,1,0],o:[1,0,0],sh:.68,k:'side'},
+ {n:[-1,0,0],u:[0,0,1],v:[0,1,0],o:[0,0,0],sh:.68,k:'side'},
+ {n:[0,1,0],u:[1,0,0],v:[0,0,1],o:[0,1,0],sh:1,k:'top'},
+ {n:[0,-1,0],u:[1,0,0],v:[0,0,1],o:[0,0,0],sh:.5,k:'bot'},
+ {n:[0,0,1],u:[1,0,0],v:[0,1,0],o:[0,0,1],sh:.84,k:'side'},
+ {n:[0,0,-1],u:[1,0,0],v:[0,1,0],o:[0,0,0],sh:.84,k:'side'}];
+const PW=18,PS=PW*PW;
+const pad=new Uint16Array(PW*(WH+2)*PW);
+const bufs={s:{v:new Float32Array(30000*4*SF),i:new Uint32Array(30000*6),nf:0,cap:30000},t:{v:new Float32Array(10000*4*SF),i:new Uint32Array(10000*6),nf:0,cap:10000}};
+const AOF=[.5,.7,.86,1];
+/* ---- 블록 빛: 발광 블록에서 1칸마다 1씩 약해지며 퍼진다 (불투명 블록은 막음, 최대 15칸) ----
+   주변 3x3 청크(48x48)를 한 번에 계산. 근처에 발광 블록이 없으면 계산 자체를 건너뜀 */
+const LW=48,LS=LW*LW,LB=new Uint16Array(LS*WH),LG=new Uint8Array(LS*WH),LBK=[];for(let i=0;i<=15;i++)LBK.push([]);
+function lightNear(cx,cz){for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const n=getChunk(cx+dx,cz+dz);if(n&&n.ems.size)return true}return false}
+function lgStep(nc,L,nq){const nb=LB[nc];if(nb&&!TRANS[nb]&&!PART[nb])return;if(LG[nc]<L-1){LG[nc]=L-1;nq.push(nc)}}
+function computeLight(c){
+ if(!lightNear(c.cx,c.cz))return false;
+ LB.fill(0);LG.fill(0);for(let i=0;i<=15;i++)LBK[i].length=0;
+ for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){
+  const n=getChunk(c.cx+dx,c.cz+dz);if(!n)continue;const bx=(dx+1)*16,bz=(dz+1)*16;
+  for(let y=0;y<WH;y++)for(let z=0;z<16;z++)LB.set(n.d.subarray((y*16+z)*16,(y*16+z)*16+16),(y*LW+bz+z)*LW+bx);
+  for(const idx of n.ems){const y=idx>>8,lz=(idx>>4)&15,lx=idx&15,cell=(y*LW+bz+lz)*LW+bx+lx,lv=LUM[n.d[idx]];if(lv>LG[cell]){LG[cell]=lv;LBK[lv].push(cell)}}
+ }
+ for(let L=15;L>=2;L--){
+  const q=LBK[L],nq=LBK[L-1];
+  for(let i=0;i<q.length;i++){
+   const cell=q[i];if(LG[cell]!==L)continue;
+   const gx=cell%LW,t=(cell-gx)/LW,gz=t%LW,y=(t-gz)/LW;
+   if(gx>0)lgStep(cell-1,L,nq);if(gx<LW-1)lgStep(cell+1,L,nq);
+   if(gz>0)lgStep(cell-LW,L,nq);if(gz<LW-1)lgStep(cell+LW,L,nq);
+   if(y>0)lgStep(cell-LS,L,nq);if(y<WH-1)lgStep(cell+LS,L,nq);
+  }
+ }
+ return true;
+}
+const lgv=(gx,gy,gz)=>gy<0||gy>=WH?0:LG[(gy*LW+gz)*LW+gx];
+function meshShape(b,x,y,z,pi,hasL){
+ const df=DEF[b],tr=TRANS[b],B=tr?bufs.t:bufs.s,em=EMIT[b]?1:0;
+ let boxes=SHP[b];if(typeof boxes==='function')boxes=boxes(pad[pi-PW],pad[pi+1],pad[pi+PW],pad[pi-1]);
+ for(let bi=0;bi<boxes.length;bi++){
+  const bx=boxes[bi];
+  for(let f=0;f<6;f++){
+   const F=FACES[f],n=F.n,ax=n[0]?0:n[1]?1:2,sg=n[0]+n[1]+n[2],pv=sg>0?bx[3+ax]:bx[ax];
+   let hid=false; // 같은 모양 안의 다른 박스에 딱 붙은 면은 생략
+   for(let j=0;j<boxes.length&&!hid;j++){
+    if(j===bi)continue;const o=boxes[j];
+    if((sg>0?o[ax]:o[3+ax])!==pv)continue;
+    let cov=true;for(let k=0;k<3;k++){if(k===ax)continue;if(o[k]>bx[k]+1e-6||o[3+k]<bx[3+k]-1e-6){cov=false;break}}
+    if(cov)hid=true;
+   }
+   if(hid)continue;
+   if((sg>0&&pv>=1)||(sg<0&&pv<=0)){if(OPQ[pad[pi+n[1]*PS+n[2]*PW+n[0]]])continue} // 이웃이 꽉 찬 블록이면 생략
+   if(B.nf>=B.cap)continue;
+   const tl=tileUV(df.ft&&df.ft[f]!==undefined?df.ft[f]:(F.k==='top'?df.top:F.k==='bot'?df.bot:df.side));
+   const org=[0,0,0];for(let i=0;i<3;i++)org[i]=n[i]>0?bx[3+i]:bx[i];
+   const ui=F.u[0]?0:F.u[1]?1:2,vj=F.v[0]?0:F.v[1]?1:2,su=bx[3+ui]-bx[ui],sv=bx[3+vj]-bx[vj];
+   let bl=em?1:0;
+   if(hasL&&!em){const gx=x+16,gz=z+16;let m=lgv(gx,y,gz);const l2=lgv(gx+n[0],y+n[1],gz+n[2]);if(l2>m)m=l2;bl=m/15}
+   const sd=em?1:F.sh,vb=B.nf*4,A=B.v;
+   for(let k=0;k<4;k++){
+    const a=k===1||k===2?1:0,bb=k>=2?1:0,o=(vb+k)*SF;
+    A[o]=x+org[0]+a*F.u[0]*su+bb*F.v[0]*sv;A[o+1]=y+org[1]+a*F.u[1]*su+bb*F.v[1]*sv;A[o+2]=z+org[2]+a*F.u[2]*su+bb*F.v[2]*sv;
+    const uu=bx[ui]+a*su,vv=bx[vj]+bb*sv;
+    A[o+3]=tl[0]+uu*(tl[2]-tl[0]);
+    A[o+4]=(F.k==='top'||F.k==='bot')?tl[1]+vv*(tl[3]-tl[1]):tl[3]-vv*(tl[3]-tl[1]);
+    A[o+5]=A[o+6]=A[o+7]=sd;A[o+8]=bl;
+   }
+   const I=B.i,io=B.nf*6;I[io]=vb;I[io+1]=vb+1;I[io+2]=vb+2;I[io+3]=vb;I[io+4]=vb+2;I[io+5]=vb+3;B.nf++;
+  }
+ }
+}
+function meshChunk(c){
+ const hasL=computeLight(c);
+ // 패딩 배열 채우기 (주변 청크 포함)
+ pad.fill(0);
+ for(let pz=0;pz<PW;pz++)for(let px=0;px<PW;px++){
+  const ox=px===0?-1:px===PW-1?1:0,oz=pz===0?-1:pz===PW-1?1:0;
+  const nc=(ox||oz)?getChunk(c.cx+ox,c.cz+oz):c;
+  pad[pz*PW+px]=B_BED; // y=-1
+  if(!nc)continue;
+  const lx=(px-1)&15,lz=(pz-1)&15,d=nc.d;
+  for(let y=0;y<=c.maxY+1&&y<WH;y++)pad[(y+1)*PS+pz*PW+px]=d[(y*CH+lz)*CH+lx];
+ }
+ bufs.s.nf=0;bufs.t.nf=0;
+ const top=Math.min(WH-1,c.maxY+1);
+ for(let y=0;y<=top;y++)for(let z=0;z<CH;z++)for(let x=0;x<CH;x++){
+  const pi=(y+1)*PS+(z+1)*PW+x+1,b=pad[pi];if(!b)continue;
+  if(PART[b]){meshShape(b,x,y,z,pi,hasL);continue}
+  const df=DEF[b],tr=TRANS[b],B=tr?bufs.t:bufs.s;
+  for(let f=0;f<6;f++){
+   const F=FACES[f],nx=F.n[0],ny=F.n[1],nz=F.n[2];
+   const nb=pad[pi+ny*PS+nz*PW+nx];
+   if(!(nb===0||PART[nb]||(TRANS[nb]&&nb!==b)))continue;
+   if(B.nf>=B.cap)continue;
+   const tl=tileUV(df.ft&&df.ft[f]!==undefined?df.ft[f]:(F.k==='top'?df.top:F.k==='bot'?df.bot:df.side));
+   const em=EMIT[b]?1:0;
+   // 정점 4개 (a,b) = (0,0)(1,0)(1,1)(0,1)
+   const vi=B.nf*4,ao=[0,0,0,0];
+   const lowW=(b===B_WATER)&&pad[pi+PS]!==B_WATER;
+   for(let k=0;k<4;k++){
+    const a=k===1||k===2?1:0,bb=k>=2?1:0;
+    let px_=x+F.o[0]+a*F.u[0]+bb*F.v[0],py_=y+F.o[1]+a*F.u[1]+bb*F.v[1],pz_=z+F.o[2]+a*F.u[2]+bb*F.v[2];
+    if(lowW&&py_===y+1)py_-=.12;
+    // AO
+    const su=(2*a-1),sv=(2*bb-1);
+    const s1=pad[pi+ny*PS+nz*PW+nx+0+F.u[0]*su+F.u[1]*su*PS+F.u[2]*su*PW];
+    const s2=pad[pi+ny*PS+nz*PW+nx+F.v[0]*sv+F.v[1]*sv*PS+F.v[2]*sv*PW];
+    const cr=pad[pi+ny*PS+nz*PW+nx+F.u[0]*su+F.v[0]*sv+(F.u[1]*su+F.v[1]*sv)*PS+(F.u[2]*su+F.v[2]*sv)*PW];
+    const o1=s1&&!TRANS[s1]&&!PART[s1]?1:0,o2=s2&&!TRANS[s2]&&!PART[s2]?1:0,o3=cr&&!TRANS[cr]&&!PART[cr]?1:0;
+    const av=(o1&&o2)?0:3-(o1+o2+o3);ao[k]=av;
+    const sd=tr||em?F.sh:F.sh*AOF[av];
+    const o=(vi+k)*SF,A=B.v;
+    A[o]=px_;A[o+1]=py_;A[o+2]=pz_;
+    A[o+3]=a?tl[2]:tl[0];A[o+4]=(F.k==='top'||F.k==='bot')?(bb?tl[3]:tl[1]):(bb?tl[1]:tl[3]);
+    let bl=em?1:0;
+    if(hasL&&!em){ // 이 꼭짓점 주변 4칸의 빛을 평균 (부드러운 조명)
+     const bx=x+16+nx,by=y+ny,bz=z+16+nz;let sum=lgv(bx,by,bz),cnt=1;
+     if(!o1){sum+=lgv(bx+F.u[0]*su,by+F.u[1]*su,bz+F.u[2]*su);cnt++}
+     if(!o2){sum+=lgv(bx+F.v[0]*sv,by+F.v[1]*sv,bz+F.v[2]*sv);cnt++}
+     if(!o1&&!o2&&!o3){sum+=lgv(bx+F.u[0]*su+F.v[0]*sv,by+F.u[1]*su+F.v[1]*sv,bz+F.u[2]*su+F.v[2]*sv);cnt++}
+     bl=sum/cnt/15;
+    }
+    A[o+5]=A[o+6]=A[o+7]=em?1:sd;A[o+8]=bl;
+   }
+   const I=B.i,io=B.nf*6;
+   if(ao[0]+ao[2]<ao[1]+ao[3]){I[io]=vi+1;I[io+1]=vi+2;I[io+2]=vi+3;I[io+3]=vi+1;I[io+4]=vi+3;I[io+5]=vi}
+   else{I[io]=vi;I[io+1]=vi+1;I[io+2]=vi+2;I[io+3]=vi;I[io+4]=vi+2;I[io+5]=vi+3}
+   B.nf++;
+  }
+ }
+ delMesh(c.m&&c.m.s);delMesh(c.m&&c.m.t);
+ c.m={s:bufs.s.nf?mkMesh(bufs.s.v,bufs.s.nf*4,bufs.s.i,bufs.s.nf*6):null,t:bufs.t.nf?mkMesh(bufs.t.v,bufs.t.nf*4,bufs.t.i,bufs.t.nf*6):null};
+ c.dirty=false;
+}
+function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
+function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz))}
+
+/* ---- 청크 로딩 관리 ---- */
+let RD=(()=>{try{return +(localStorage.getItem('wc_rd')||0)||(isTouch?5:8)}catch(e){return isTouch?5:8}})();
+let chunkList=[],listCx=-999,listCz=-999,listRD=0;
+function refreshList(cx,cz){
+ listCx=cx;listCz=cz;listRD=RD;chunkList=[];const R=RD+1;
+ for(let dz=-R;dz<=R;dz++)for(let dx=-R;dx<=R;dx++){
+  const x=cx+dx,z=cz+dz;if(x<0||z<0||x>=625||z>=625)continue;
+  const d=Math.hypot(dx,dz);if(d>R+.5)continue;chunkList.push({x,z,d});
+ }
+ chunkList.sort((a,b)=>a.d-b.d);
+ for(const c of [...chunks.values()])if(Math.hypot(c.cx-cx,c.cz-cz)>RD+3)freeChunk(c);
+}
+function updateChunks(px,pz,budgetMs){
+ const cx=Math.floor(px/CH),cz=Math.floor(pz/CH);
+ if(cx!==listCx||cz!==listCz||RD!==listRD)refreshList(cx,cz);
+ const t0=performance.now();
+ for(const e of chunkList){
+  if(performance.now()-t0>budgetMs)return;
+  if(!getChunk(e.x,e.z))addChunk(e.x,e.z);
+ }
+ for(const e of chunkList){
+  if(e.d>RD+.5)continue;
+  const c=getChunk(e.x,e.z);if(!c||!c.dirty)continue;
+  if(performance.now()-t0>budgetMs)return;
+  meshChunk(c);
+ }
+}
+function ensureAround(cx,cz,r){for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){const x=cx+dx,z=cz+dz;if(x<0||z<0||x>=625||z>=625)continue;if(!getChunk(x,z))addChunk(x,z)}}
+
+/* ===================== 행렬 / 카메라 ===================== */
+const cam={x:5000,y:40,z:5000,yaw:0,pitch:0};
+const fwdOf=(y,p)=>[-Math.sin(y)*Math.cos(p),Math.sin(p),-Math.cos(y)*Math.cos(p)];
+const VP=new Float32Array(16);
+function buildVP(w,h){
+ const f=fwdOf(cam.yaw,cam.pitch),r=[Math.cos(cam.yaw),0,-Math.sin(cam.yaw)];
+ const u=[r[1]*f[2]-r[2]*f[1],r[2]*f[0]-r[0]*f[2],r[0]*f[1]-r[1]*f[0]];
+ const V=[r[0],u[0],-f[0],0, r[1],u[1],-f[1],0, r[2],u[2],-f[2],0, 0,0,0,1];
+ const fov=(isTouch?75:70)*Math.PI/180,a=w/h,n=.08,fr=1200,t=1/Math.tan(fov/2);
+ const P=[t/a,0,0,0, 0,t,0,0, 0,0,(fr+n)/(n-fr),-1, 0,0,2*fr*n/(n-fr),0];
+ for(let c=0;c<4;c++)for(let r_=0;r_<4;r_++){let s=0;for(let k=0;k<4;k++)s+=P[k*4+r_]*V[c*4+k];VP[c*4+r_]=s}
+ return f;
+}
+
+/* ===================== 낮/밤 (Date.now 기준이라 접속자 모두 같은 시각) ===================== */
+const DAY_LEN=600;let DAY_OFF=0,TLOCK=null,TTOUCH=false; // TLOCK: 시간 고정(시각) / TTOUCH: 관리자가 시간을 바꾼 적 있음
+const curHour=()=>TLOCK!==null?TLOCK:((((Date.now()/1000+DAY_OFF)/DAY_LEN)%1)*24+6)%24; // 0=자정, 6=일출, 12=정오, 18=일몰
+function applyTime(h,lock){ // 모든 접속자가 같은 시각이 되도록 DAY_OFF 를 맞춘다
+ h=((h%24)+24)%24;const ph=((h-6+24)%24)/24,now=Date.now()/1000;
+ DAY_OFF=(((ph*DAY_LEN-now%DAY_LEN)%DAY_LEN)+DAY_LEN)%DAY_LEN;TLOCK=lock?h:null;TTOUCH=true;
+}
+function skyState(){
+ const ph=TLOCK!==null?((TLOCK-6+24)%24)/24:(((Date.now()/1000)+DAY_OFF)/DAY_LEN)%1,sun=Math.sin(ph*Math.PI*2),k=clamp((sun+.18)/.5,0,1),s=k*k*(3-2*k);
+ const day=[.52,.74,.96],night=[.02,.03,.09],dusk=[.95,.5,.25];
+ const dd=clamp(1-Math.abs(sun)/.22,0,1)*.55;
+ const c=[0,1,2].map(i=>(night[i]+(day[i]-night[i])*s)*(1-dd)+dusk[i]*dd*(s>0||sun>-.2?1:0));
+ return {c,light:.28+.72*s};
+}
+
+/* ===================== 플레이어 / 물리 ===================== */
+const P={x:5000.5,y:40,z:5000.5,vx:0,vy:0,vz:0,ground:false,fly:false,sel:0,walk:0,inWater:false};
+const hotbar=[4,8,6,9,11,24,15,50,54];
+const keys={};
+let state='title',ui='',locked=false;
+const HW=.3,PH=1.8,EYE=1.62;
+function hitTop(x,y,z){ // 부딪히는 블록 중 가장 높은 윗면 높이 (없으면 -1)
+ const x0=Math.floor(x-HW),x1=Math.floor(x+HW),y0=Math.floor(y),y1=Math.floor(y+PH-1e-4),z0=Math.floor(z-HW),z1=Math.floor(z+HW);
+ const px0=x-HW,px1=x+HW,py1=y+PH,pz0=z-HW,pz1=z+HW;let top=-1;
+ for(let yy=y0;yy<=y1;yy++)for(let zz=z0;zz<=z1;zz++)for(let xx=x0;xx<=x1;xx++){
+  const b=getBlock(xx,yy,zz);if(!b)continue;const cb=COLB[b];
+  if(cb){for(const q of cb)if(px1>xx+q[0]&&px0<xx+q[3]&&py1>yy+q[1]&&y<yy+q[4]&&pz1>zz+q[2]&&pz0<zz+q[5]){if(yy+q[4]>top)top=yy+q[4]}}
+  else if(SOLID[b]){if(yy+1>top)top=yy+1}
+ }
+ return top;
+}
+const boxHit=(x,y,z)=>hitTop(x,y,z)>=0;
+let lastSpace=0,SPDM=1; // SPDM: /speed 배율
+function standUp(){
+ const s=P.sit;if(!s)return;P.sit=null;
+ const fi=FURN[getBlock(s.x,s.y,s.z)],f=fi?fi.f:0,cx=s.x+.5,cz=s.z+.5;
+ for(const d of [1,.9,1.2,0]){const nx=cx+DX[f]*d,nz=cz+DZ[f]*d;if(!boxHit(nx,s.y,nz)){P.x=nx;P.z=nz;P.y=s.y;return}}
+ P.x=cx;P.z=cz;P.y=s.y+1;
+}
+function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
+ if(P.sit){ // 소파에 앉아 있는 동안: 이동 키를 누르면 일어남
+  const sb=FURN[getBlock(P.sit.x,P.sit.y,P.sit.z)];
+  if(!sb||sb.t!=='sofa'||mv.f||mv.s||mv.jump||mv.down){standUp();return}
+  P.vx=P.vy=P.vz=0;return;
+ }
+ const sp=Math.sin(cam.yaw),cp=Math.cos(cam.yaw);
+ let wx=(-sp)*mv.f+cp*mv.s,wz=(-cp)*mv.f+(-sp)*mv.s;const l=Math.hypot(wx,wz);if(l>1){wx/=l;wz/=l}
+ const feet=getBlock(Math.floor(P.x),Math.floor(P.y+.2),Math.floor(P.z)),head=getBlock(Math.floor(P.x),Math.floor(P.y+1.4),Math.floor(P.z));
+ P.inWater=feet===B_WATER||head===B_WATER;const onLad=!P.fly&&(LAD[feet]||LAD[head]);
+ let spd=P.fly?(mv.sprint?18:9):(mv.sprint?5.8:4.3);if(P.inWater&&!P.fly)spd*=.6;spd*=SPDM;
+ const tx=wx*spd,tz=wz*spd,ac=Math.min(1,dt*(P.ground||P.fly?14:3.5));
+ P.vx+=(tx-P.vx)*ac;P.vz+=(tz-P.vz)*ac;
+ if(P.fly){const ty=((mv.jump?1:0)-(mv.down?1:0))*(mv.sprint?14:8);P.vy+=(ty-P.vy)*Math.min(1,dt*10)}
+ else if(onLad){P.vy=mv.jump?3.6:(mv.down?-4:0)}
+ else if(P.inWater){P.vy-=9*dt;P.vy*=Math.pow(.15,dt);if(mv.jump)P.vy=Math.min(P.vy+30*dt,3.6)}
+ else{P.vy-=28*dt;if(P.vy<-40)P.vy=-40;if(mv.jump&&P.ground){P.vy=8.6;P.ground=false}}
+ const wasG=P.ground;P.ground=false;
+ const nx=P.x+P.vx*dt;if(!boxHit(nx,P.y,P.z))P.x=nx;else if(wasG&&!boxHit(nx,P.y+.5001,P.z)&&!boxHit(P.x,P.y+.5001,P.z)){P.x=nx;P.y+=.5001}else P.vx=0;
+ const nz=P.z+P.vz*dt;if(!boxHit(P.x,P.y,nz))P.z=nz;else if(wasG&&!boxHit(P.x,P.y+.5001,nz)&&!boxHit(P.x,P.y+.5001,P.z)){P.z=nz;P.y+=.5001}else P.vz=0;
+ const ny=P.y+P.vy*dt;
+ if(!boxHit(P.x,ny,P.z))P.y=ny;else{if(P.vy<0){P.ground=true;const tp=hitTop(P.x,ny,P.z);P.y=tp>=0?tp:Math.floor(ny)+1}P.vy=0}
+ P.x=clamp(P.x,HW+.01,WORLD-HW-.01);P.z=clamp(P.z,HW+.01,WORLD-HW-.01);
+ if(P.y<-30)P.y=WH+4;
+ P.walk+=Math.hypot(P.vx,P.vz)*dt;
+}
+function ray(maxD){
+ const f=fwdOf(cam.yaw,cam.pitch);let x=Math.floor(cam.x),y=Math.floor(cam.y),z=Math.floor(cam.z);
+ const sx=f[0]>0?1:-1,sy=f[1]>0?1:-1,sz=f[2]>0?1:-1;
+ const dx=f[0]===0?1e30:Math.abs(1/f[0]),dy=f[1]===0?1e30:Math.abs(1/f[1]),dz=f[2]===0?1e30:Math.abs(1/f[2]);
+ let tx=f[0]===0?1e30:((sx>0?x+1-cam.x:cam.x-x)*dx),ty=f[1]===0?1e30:((sy>0?y+1-cam.y:cam.y-y)*dy),tz=f[2]===0?1e30:((sz>0?z+1-cam.z:cam.z-z)*dz);
+ let nx=0,ny=0,nz=0,t=0;
+ for(let i=0;i<64;i++){
+  const b=getBlock(x,y,z);if(b&&b!==B_WATER)return {x,y,z,nx,ny,nz,b};
+  if(tx<ty&&tx<tz){t=tx;tx+=dx;x+=sx;nx=-sx;ny=nz=0}else if(ty<tz){t=ty;ty+=dy;y+=sy;ny=-sy;nx=nz=0}else{t=tz;tz+=dz;z+=sz;nz=-sz;nx=ny=0}
+  if(t>maxD)return null;
+ }
+ return null;
+}
+function localEdit(x,y,z,b){
+ const t=nextT();if(!applyEdit(x,y,z,b,t))return;
+ markRegion(x,z);
+ netBroadcast({k:'bk',x,y,z,b,t},true);
+}
+function breakBlock(){
+ const h=ray(6);if(!h||h.y<1)return;
+ if(h.b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 부술 수 있습니다',1500);
+ if(DLSET.has(h.b)&&myRole()<2)return toast('도어락은 슈퍼어드민 이상만 부술 수 있습니다',1500);
+ const fi=FURN[h.b];
+ if(fi&&fi.t==='dresser'){ // 물건이 든 서랍장은 한 번 더 부숴야 함
+  const it=fdGet(h.x,h.y,h.z);
+  if(Array.isArray(it)&&it.some(Boolean)){
+   const k=lkKey(h.x,h.y,h.z),dt_=mono()-brkWarn.t;
+   if(!(brkWarn.k===k&&dt_>700&&dt_<4000)){if(brkWarn.k!==k||dt_>=4000){brkWarn={k,t:mono()};toast('서랍장에 물건이 들어 있습니다 — 다시 부수면 물건이 사라집니다',2500)}return}
+  }
+ }
+ localEdit(h.x,h.y,h.z,0);
+ if(fi){
+  if(fi.t==='bed'){const sg=fi.part?-1:1,qx=h.x+DX[fi.f]*sg,qz=h.z+DZ[fi.f]*sg,qi=FURN[getBlock(qx,h.y,qz)];if(qi&&qi.t==='bed'&&qi.base===fi.base&&qi.f===fi.f&&qi.part!==fi.part)localEdit(qx,h.y,qz,0)}
+  else if(fi.t==='dresser'||fi.t==='pc')fdClear(h.x,h.y,h.z);
+ }
+ if(DLSET.has(h.b))lockClear(h.x,h.y,h.z);
+ const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
+ sfx(.12,260);
+}
+function dirOfYaw(){const f=fwdOf(cam.yaw,0);return Math.abs(f[2])>Math.abs(f[0])?(f[2]<0?0:2):(f[0]>0?1:3)} // 0 북(-z) 1 동(+x) 2 남(+z) 3 서(-x)
+function variantFor(b,h){ // 설치할 때 방향/위아래 변형 고르기
+ if(FVAR[b])return FVAR[b][(dirOfYaw()+2)%4]; // 가구: 앞면이 나를 향하게
+ if(STAIRS[b])return STAIRS[b][dirOfYaw()];
+ if(SLABTOP[b]!==undefined&&h.ny<0)return SLABTOP[b];
+ if(LADB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return LADB[b][f]}
+ if(DLB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return DLB[b][f]}
+ return b;
+}
+function toggleDoor(x,y,z){
+ const b=getBlock(x,y,z),di=DINFO[b];if(!di)return;
+ const oy=y+(di.h?-1:1),od=DINFO[getBlock(x,oy,z)];
+ localEdit(x,y,z,di.base+di.h*8+(1-di.o)*4+di.f);
+ if(od&&od.base===di.base&&od.f===di.f&&od.o===di.o)localEdit(x,oy,z,od.base+od.h*8+(1-od.o)*4+od.f);
+ sfx(.1,160);
+}
+function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 true
+ const h=ray(6);if(!h)return false;
+ if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
+ if(DLINFO[h.b]!==undefined){openLock(h.x,h.y,h.z);return true}
+ const fi=FURN[h.b];
+ if(fi){
+  if(fi.t==='bed')sleepIn();
+  else if(fi.t==='sofa')sitOn(h);
+  else if(fi.t==='dresser')openDresser(h.x,h.y,h.z);
+  else if(fi.t==='pc')openPC(h.x,h.y,h.z);
+  return true;
+ }
+ return false;
+}
+const usableAt=()=>{const h=ray(6);return !!(h&&(DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
+function bodyBlocks(x,y,z){
+ if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return true;
+ for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return true;
+ return false;
+}
+function placeBlock(){
+ const h=ray(6);if(!h)return;
+ let b=hotbar[P.sel];if(!b)return;
+ if(SLABTOP[b]!==undefined&&((h.b===b&&h.ny>0)||(h.b===SLABTOP[b]&&h.ny<0))){localEdit(h.x,h.y,h.z,SLABFULL[b]);sfx(.1,420);return} // 반블록 + 반블록 = 꽉 찬 블록
+ const x=h.x+h.nx,y=h.y+h.ny,z=h.z+h.nz;if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)return;
+ const cur=getBlock(x,y,z);if(cur&&cur!==B_WATER)return;
+ if(b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 설치할 수 있습니다',1500);
+ if(DLSET.has(b)&&myRole()<2)return toast('도어락은 슈퍼어드민 이상만 설치할 수 있습니다',1500);
+ if(FBED[b]){ // 침대: 발쪽(클릭한 칸) + 머리쪽(보는 방향) 두 칸
+  const f=dirOfYaw(),hx=x+DX[f],hz=z+DZ[f],ho=(hx<0||hz<0||hx>=WORLD||hz>=WORLD)?-1:getBlock(hx,y,hz);
+  if(ho===-1||(ho&&ho!==B_WATER))return toast('침대를 놓을 공간이 부족합니다',1500);
+  if(bodyBlocks(x,y,z)||bodyBlocks(hx,y,hz))return;
+  localEdit(x,y,z,FBED[b][f]);localEdit(hx,y,hz,FBED[b][4+f]);sfx(.1,420);return;
+ }
+ if(DINFO[b]){ // 문: 위 칸도 비어 있어야 함
+  const up=getBlock(x,y+1,z);if(y+1>=WH||(up&&up!==B_WATER))return;
+  const base=DINFO[b].base,f=dirOfYaw();localEdit(x,y,z,base+f);localEdit(x,y+1,z,base+8+f);sfx(.1,420);return;
+ }
+ b=variantFor(b,h);
+ if(SOLID[b]){ // 내 몸과 겹치면 불가
+  if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return;
+  for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return;
+ }
+ localEdit(x,y,z,b);sfx(.1,420);
+ if(DLSET.has(b)){lockClear(x,y,z);setTimeout(()=>openLock(x,y,z,true),0)} // 설치하자마자 비밀번호 설정 창
+}
+function pickBlock(){const h=ray(6);if(!h)return;const pb=BASEOF[h.b]!==undefined?BASEOF[h.b]:h.b,i=hotbar.indexOf(pb);if(i>=0)selectSlot(i);else if(PALETTE.includes(pb)){hotbar[P.sel]=pb;renderHotbar()}}
+
+/* ===================== 소리 ===================== */
+let actx=null;
+function sfx(dur,freq){
+ try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();
+  const n=actx.sampleRate*dur|0,b=actx.createBuffer(1,n,actx.sampleRate),d=b.getChannelData(0);
+  for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2)*.25+Math.sin(i*freq/actx.sampleRate*6.28)*.12*(1-i/n);
+  const s=actx.createBufferSource();s.buffer=b;s.connect(actx.destination);s.start();}catch(e){}
+}
+
+/* ===================== 멀티플레이: Firebase 대기열 + WebRTC 메시 ===================== */
+const firebaseConfig={apiKey:"AIzaSyDU4famr5DzAYlNpjcTcUUqjzDxEvjVeec",authDomain:"webdos-11d5a.firebaseapp.com",projectId:"webdos-11d5a",storageBucket:"webdos-11d5a.firebasestorage.app",messagingSenderId:"500610787415",appId:"1:500610787415:web:75e8268bcbfd2bef211b12"};
+const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig',LOBBY_ROOM='wc-'+ROOM; // 기존 컬렉션을 재사용 (room 값으로 구분) → 규칙 변경 불필요
+const STALE=40000,HB=15000;
+const net={id:'',name:'PLAYER',fs:null,lobby:{},j:0,admitted:false,sc:0,on:false,tm:0,hb:0,synced:false,pulling:'',offline:[],retry:{},pendSig:[]};
+const peers=new Map();
+let fdb=null;
+const mono=()=>performance.now();
+function fbInit(){
+ if(fdb)return fdb;if(!window.firebase)return null;
+ try{if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);fdb=firebase.firestore();try{fdb.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}}catch(e){console.error(e);fdb=null}
+ return fdb;
+}
+/* ---- 클라우드 저장 (Firebase): 모두 나가거나 서버가 닫혀도 맵이 남도록, 블록 변경 기록을 구역(512x512)별 문서로 저장 ----
+   · 기존 컬렉션(FS_LOBBY)을 재사용하고 room 값을 'wcsave-방이름' 으로 구분 (보안 규칙 변경 불필요)
+   · 문서 1개 ≤ DOC_MAX, 전체 ≤ TOTAL_MAX 를 넘거나 Firebase 한도(resource-exhausted)에 걸리면 자동 업로드가 막힙니다 */
+const CS={room:'wcsave-'+ROOM,dirty:new Set(),sizes:new Map(),big:new Set(),blocked:false,loaded:false,busy:false,DOC_MAX:900000,TOTAL_MAX:200*1024*1024};
+const regOf=(x,z)=>(x>>9)+'_'+(z>>9);
+const csId=r=>'wcs_'+ROOM+'_'+r;
+function markRegion(x,z){CS.dirty.add(regOf(x,z))}
+function csEncode(r){
+ const [rx,rz]=r.split('_').map(Number),list=[];
+ for(let cx=rx*32;cx<rx*32+32;cx++)for(let cz=rz*32;cz<rz*32+32;cz++){
+  const m=edits.get(ckey(cx,cz));if(!m)continue;
+  for(const [idx,v] of m)list.push([cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15),v[0],v[1]]);
+ }
+ const buf=new ArrayBuffer(list.length*14),dv=new DataView(buf);let mt=0;
+ list.forEach((e,i)=>{const o=i*14;dv.setUint16(o,e[0]);dv.setUint8(o+2,e[1]|((e[3]>>8)<<6));dv.setUint16(o+3,e[2]);dv.setUint8(o+5,e[3]&255);dv.setFloat64(o+6,e[4]);if(e[4]>mt)mt=e[4]});
+ const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));
+ return {n:list.length,d:btoa(s),mt};
+}
+function csDecode(str){ // 문서의 변경 기록을 월드에 적용(LWW), 가장 큰 시각을 돌려줌
+ const s=atob(str),n=Math.floor(s.length/14),u=new Uint8Array(n*14);
+ for(let i=0;i<u.length;i++)u[i]=s.charCodeAt(i);
+ const dv=new DataView(u.buffer);let mt=0;
+ for(let i=0;i<n;i++){const o=i*14,t=dv.getFloat64(o+6);{const yb=dv.getUint8(o+2);applyEdit(dv.getUint16(o),yb&63,dv.getUint16(o+3),dv.getUint8(o+5)|((yb>>6)<<8),t)};if(t>mt)mt=t}
+ return mt;
+}
+function csText(){
+ if(CS.blocked)return ' · ☁ 클라우드 저장 중단(용량/권한)';
+ if(!CS.loaded)return ' · ☁ 클라우드 연결 중…';
+ return ' · ☁ 클라우드 저장'+(CS.dirty.size?' (대기 '+CS.dirty.size+'구역)':' 완료')+(CS.big.size?' · 용량 초과 '+CS.big.size+'구역 제외':'');
+}
+async function csLoad(){
+ if(CS.loaded||CS.busy)return;
+ const db=fbInit();if(!db)return;
+ CS.busy=true;
+ const localMax=new Map();
+ for(const [k,m] of edits){const r=regOf(Math.floor(k/1024)*CH,(k%1024)*CH);let mx=localMax.get(r)||0;for(const v of m.values())if(v[1]>mx)mx=v[1];localMax.set(r,mx)}
+ try{
+  const snap=await db.collection(FS_LOBBY).where('room','==',CS.room).get();
+  if(snap.metadata&&snap.metadata.fromCache&&!snap.size){CS.busy=false;return}
+  const remoteMax=new Map();
+  snap.forEach(doc=>{
+   const d=doc.data()||{};if(typeof d.d!=='string'||typeof d.r!=='string'||!/^\d+_\d+$/.test(d.r))return;
+   try{remoteMax.set(d.r,csDecode(d.d));CS.sizes.set(d.r,d.d.length)}catch(e){}
+  });
+  CS.loaded=true;
+  for(const [r,mx] of localMax)if(mx>(remoteMax.get(r)||0))CS.dirty.add(r); // 내 브라우저에만 있는 변경은 올린다
+  saveNow();
+  if(remoteMax.size)toast('클라우드에서 저장된 맵을 불러왔습니다 ('+remoteMax.size+'개 구역)');
+ }catch(e){
+  if(e&&e.code==='permission-denied'){CS.blocked=true;toast('클라우드 저장 권한이 없습니다 (Firestore 규칙 확인)',5000)}
+ }
+ CS.busy=false;if(typeof updateStat==='function')updateStat();
+}
+async function csFlush(){
+ if(CS.busy||CS.blocked||!CS.loaded||!CS.dirty.size)return;
+ const db=fbInit();if(!db)return;
+ CS.busy=true;
+ try{
+  for(const r of [...CS.dirty].slice(0,4)){
+   const ref=db.collection(FS_LOBBY).doc(csId(r));let over=0,len=0;
+   await db.runTransaction(async tx=>{
+    over=0;
+    const s=await tx.get(ref);
+    if(s.exists){const d=s.data()||{};if(typeof d.d==='string'){try{csDecode(d.d)}catch(e){}}} // 남이 올린 변경과 합치기
+    const enc=csEncode(r);let total=0;for(const [k,v] of CS.sizes)if(k!==r)total+=v;
+    if(enc.d.length>CS.DOC_MAX){over=1;return}
+    if(total+enc.d.length>CS.TOTAL_MAX){over=2;return}
+    len=enc.d.length;
+    tx.set(ref,{room:CS.room,r,n:enc.n,mt:enc.mt,d:enc.d,ts:Date.now()});
+   });
+   if(over===1){CS.dirty.delete(r);if(!CS.big.has(r)){CS.big.add(r);toast('이 구역('+r+')은 너무 커서 클라우드에 올릴 수 없습니다 — 다른 구역은 계속 저장됩니다 (내 브라우저에는 저장)',6000)}continue}
+   if(over===2){CS.blocked=true;toast('클라우드 용량 한도 초과 — 자동 업로드를 중단합니다 (내 브라우저에는 계속 저장)',6000);break}
+   CS.sizes.set(r,len);CS.dirty.delete(r);
+  }
+ }catch(e){
+  const c=e&&e.code;
+  if(c==='resource-exhausted'){CS.blocked=true;toast('Firebase 용량/한도 초과 — 자동 업로드를 중단합니다',6000)}
+  else if(c==='permission-denied'){CS.blocked=true;toast('클라우드 저장 권한이 없습니다 (Firestore 규칙 확인)',5000)}
+ }
+ CS.busy=false;updateStat();
+}
+setInterval(()=>{if(!CS.loaded)csLoad();else csFlush()},15000);
+async function lkSync(){ // 도어락 비밀번호 기록을 Firebase 문서 1개에 합쳐서 저장/불러오기
+ if(LK.busy)return;const db=fbInit();if(!db)return;LK.busy=true;
+ const wasDirty=LK.dirty;LK.dirty=false;
+ try{
+  const ref=db.collection(FS_LOBBY).doc('wclock_'+ROOM);
+  await db.runTransaction(async tx=>{
+   const s=await tx.get(ref);
+   if(s.exists){const d=s.data()||{};if(typeof d.l==='string'){try{lkMerge(JSON.parse(d.l))}catch(e){}}if(typeof d.f==='string'){try{fdMerge(JSON.parse(d.f))}catch(e){}}}
+   if(wasDirty||LK.dirty||(!s.exists&&(locks.size||fdata.size)))tx.set(ref,{room:'wclock-'+ROOM,l:JSON.stringify(lkDump()),f:JSON.stringify(fdDump()),ts:Date.now()});
+  });
+  LK.loaded=true;
+ }catch(e){if(wasDirty)LK.dirty=true}
+ LK.busy=false;
+}
+setInterval(()=>{if(LK.dirty||!LK.loaded)lkSync()},15000);
+function sendSig(to,obj){if(!fdb||!net.fs)return;fdb.collection(FS_SIG).add({to,s:JSON.stringify(Object.assign({f:net.id},obj)),t:Date.now(),c:++net.sc}).catch(e=>{if(e&&e.code==='resource-exhausted')toast('Firebase 무료 한도 초과 — 새 연결이 안 될 수 있습니다')})}
+function members(){ // 대기열 순서: 먼저 들어온 순 (j, id)
+ const now=mono(),arr=[{id:net.id,n:net.name,j:net.j,me:true}];
+ for(const id in net.lobby){const p=net.lobby[id];if(now-p.seen<STALE)arr.push({id,n:p.n,j:p.j})}
+ arr.sort((a,b)=>(a.j-b.j)||(a.id<b.id?-1:1));return arr;
+}
+function evalQueue(){
+ const m=members(),idx=m.findIndex(v=>v.me);
+ if(!net.admitted&&net.fsOk&&idx<MAXP){net.admitted=true;const q=net.pendSig;net.pendSig=[];setTimeout(()=>q.forEach(onSignal),0)}
+ net.rank=idx+1;net.total=m.length;
+ if(state==='queue')renderQueue(m);
+ if(net.admitted&&state==='queue')enterGame();
+}
+function renderQueue(m){
+ const l=$('qList');l.textContent='';
+ m.forEach((v,i)=>{const d=document.createElement('div');d.textContent=(i+1)+'. '+v.n+(v.me?' (나)':'')+(i>=MAXP?'  — 대기 중':'');if(i>=MAXP)d.style.color='#999';l.appendChild(d)});
+ $('qMsg').textContent=net.fsOk?(net.admitted?'입장 가능! 월드를 불러오는 중…':`대기 순번 ${net.rank}번째 · 접속자 ${Math.min(m.length,MAXP)}/${MAXP}명 (정원 ${MAXP}명)`):'Firebase 에 연결하는 중…';
+}
+function announce(){if(net.fs&&net.fs.doc&&net.fsOk)net.fs.doc.set({room:LOBBY_ROOM,n:net.name,ts:Date.now(),j:net.j}).catch(()=>{})}
+function netConnect(){
+ if(net.on)return;
+ const db=fbInit();
+ net.id=rid();net.j=Date.now();net.on=true;net.pendSig=[];net.lobby={};net.admitted=false;net.fsOk=false;net.synced=false;net.pulling='';
+ if(!db){netFail('Firebase 스크립트를 불러오지 못했습니다');return}
+ const fs=net.fs={doc:db.collection(FS_LOBBY).doc(net.id),lobU:null,sigU:null,tmo:0,first:false};
+ fs.tmo=setTimeout(()=>{if(net.fs===fs&&!net.fsOk)netFail('Firebase 연결 시간 초과')},9000);
+ fs.lobU=db.collection(FS_LOBBY).where('room','==',LOBBY_ROOM).onSnapshot(snap=>{
+  if(net.fs!==fs)return;
+  if(!snap.metadata.fromCache){net.fsOk=true;clearTimeout(fs.tmo)}
+  const now=mono(),wall=Date.now();
+  snap.docChanges().forEach(ch=>{
+   const id=ch.doc.id;if(id===net.id)return;
+   if(ch.type==='removed'){delete net.lobby[id];return}
+   const d=ch.doc.data()||{};if(typeof d.n!=='string')return;
+   const age=Math.max(0,wall-(+d.ts||0));
+   if(age>180000){if(ch.type==='added')ch.doc.ref.delete().catch(()=>{});delete net.lobby[id];return}
+   net.lobby[id]={id,n:cleanName(d.n)||'PLAYER',j:+d.j||0,seen:now-Math.min(age,STALE)};
+  });
+  if(net.fsOk&&!fs.first){fs.first=true;announce();net.hb=mono()}
+  evalQueue();
+ },e=>netFail((e&&e.code)||'error'));
+ fs.sigU=db.collection(FS_SIG).where('to','==',net.id).onSnapshot(snap=>{
+  if(net.fs!==fs)return;
+  const arr=[];snap.docChanges().forEach(ch=>{if(ch.type==='added'){arr.push(ch.doc.data()||{});ch.doc.ref.delete().catch(()=>{})}});
+  arr.sort((a,b)=>((a.t||0)-(b.t||0))||((a.c||0)-(b.c||0)));
+  const wall=Date.now();
+  for(const d of arr){if(wall-(+d.t||0)>60000||typeof d.s!=='string'||d.s.length>60000)continue;let m;try{m=JSON.parse(d.s)}catch(e){continue}onSignal(m)}
+ },e=>netFail((e&&e.code)||'error'));
+ clearInterval(net.tm);net.tm=setInterval(netTick,1000);
+}
+function netFail(why){
+ if(state==='queue'){$('qMsg').textContent='Firebase 연결 실패: '+why;$('bQSolo').style.display='block'}
+ else if(state==='play')toast('Firebase 연결 오류('+why+') — 이미 연결된 사람과는 계속 플레이됩니다');
+ if(net.fs){try{net.fs.lobU&&net.fs.lobU()}catch(e){}try{net.fs.sigU&&net.fs.sigU()}catch(e){}net.fs.dead=true}
+}
+function netDisconnect(){
+ clearInterval(net.tm);
+ if(net.fs){clearTimeout(net.fs.tmo);try{net.fs.lobU&&net.fs.lobU()}catch(e){}try{net.fs.sigU&&net.fs.sigU()}catch(e){}try{net.fs.doc.delete().catch(()=>{})}catch(e){}}
+ for(const p of [...peers.values()])peerClose(p,false);
+ net.fs=null;net.on=false;net.lobby={};net.admitted=false;
+}
+window.addEventListener('pagehide',()=>{saveNow();try{if(net.fs)net.fs.doc.delete()}catch(e){}for(const p of peers.values()){try{if(p.dE&&p.dE.readyState==='open')p.dE.send('{"k":"bye"}')}catch(e){}}});
+
+function netTick(){
+ const now=mono();
+ if(net.fs&&net.fsOk&&now-net.hb>HB){net.hb=now;announce()}
+ for(const id in net.lobby)if(now-net.lobby[id].seen>STALE)delete net.lobby[id];
+ evalQueue();
+ if(!net.admitted||state!=='play')return;
+ const adm=members().slice(0,MAXP);
+ for(const m of adm){
+  if(m.me||net.id>=m.id)continue; // ID 가 작은 쪽이 먼저 연결을 제안
+  const p=peers.get(m.id);
+  if(!p&&peers.size<MAXP-1&&now>(net.retry[m.id]||0))startOffer(m.id);
+ }
+ for(const p of [...peers.values()]){
+  if(!p.open&&now-p.t0>20000)peerDown(p,'timeout');
+  else if(p.open&&now-p.rx>12000)peerDown(p,'silent');
+  else if(p.open&&!net.lobby[p.id]&&now-p.rx>6000&&net.fsOk&&!adm.some(v=>v.id===p.id))peerDown(p,'gone');
+ }
+ if(state==='play'&&now-net.pg>3000){net.pg=now;for(const p of peers.values())peerSend(p,{k:'pg',t:now},false)}
+}
+net.pg=0;
+
+/* ---- WebRTC (신호는 Firestore, 전투/블록 데이터는 DataChannel) ---- */
+const RTC_CFG={iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478']}]};
+function mkPeer(id,att,init){
+ const pc=new RTCPeerConnection(RTC_CFG);
+ const p={id,att,pc,init,open:false,t0:mono(),rx:mono(),name:'PLAYER',dS:null,dE:null,mt:0,
+  x:0,y:0,z:0,yaw:0,pitch:0,rx_:0,rx:mono(),has:false,walk:0,held:1,ping:0,q:[],spd:0};
+ p.rx=mono();p.rx_=0;
+ p.dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
+ p.dE=pc.createDataChannel('e',{negotiated:true,id:1});
+ if(init){try{p.aTx=pc.addTransceiver('audio',{direction:'sendrecv'})}catch(e){}} // 음성용 오디오 줄 (마이크는 나중에 replaceTrack 으로 끼움 → 재협상 없음)
+ pc.ontrack=e=>{if(e.track&&e.track.kind==='audio')voiceAttach(p,e.track)};
+ p.dE.onopen=()=>{if(peers.get(id)===p)peerOpen(p)};
+ p.dS.onclose=p.dE.onclose=()=>{if(peers.get(id)===p)peerDown(p,'closed')};
+ p.dS.onmessage=p.dE.onmessage=e=>{if(peers.get(id)===p)peerMsg(p,e.data)};
+ pc.onconnectionstatechange=()=>{if((pc.connectionState==='failed'||pc.connectionState==='closed')&&peers.get(id)===p)peerDown(p,'rtc')};
+ peers.set(id,p);return p;
+}
+function waitIce(pc,ms){return new Promise(res=>{if(pc.iceGatheringState==='complete')return res();const t=setTimeout(done,ms);function done(){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',chk);res()}function chk(){if(pc.iceGatheringState==='complete')done()}pc.addEventListener('icegatheringstatechange',chk)})}
+async function startOffer(id){
+ if(!window.RTCPeerConnection)return;
+ const att=(Math.random()*1e9)|0;let p;
+ try{
+  p=mkPeer(id,att,true);
+  const o=await p.pc.createOffer();await p.pc.setLocalDescription(o);await waitIce(p.pc,2500);
+  if(peers.get(id)!==p)return;
+  sendSig(id,{k:'sd',a:att,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
+ }catch(e){if(p)peerDown(p,'offer')}
+}
+async function onSignal(m){
+ if(!m||m.k!=='sd'||typeof m.f!=='string'||!m.d||typeof m.d.sdp!=='string')return;
+ if(!net.admitted){if(net.pendSig.length<40)net.pendSig.push(m);return} // 아직 대기열 통과 전이면 보관했다가 통과 후 처리
+ if(state!=='play'&&state!=='queue')return;
+ const id=m.f;
+ try{
+  if(m.d.type==='offer'){
+   if(!members().slice(0,MAXP).some(v=>v.id===id))return;
+   let p=peers.get(id);
+   if(p&&p.att===m.a)return; // 중복
+   if(p)peerClose(p,false);
+   if(peers.size>=MAXP-1)return;
+   p=mkPeer(id,m.a,false);
+   await p.pc.setRemoteDescription({type:'offer',sdp:m.d.sdp});
+   {const tx=p.pc.getTransceivers().find(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='audio');if(tx){try{tx.direction='sendrecv'}catch(e){}p.aTx=tx}}
+   const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,2500);
+   if(peers.get(id)!==p)return;
+   sendSig(id,{k:'sd',a:m.a,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
+  }else if(m.d.type==='answer'){
+   const p=peers.get(id);if(!p||p.att!==m.a||!p.init||p.pc.signalingState!=='have-local-offer')return;
+   await p.pc.setRemoteDescription({type:'answer',sdp:m.d.sdp});
+  }
+ }catch(e){const p=peers.get(id);if(p)peerDown(p,'sig')}
+}
+function peerClose(p,notify){
+ voiceDrop(p);
+ if(notify&&p.dE&&p.dE.readyState==='open')try{p.dE.send('{"k":"bye"}')}catch(e){}
+ try{p.dS.close()}catch(e){}try{p.dE.close()}catch(e){}try{p.pc.close()}catch(e){}
+ if(peers.get(p.id)===p)peers.delete(p.id);
+}
+function peerDown(p,why){
+ if(peers.get(p.id)!==p)return;
+ const was=p.open;peerClose(p,false);
+ net.retry[p.id]=mono()+(was?3000:6000);
+ if(was&&p.hiDone){chatAdd('',p.name+' 님이 나갔습니다','sys')}if(was)updateStat();
+ if(net.pulling===p.id){net.pulling='';net.synced=false;for(const q of peers.values())if(q.open){pullFrom(q);break}}
+}
+function peerSend(p,m,rel){
+ const ch=rel?p.dE:p.dS;if(!ch||ch.readyState!=='open')return;
+ try{ch.send(JSON.stringify(m))}catch(e){}
+}
+function netBroadcast(m,rel){for(const p of peers.values())if(p.open)peerSend(p,m,rel)}
+function peerOpen(p){
+ p.open=true;p.rx=mono();net.retry[p.id]=0;
+ peerSend(p,{k:'hi',n:net.name,mt:maxT},true);updateStat();
+ if(!net.synced&&!net.pulling)pullFrom(p);
+}
+function pullFrom(p){net.pulling=p.id;peerSend(p,{k:'sr'},true)}
+/* 블록 변경 기록을 상대에게 흘려보내기 (버퍼 넘치지 않게 조금씩) */
+function streamEdits(p,list){
+ let i=0;const B=150;
+ const iv=setInterval(()=>{
+  if(peers.get(p.id)!==p||!p.open){clearInterval(iv);return}
+  if(p.dE.bufferedAmount>200000)return;
+  const part=list.slice(i,i+B);i+=B;
+  peerSend(p,{k:'sy',e:part,d:i>=list.length?1:0},true);
+  if(i>=list.length)clearInterval(iv);
+ },30);
+}
+function bedEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&v[0]===B_BED)}
+function dlEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&DLSET.has(v[0]))}
+function peerMsg(p,s){
+ if(typeof s!=='string'||s.length>40000)return;
+ let m;try{m=JSON.parse(s)}catch(e){return}
+ if(!m||typeof m.k!=='string')return;
+ p.rx=mono();
+ if(p.banned&&m.k!=='bye')return;
+ switch(m.k){
+  case 'st':
+   if(fin(m.x)&&fin(m.y)&&fin(m.z)&&fin(m.r)&&fin(m.p)){
+    p.tx=clamp(m.x,0,WORLD);p.ty=clamp(m.y,-10,WH+50);p.tz=clamp(m.z,0,WORLD);p.tyaw=m.r;p.tpitch=clamp(m.p,-1.6,1.6);p.held=(m.b|0)>0&&(m.b|0)<=NB?m.b|0:1;
+    if(!p.has){p.rx_=p.tx;p.ry=p.ty;p.rz=p.tz;p.yaw=p.tyaw;p.pitch=p.tpitch;p.has=true}
+   }break;
+  case 'hi':p.name=cleanName(m.n)||'PLAYER';p.mt=fin(m.mt)?m.mt:0;
+   if(isBanned(p.name)){banPeer(p,true);break} // 차단된 닉네임은 즉시 연결 종료
+   if(myRole()>=1)for(const [bn,r] of banRec)peerSend(p,{k:'bn',n:bn,on:r[0],t:r[1],s:1},true); // 새로 온 사람에게 차단 기록 전달
+   if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
+   // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
+   if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
+   for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,s:1},true)}
+   for(const [fk,r] of fdata){const q=fk.split('_').map(Number);peerSend(p,{k:'fd',x:q[0],y:q[1],z:q[2],v:r.v,t:r.t},true)}
+   if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
+   // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
+   if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
+   updateStat();break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if((DLSET.has(m.b)||dlEditAt(m.x,m.y,m.z))&&lvOf(p.name)<2)break;applyEdit(m.x,m.y,m.z,m.b,m.t);break;
+  case 'lk':{ // 도어락 비밀번호 기록 (s=1 은 입장 동기화, 그 외는 슈퍼어드민 이상만)
+   if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
+   if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
+   if(!m.s&&lvOf(p.name)<2)break;
+   lockApply(lkKey(m.x,m.y,m.z),(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,Math.min(m.t,Date.now()+864e5));
+  }break;
+  case 'fd':{ // 서랍장/컴퓨터 데이터
+   if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
+   if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
+   fdApply(lkKey(m.x,m.y,m.z),fdClean(m.v),Math.min(m.t,Date.now()+864e5));
+  }break;
+  case 'sr':streamEdits(p,allEdits());break;
+  case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
+  case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
+  case 'tm': // 시간 변경 (어드민 이상만 / s=1 은 입장 동기화: 아직 시간을 받은 적 없을 때만)
+   if(m.sl){ // 침대에서 잠 (누구나 가능: 밤일 때 아침으로)
+    const hh=curHour();
+    if(TLOCK===null&&(hh>=19||hh<5)){applyTime(6,false);chatAdd('',p.name+' 님이 잠들어 아침이 되었습니다','sys')}
+    break;
+   }
+   if(fin(m.h)&&m.h>=0&&m.h<=24){
+    if(m.s){if(!TTOUCH)applyTime(m.h,!!m.lk)}
+    else if(lvOf(p.name)>=1){applyTime(m.h,!!m.lk);chatAdd('',p.name+' 님이 시간을 '+Math.floor(m.h)+'시로 변경했습니다'+(m.lk?' (고정)':''),'sys')}
+   }break;
+  case 'rl':{ // 권한 변경: 보낸 사람의 권한으로 가능한 변경만 받아들임
+   const n=cleanName(m.n).toLowerCase(),lv=m.lv;
+   if(!n||n===OWNER||typeof lv!=='number'||lv<0||lv>3||lv%1)break;
+   if(canSetRole(lvOf(p.name),lvOf(n),lv)){setRole(n,lv);if(!m.s&&n===String(net.name).toLowerCase())chatAdd('',lv?RNAME[lv]+' 권한이 부여되었습니다':'관리자 권한이 해제되었습니다','sys')}
+  }break;
+  case 'say':if(lvOf(p.name)>=1){const t=cleanText(m.t);if(t)chatAdd('[공지] '+p.name,t,'sys')}break;
+  case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
+  case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
+  case 'po':if(fin(m.t))p.ping=Math.round(mono()-m.t);break;
+  case 'bn':{ // 차단/해제 기록 (보낸 사람이 어드민 이상이고 대상보다 권한이 높을 때만 인정)
+   const n=bkey(m.n),on=m.on?1:0;if(!n)break;
+   if(!applyBan(n,on,fin(m.t)?m.t:Date.now(),lvOf(p.name)))break;
+   if(on){if(n===bkey(net.name))kickMe(p.name);else{const q=peerByName(n);if(q)banPeer(q,false)}}
+   else if(!m.s)chatAdd('',n+' 님의 차단이 해제되었습니다','sys');
+  }break;
+  case 'bye':peerDown(p,'bye');break;
+ }
+}
+function updateStat(){
+ const n=[...peers.values()].filter(p=>p.open).length;
+ const el=$('stat');
+ if(!net.on){el.textContent='솔로 플레이'+csText();el.className='';return}
+ el.textContent=`● 멀티 — 연결 ${n+1}명 / 대기열 ${Math.min(members().length,MAXP)}/${MAXP}${net.synced||!peers.size?'':' (월드 동기화 중…)'}`+csText();el.className=n?'ok':'';
+}
+setInterval(()=>{if(state==='play')updateStat()},1000);
+
+/* ===================== 근접 음성 대화 (M 키로 마이크 켜기/끄기) =====================
+   · 가까울수록 크게, 멀어질수록 점점 작아지다가 VOICE_MAX 칸 밖에서는 안 들림 (좌우 방향도 반영)
+   · 멀리 있는 사람에게는 내 목소리를 아예 보내지 않음 */
+const VOICE_FULL=4,VOICE_MAX=30;
+const voiceGain=d=>{const t=clamp((VOICE_MAX-d)/(VOICE_MAX-VOICE_FULL),0,1);return t*t};
+let micTrack=null,micOn=false,micBusy=false,vctx=null,voiceT=0;
+function voiceCtx(){if(!vctx){try{vctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{});return vctx}
+['pointerdown','keydown','touchstart'].forEach(ev=>addEventListener(ev,()=>{if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{})},true));
+function voiceAttach(p,track){
+ voiceDrop(p);const ctx=voiceCtx();if(!ctx)return;
+ try{
+  const st=new MediaStream([track]),el=new Audio();el.srcObject=st;el.muted=true;try{const r=el.play();if(r&&r.catch)r.catch(()=>{})}catch(e){} // 일부 브라우저는 요소에 붙여야 WebAudio 로 소리가 흐름
+  const src=ctx.createMediaStreamSource(st),gn=ctx.createGain(),pn=ctx.createStereoPanner?ctx.createStereoPanner():null;
+  gn.gain.value=0;src.connect(gn);if(pn){gn.connect(pn);pn.connect(ctx.destination)}else gn.connect(ctx.destination);
+  p.vo={el,src,gn,pn};
+ }catch(e){p.vo=null}
+}
+function voiceDrop(p){const v=p&&p.vo;if(!v)return;try{v.src.disconnect();v.gn.disconnect();if(v.pn)v.pn.disconnect();v.el.srcObject=null}catch(e){}p.vo=null}
+function sendMicTo(p,on){const want=on&&micTrack?micTrack:null;if(!p.aTx||!p.aTx.sender||p.micT===want)return;p.micT=want;try{p.aTx.sender.replaceTrack(want).catch(()=>{})}catch(e){}}
+function updateVoice(dt){
+ voiceT-=dt;if(voiceT>0)return;voiceT=.08;
+ const rx=Math.cos(cam.yaw),rz=-Math.sin(cam.yaw);
+ for(const p of peers.values()){
+  if(!p.open)continue;
+  const dx=p.rx_-P.x,dz=p.rz-P.z,d=p.has?Math.hypot(dx,p.ry-P.y,dz):1e9;
+  sendMicTo(p,micOn&&d<VOICE_MAX+6);
+  const v=p.vo;if(v&&vctx){
+   v.gn.gain.setTargetAtTime(voiceGain(d),vctx.currentTime,.06);
+   if(v.pn){const h=Math.hypot(dx,dz);v.pn.pan.setTargetAtTime(h>.5?clamp((dx*rx+dz*rz)/h,-1,1)*Math.min(1,h/3)*.85:0,vctx.currentTime,.06)}
+  }
+ }
+}
+function micOff(){micOn=false;if(micTrack){try{micTrack.onended=null;micTrack.stop()}catch(e){}micTrack=null}for(const p of peers.values())sendMicTo(p,false)}
+async function toggleMic(){
+ if(state!=='play'||micBusy)return;
+ if(micOn){micOff();return toast('마이크 OFF',1200)}
+ if(!net.on)return toast('마이크 대화는 멀티플레이에서 쓸 수 있습니다',2500);
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return toast('이 주소에서는 마이크를 쓸 수 없습니다 (https 또는 localhost 필요)',3500);
+ micBusy=true;
+ try{
+  const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+  micTrack=st.getAudioTracks()[0];micTrack.onended=()=>{if(micOn)micOff()};
+  micOn=true;voiceCtx();voiceT=0;toast('마이크 ON — 가까이 있는 사람에게만 들립니다 (M 으로 끄기)',2500);
+ }catch(e){toast('마이크를 켤 수 없습니다: '+(e&&e.name==='NotAllowedError'?'권한이 거부되었습니다':'장치를 확인하세요'),3500)}
+ micBusy=false;
+}
+
+/* ===================== 채팅 ===================== */
+let chatOpen=false;
+// 권한은 현재 클라이언트 닉네임 기반입니다. 실제 보안 권한은 인증 서버가 필요합니다.
+const OWNER='joon0824',RNAME=['플레이어','어드민','슈퍼어드민','소유자']; // 권한 1=어드민 2=슈퍼어드민 3=소유자
+const roles=new Map(); // 소유자(joon0824) 외에 권한을 받은 닉네임(소문자) -> 1~3
+try{const r=JSON.parse(localStorage.getItem('wc_roles_'+ROOM)||'[]');if(Array.isArray(r))for(const e of r)if(Array.isArray(e)&&typeof e[0]==='string'&&e[1]>=1&&e[1]<=3)roles.set(e[0],e[1]|0)}catch(e){}
+const saveRoles=()=>{try{localStorage.setItem('wc_roles_'+ROOM,JSON.stringify([...roles]))}catch(e){}};
+const lvOf=n=>{n=cleanName(n).toLowerCase();return n===OWNER?3:(roles.get(n)||0)};
+const myRole=()=>lvOf(net.name);
+const isOwner=()=>myRole()>=3;
+const canSetRole=(sl,cur,lv)=>sl>=3||(sl>=2&&lv<2&&cur<2); // 소유자: 전부 / 슈퍼어드민: 어드민 부여·해제만
+function setRole(n,lv){n=cleanName(n).toLowerCase();if(!n||n===OWNER)return false;if(lv>0)roles.set(n,lv);else roles.delete(n);saveRoles();return true}
+/* ---- 영구 차단(/ban): 닉네임 기준 · 이 브라우저에 저장 · 접속자끼리 P2P 로 동기화 (서버 없음) ----
+   banRec: 닉(소문자) -> [차단여부 1/0, 시각]. 시각이 더 늦은 기록이 이김 (밴/언밴이 엇갈려도 일관됨) */
+const banRec=new Map();
+try{const r=JSON.parse(localStorage.getItem('wc_bans_'+ROOM)||'[]');if(Array.isArray(r))for(const e of r)if(Array.isArray(e)&&typeof e[0]==='string'&&e[0]&&fin(e[2]))banRec.set(e[0],[e[1]?1:0,e[2]])}catch(e){}
+const saveBans=()=>{try{localStorage.setItem('wc_bans_'+ROOM,JSON.stringify([...banRec].map(([n,r])=>[n,r[0],r[1]])))}catch(e){}};
+const bkey=n=>cleanName(n).toLowerCase();
+const isBanned=n=>{const r=banRec.get(bkey(n));return !!(r&&r[0])};
+const canBan=(sl,n)=>{n=bkey(n);return sl>=1&&n!==OWNER&&sl>lvOf(n)}; // 어드민 이상, 나보다 낮은 권한만 (소유자는 불가)
+function localBan(n,on){const t=Math.max(Date.now(),((banRec.get(n)||[0,0])[1])+1);banRec.set(n,[on?1:0,t]);saveBans();return t}
+function applyBan(n,on,t,sl){ // 남이 보낸 차단/해제 기록 적용 (보낸 사람 권한 검증 + 최신 기록만)
+ if(!n||n===OWNER||!fin(t))return false;
+ if(on?!canBan(sl,n):sl<1)return false;
+ t=Math.min(t,Date.now()+864e5);const r=banRec.get(n);if(r&&r[1]>=t)return false;
+ banRec.set(n,[on?1:0,t]);saveBans();return true;
+}
+function banPeer(p,send){ // 차단된 사람과의 연결 끊기 (음성도 함께 끊김)
+ if(p.banned)return;p.banned=true;p.open=false;updateStat();
+ if(send){const r=banRec.get(bkey(p.name));peerSend(p,{k:'bn',n:bkey(p.name),on:1,t:r?r[1]:Date.now()},true)}
+ setTimeout(()=>{if(peers.get(p.id)===p){peerDown(p,'banned');net.retry[p.id]=mono()+6e5}},400);
+}
+function kickMe(by){if(state!=='play'&&state!=='queue')return;toast('🚫 이 닉네임은 영구 차단되었습니다 ('+by+')',6000);leaveGame()}
+const sys=t=>chatAdd('',t,'sys');
+const peerByName=n=>{n=String(n||'').toLowerCase();return [...peers.values()].find(p=>p.open&&String(p.name).toLowerCase()===n)};
+const num=(s,base)=>{s=String(s);if(s[0]==='~'){const v=s.length>1?parseFloat(s.slice(1)):0;return isFinite(v)?base+v:NaN}const v=parseFloat(s);return isFinite(v)?v:NaN};
+function findBlock(s){ // 번호 또는 이름(띄어쓰기 무시, 일부만 써도 됨). 못 찾으면 -1, 공기는 0
+ s=String(s||'').replace(/\s/g,'').toLowerCase();if(!s)return -1;
+ if(/^\d+$/.test(s)){const n=+s;return n>=0&&n<=NB?n:-1}
+ if(s==='공기'||s==='air')return 0;
+ let r=-1;for(let i=1;i<=NB;i++){const nm=DEF[i].name.replace(/\s/g,'').toLowerCase();if(nm===s)return i;if(r<0&&nm.includes(s))r=i}
+ return r;
+}
+function teleport(x,y,z){x=clamp(x,1,WORLD-2);z=clamp(z,1,WORLD-2);y=clamp(y,1,WH+40);ensureAround(x>>4,z>>4,1);P.sit=null;P.x=x;P.y=y;P.z=z;P.vx=P.vy=P.vz=0;cam.x=P.x;cam.y=P.y+EYE;cam.z=P.z}
+const TPRESET={'일출':6,sunrise:6,'아침':8,morning:8,day:8,'낮':8,'정오':12,noon:12,'일몰':18,sunset:18,'저녁':19,'밤':21,night:21,'자정':0,midnight:0,'새벽':4};
+function parseHour(s){s=String(s||'').toLowerCase();if(Object.prototype.hasOwnProperty.call(TPRESET,s))return TPRESET[s];const v=parseFloat(s.replace('시',''));return isFinite(v)&&v>=0&&v<=24?v:NaN}
+const CMDS={},CLIST=[];
+function cmd(names,lv,use,desc,run){const o={names,lv,use,desc,run};CLIST.push(o);for(const n of names)CMDS[n]=o}
+function runCommand(raw){
+ const a=raw.slice(1).trim().split(/\s+/),name=(a.shift()||'').toLowerCase(),c=CMDS[name];
+ if(!c||!Object.prototype.hasOwnProperty.call(CMDS,name))return sys('알 수 없는 명령어입니다: /'+name+'  (/help 로 목록 확인)');
+ if(myRole()<c.lv)return sys('권한이 없습니다. '+RNAME[c.lv]+' 이상만 사용할 수 있습니다.');
+ try{c.run(a)}catch(e){sys('명령 실행 중 오류가 났습니다: '+(e&&e.message||e))}
+}
+/* ---- 모두 ---- */
+cmd(['help','도움말','?'],0,'/help [명령어]','사용할 수 있는 명령어 목록',a=>{
+ if(a[0]){const c=CMDS[a[0].replace(/^\//,'').toLowerCase()];if(!c)return sys('없는 명령어입니다');return sys(c.use+' — '+c.desc+' ['+RNAME[c.lv]+' 이상] 별칭: '+c.names.map(n=>'/'+n).join(' '))}
+ sys('내 권한: '+RNAME[myRole()]+' — 사용 가능한 명령어');
+ for(const c of CLIST)if(c.lv<=myRole())sys(c.use+' — '+c.desc);
+});
+cmd(['list','접속자'],0,'/list','접속자 목록',()=>{const l=[net.name+(myRole()?' ['+RNAME[myRole()]+']':'')+' (나)'];for(const p of peers.values())if(p.open){const r=lvOf(p.name);l.push(p.name+(r?' ['+RNAME[r]+']':''))}sys('접속자 '+l.length+'명: '+l.join(', '))});
+cmd(['pos','좌표'],0,'/pos','내 좌표 보기',()=>sys('내 위치 X '+P.x.toFixed(1)+' / Y '+P.y.toFixed(1)+' / Z '+P.z.toFixed(1)));
+cmd(['role','권한'],0,'/role [닉]','권한 확인',a=>{const n=a[0]||net.name;sys(n+' 님의 권한: '+RNAME[lvOf(n)])});
+cmd(['blocks','블록'],0,'/blocks [검색어]','블록 번호/이름 보기 (★ = 빛나는 블록)',a=>{
+ const q=a.join('').toLowerCase(),out=[];
+ for(let i=1;i<=NB;i++)if(!q||DEF[i].name.replace(/\s/g,'').toLowerCase().includes(q))out.push(i+':'+DEF[i].name+(EMIT[i]?'★':''));
+ if(!out.length)return sys('검색 결과가 없습니다');
+ for(let i=0;i<out.length;i+=6)sys(out.slice(i,i+6).join('   '));
+});
+/* ---- 어드민 이상 ---- */
+/* ---- /찾기: 가장 가까운 블록 찾기 → 그 옆으로 순간이동 ---- */
+const NAT_FLAT=[1,2,3,5,10,12,14];
+function natY(id,x,z){ // 자연 지형(생성 규칙)에서 이 칼럼에 id 블록이 있으면 y, 없으면 -1
+ if(id===6||id===7){const t=treeAt(x,z);return t?(id===6?t.h+1:t.h+t.th):-1}
+ const h=terrainH(x,z),beach=h<=SEA+1;
+ switch(id){
+  case 1:return (!beach&&h<50)?h:-1;
+  case 12:return h>=50?h:-1;
+  case 5:return beach?h:-1;
+  case 10:return h<SEA?SEA:-1;
+  case 14:return (beach&&h-4>=1)?h-4:-1;
+  case 2:return (!beach&&h-1>=1)?h-1:-1;
+  case 3:return h-5>=1?h-5:-1;
+ }
+ return -1;
+}
+function findNearestBlock(id){
+ const base=BASEOF[id]!==undefined?BASEOF[id]:id,want=new Uint8Array(NB+1);
+ for(let i=1;i<=NB;i++)if(i===base||BASEOF[i]===base)want[i]=1;
+ const px=P.x,py=P.y,pz=P.z;let best=null,bd=Infinity;
+ const tryP=(x,y,z)=>{const d=(x+.5-px)*(x+.5-px)+(y+.5-py)*(y+.5-py)+(z+.5-pz)*(z+.5-pz);if(d<bd){bd=d;best={x,y,z}}};
+ const gap=(x0,z0)=>{const dx=Math.max(x0-px,0,px-(x0+CH)),dz=Math.max(z0-pz,0,pz-(z0+CH));return dx*dx+dz*dz};
+ // 1) 지금 불러와 있는 청크
+ const lo=want[B_BED]?0:CH*CH;
+ for(const c of chunks.values()){
+  if(gap(c.cx*CH,c.cz*CH)>=bd)continue;
+  const d=c.d,end=(Math.min(WH-1,c.maxY)+1)*CH*CH;
+  for(let i=lo;i<end;i++)if(want[d[i]])tryP(c.cx*CH+(i&15),i>>8,c.cz*CH+((i>>4)&15));
+ }
+ // 2) 아직 안 불러온 곳에 사람이 설치한 블록 (편집 기록)
+ for(const [k,m] of edits){
+  const cx=Math.floor(k/1024),cz=k%1024;if(gap(cx*CH,cz*CH)>=bd)continue;
+  for(const [idx,v] of m)if(want[v[0]])tryP(cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15));
+ }
+ // 3) 멀리 있는 자연 블록은 지형 생성 규칙으로 계산해서 찾기
+ const tree=base===6||base===7;
+ if((tree||NAT_FLAT.includes(base))&&bd>(RD*CH)*(RD*CH)){
+  const step=tree?1:3,maxR=tree?250:800,cx0=Math.floor(px),cz0=Math.floor(pz);
+  const chk=(x,z)=>{if(x<0||z<0||x>=WORLD||z>=WORLD)return;const y=natY(base,x,z);if(y>=1)tryP(x,y,z)};
+  for(let r=0;r<=maxR;r+=step){
+   if(r>Math.sqrt(bd)+step)break;
+   for(let a=-r;a<=r;a+=step){chk(cx0+a,cz0-r);chk(cx0+a,cz0+r);chk(cx0-r,cz0+a);chk(cx0+r,cz0+a)}
+  }
+ }
+ return best&&{x:best.x,y:best.y,z:best.z,dist:Math.sqrt(bd)};
+}
+function standSpot(x,y,z){ // 그 블록 옆에서 몸이 끼지 않는 자리를 찾는다
+ ensureAround(x>>4,z>>4,1);
+ const free=(a,b,c)=>{const q=getBlock(a,b,c);return !q||!SOLID[q]};
+ const fits=(a,b,c)=>b>=1&&b<WH+2&&free(a,b,c)&&free(a,b+1,c);
+ const near=[[0,1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,-1,0]];
+ for(const sup of [true,false])for(const [dx,dy,dz] of near){
+  const a=x+dx,b=y+dy,c=z+dz;
+  if(a<0||c<0||a>=WORLD||c>=WORLD||!fits(a,b,c))continue;
+  if(sup&&!SOLID[getBlock(a,b-1,c)])continue;
+  return [a+.5,b,c+.5];
+ }
+ for(let yy=y+1;yy<WH+2;yy++)if(fits(x,yy,z))return [x+.5,yy,z+.5];
+ return [x+.5,y+1,z+.5];
+}
+cmd(['찾기','find','locate'],1,'/찾기 <블록 이름|번호>','가장 가까운 그 블록으로 순간이동 (/blocks 로 이름 확인)',a=>{
+ if(!a.length)return sys('사용법: /찾기 블록이름  (예: /찾기 다이아몬드 광석)');
+ const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ const r=findNearestBlock(b);
+ if(!r)return sys(DEF[b].name+' 블록을 찾지 못했습니다 (불러온 구역·설치 기록·주변 지형에 없음)');
+ const [sx,sy,sz]=standSpot(r.x,r.y,r.z);teleport(sx,sy,sz);
+ sys(DEF[b].name+' 발견! '+r.x+' / '+r.y+' / '+r.z+' (약 '+Math.round(r.dist)+'칸) 으로 이동했습니다');
+});
+cmd(['time','시간'],1,'/time [set|add|lock|unlock] ...','시간 변경 (예: /time set 밤, /time set 12, /time add 3, /time lock)',a=>{
+ const sub=(a[0]||'').toLowerCase();let h=curHour(),lock=TLOCK!==null;
+ if(!sub||sub==='query')return sys('현재 시각 '+Math.floor(h)+'시 '+Math.floor((h%1)*60)+'분'+(lock?' (고정됨)':'')+' — /time set <0~24|일출|아침|정오|일몰|밤|자정>, add <시간>, lock, unlock');
+ if(sub==='set'||sub==='설정'){const v=parseHour(a[1]);if(isNaN(v))return sys('사용법: /time set <0~24 또는 일출|아침|정오|일몰|밤|자정>');h=v}
+ else if(sub==='add'||sub==='더하기'){const v=parseFloat(a[1]);if(!isFinite(v))return sys('사용법: /time add <시간>');h+=v}
+ else if(sub==='lock'||sub==='고정')lock=true;
+ else if(sub==='unlock'||sub==='해제')lock=false;
+ else{const v=parseHour(sub);if(isNaN(v))return sys('사용법: /time set|add|lock|unlock ...');h=v}
+ applyTime(h,lock);netBroadcast({k:'tm',h:curHour(),lk:lock?1:0},true);
+ sys('시간을 '+Math.floor(curHour())+'시로 변경했습니다'+(lock?' (고정)':''));
+});
+cmd(['tp','텔레포트'],1,'/tp <닉> | <x> <z> | <x> <y> <z>','순간이동 (~ 는 현재 위치 기준)',a=>{
+ if(a.length===1){const p=peerByName(a[0]);if(!p||!p.has)return sys('그런 접속자가 없거나 위치를 모릅니다: '+a[0]);teleport(p.rx_,p.ry+.05,p.rz);return sys(p.name+' 님에게 이동했습니다')}
+ if(a.length===2){const x=num(a[0],P.x),z=num(a[1],P.z);if(isNaN(x)||isNaN(z))return sys('사용법: /tp x z');const xi=Math.floor(clamp(x,1,WORLD-2)),zi=Math.floor(clamp(z,1,WORLD-2));placeAtSurface(xi,zi);return sys('지표면으로 이동했습니다: '+xi+' / '+zi)}
+ if(a.length===3){const x=num(a[0],P.x),y=num(a[1],P.y),z=num(a[2],P.z);if(isNaN(x)||isNaN(y)||isNaN(z))return sys('사용법: /tp x y z');teleport(x,y,z);return sys('이동했습니다: '+x.toFixed(1)+' / '+y.toFixed(1)+' / '+z.toFixed(1))}
+ sys('사용법: /tp <닉> | /tp <x> <z> | /tp <x> <y> <z>');
+});
+cmd(['spawn','스폰'],1,'/spawn','월드 중앙(스폰)으로 이동',()=>{placeAtSurface(5000,5000);sys('스폰으로 이동했습니다')});
+cmd(['fly','비행'],1,'/fly','비행 모드 켜기/끄기',()=>{P.fly=!P.fly;P.vy=0;sys(P.fly?'비행 모드 ON':'비행 모드 OFF')});
+cmd(['speed','속도'],1,'/speed <0.5~10|reset>','이동 속도 배율',a=>{if(a[0]==='reset'||a[0]==='초기화'){SPDM=1;return sys('이동 속도를 원래대로 돌렸습니다')}const v=parseFloat(a[0]);if(!isFinite(v)||v<.5||v>10)return sys('사용법: /speed 0.5~10 (또는 reset)');SPDM=v;sys('이동 속도 x'+v)});
+cmd(['give','지급'],1,'/give <블록> [슬롯 1~9]','블록을 핫바에 넣기 (/blocks 로 번호 확인)',a=>{
+ let slot=P.sel;if(a.length>1&&/^[1-9]$/.test(a[a.length-1])){slot=+a.pop()-1}
+ const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ if(DLSET.has(b)&&myRole()<2)return sys('도어락은 슈퍼어드민 이상만 지급할 수 있습니다');
+ hotbar[slot]=b;renderHotbar();sys((slot+1)+'번 칸에 '+DEF[b].name+' 지급');
+});
+cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하나 설치/제거 (공기 = 제거, ~ 상대좌표)',a=>{
+ if(a.length<4)return sys('사용법: /setblock x y z 블록');
+ const x=Math.floor(num(a[0],P.x)),y=Math.floor(num(a[1],P.y)),z=Math.floor(num(a[2],P.z)),b=findBlock(a.slice(3).join(''));
+ if(![x,y,z].every(Number.isFinite))return sys('좌표가 올바르지 않습니다');
+ if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH)return sys('월드 밖입니다 (y 는 1~'+(WH-1)+')');
+ if(myRole()<2&&(DLSET.has(b)||DLSET.has(getBlock(x,y,z))))return sys('도어락은 슈퍼어드민 이상만 다룰 수 있습니다');
+ localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
+});
+cmd(['say','공지'],1,'/say <메시지>','모두에게 공지',a=>{const t=cleanText(a.join(' '));if(!t)return sys('사용법: /say 메시지');chatAdd('[공지] '+net.name,t,'sys');netBroadcast({k:'say',t},true)});
+/* ---- 슈퍼어드민 이상 ---- */
+cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블록으로 채움 (최대 30000칸, 공기 = 지우기)',a=>{
+ if(a.length<7)return sys('사용법: /fill x1 y1 z1 x2 y2 z2 블록   (~ 는 내 위치 기준)');
+ const base=[P.x,P.y,P.z,P.x,P.y,P.z],n=base.map((v,i)=>Math.floor(num(a[i],v)));
+ if(!n.every(Number.isFinite))return sys('좌표가 올바르지 않습니다');
+ const b=findBlock(a.slice(6).join(''));if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ const x1=Math.max(0,Math.min(n[0],n[3])),x2=Math.min(WORLD-1,Math.max(n[0],n[3])),y1=Math.max(1,Math.min(n[1],n[4])),y2=Math.min(WH-1,Math.max(n[1],n[4])),z1=Math.max(0,Math.min(n[2],n[5])),z2=Math.min(WORLD-1,Math.max(n[2],n[5]));
+ const vol=(x2-x1+1)*(y2-y1+1)*(z2-z1+1);
+ if(!(vol>0))return sys('영역이 월드 밖입니다');if(vol>30000)return sys('너무 큽니다: '+vol+'칸 (최대 30000칸)');
+ const t=nextT(),list=[];
+ for(let y=y1;y<=y2;y++)for(let z=z1;z<=z2;z++)for(let x=x1;x<=x2;x++){
+  if(getChunk(x>>4,z>>4)&&getBlock(x,y,z)===b)continue;
+  if(applyEdit(x,y,z,b,t)){markRegion(x,z);list.push([x,y,z,b,t])}
+ }
+ for(const p of peers.values())if(p.open)streamEdits(p,list);
+ sys(list.length+'칸을 '+(b?DEF[b].name:'공기')+'(으)로 바꿨습니다');
+});
+cmd(['tphere','소환'],2,'/tphere <닉>','접속자를 내 위치로 소환',a=>{const p=peerByName(a[0]);if(!p)return sys('그런 접속자가 없습니다');peerSend(p,{k:'tp',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2)},true);sys(p.name+' 님을 소환했습니다')});
+cmd(['roles','권한목록'],2,'/roles','권한을 받은 사람 목록',()=>{const l=['소유자: '+OWNER];for(const [n,lv] of roles)l.push(n+' = '+RNAME[lv]);sys(l.join(' / '))});
+function grant(a,lv){
+ const n=cleanName(a[0]||'').toLowerCase();if(!n)return sys('사용법: /'+(lv?RNAME[lv]:'강등')+' 대상자닉네임');
+ if(n===OWNER)return sys('기본 소유자('+OWNER+')의 권한은 바꿀 수 없습니다');
+ if(!canSetRole(myRole(),lvOf(n),lv))return sys('권한이 부족합니다 ('+((lv>=2||lvOf(n)>=2)?'소유자':'슈퍼어드민')+' 이상만 가능)');
+ setRole(n,lv);netBroadcast({k:'rl',n,lv},true);
+ sys(lv?n+' 님에게 '+RNAME[lv]+' 권한을 부여했습니다':n+' 님의 관리자 권한을 해제했습니다');
+}
+cmd(['어드민','admin','op'],2,'/어드민 <닉>','어드민 권한 부여',a=>grant(a,1));
+cmd(['강등','deop','demote'],2,'/강등 <닉>','관리자 권한 해제',a=>grant(a,0));
+cmd(['ban','밴','차단'],1,'/ban <닉>','닉네임 영구 차단 (접속 중이면 바로 추방, 다시 못 들어옴)',a=>{
+ const n=bkey(a[0]);if(!n)return sys('사용법: /ban 닉네임');
+ if(n===bkey(net.name))return sys('자기 자신은 차단할 수 없습니다');
+ if(n===OWNER)return sys('소유자는 차단할 수 없습니다');
+ if(!canBan(myRole(),n))return sys('나와 같거나 더 높은 권한의 사람은 차단할 수 없습니다');
+ if(isBanned(n))return sys(n+' 님은 이미 차단되어 있습니다');
+ const t=localBan(n,1);netBroadcast({k:'bn',n,on:1,t},true);
+ const p=peerByName(n);if(p)banPeer(p,false);
+ sys(n+' 님을 영구 차단했습니다  (해제: /unban '+n+')');
+});
+cmd(['unban','언밴','차단해제','pardon'],1,'/unban <닉>','영구 차단 해제',a=>{
+ const n=bkey(a[0]);if(!n)return sys('사용법: /unban 닉네임');
+ if(!isBanned(n))return sys(n+' 님은 차단 목록에 없습니다');
+ const t=localBan(n,0);netBroadcast({k:'bn',n,on:0,t},true);
+ sys(n+' 님의 차단을 해제했습니다');
+});
+cmd(['banlist','밴목록','차단목록'],1,'/banlist','차단된 닉네임 목록',()=>{
+ const l=[...banRec].filter(([n,r])=>r[0]).map(([n])=>n);
+ sys(l.length?'차단된 닉네임 '+l.length+'개: '+l.join(', '):'차단된 닉네임이 없습니다');
+});
+/* ---- 소유자 ---- */
+cmd(['슈퍼어드민','superadmin'],3,'/슈퍼어드민 <닉>','슈퍼어드민 권한 부여',a=>grant(a,2));
+cmd(['소유자','owner'],3,'/소유자 <닉>','소유자 권한 부여',a=>grant(a,3));
+function updateAdminMenu(){const show=isOwner();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
+function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits(),locks:lkDump()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
+function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}if(Array.isArray(d.locks))for(const e of d.locks)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.max(nextT(),+e[2]||0));saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
+function chatAdd(who,txt,cls){
+ const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
+ if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
+ d.appendChild(document.createTextNode(txt));log.appendChild(d);
+ while(log.children.length>40)log.removeChild(log.firstChild);
+ setTimeout(()=>d.classList.add('old'),9000);
+}
+function openChat(pre){if(state!=='play'||chatOpen)return;chatOpen=true;ui='chat';for(const k in keys)keys[k]=false;$('chat').classList.add('open');if(document.pointerLockElement)document.exitPointerLock();const i=$('chatIn');i.value=typeof pre==='string'?pre:'';setTimeout(()=>{i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}
+function closeChat(relock){if(!chatOpen)return;chatOpen=false;ui='';$('chat').classList.remove('open');$('chatIn').blur();if(relock)lockPointer()}
+$('chatIn').addEventListener('keydown',e=>{
+ e.stopPropagation();
+ if(e.key==='Enter'){e.preventDefault();const raw=String($('chatIn').value||'').trim();const t=cleanText(raw);if(t){if(t[0]==='/')runCommand(t);else{chatAdd(net.name,t,'me');netBroadcast({k:'ct',t},true)}}closeChat(true)}
+ else if(e.key==='Escape'){e.preventDefault();closeChat(true)}
+});
+$('chatIn').addEventListener('keyup',e=>e.stopPropagation());
+$('chatIn').addEventListener('blur',()=>{if(isTouch&&chatOpen)setTimeout(()=>closeChat(false),150)});
+
+/* ===================== 핫바 / UI ===================== */
+function iconCanvas(b,size){
+ const c=document.createElement('canvas');c.width=c.height=size||16;const g=c.getContext('2d');g.imageSmoothingEnabled=false;
+ if(!b)return c;const df=DEF[b],t=df.icon!==undefined?df.icon:(b===1?df.top:df.side),sx=(t%16)*16,sy=((t/16)|0)*16;
+ g.fillStyle='#4a6a8a';if(TRANS[b]){g.fillStyle='#8aa';}
+ g.drawImage(atlas,sx,sy,16,16,0,0,c.width,c.height);return c;
+}
+function renderHotbar(){
+ const h=$('hot');h.textContent='';
+ hotbar.forEach((b,i)=>{const s=document.createElement('div');s.className='slot'+(i===P.sel?' sel':'');s.appendChild(iconCanvas(b));const n=document.createElement('i');n.textContent=i+1;s.appendChild(n);
+  s.onclick=()=>selectSlot(i);h.appendChild(s)});
+}
+function selectSlot(i){P.sel=(i+9)%9;renderHotbar();const n=$('bname');n.textContent=(DEF[hotbar[P.sel]]||{name:''}).name;n.style.opacity=1;clearTimeout(selectSlot.h);selectSlot.h=setTimeout(()=>{n.style.opacity=0},1400)}
+function buildPalette(){
+ const g=$('palGrid');g.textContent='';
+ for(const b of PALETTE){if(b===B_BED&&myRole()<1)continue;if(DLSET.has(b)&&myRole()<2)continue;const c=iconCanvas(b,32);c.title=DEF[b].name;c.onclick=()=>{hotbar[P.sel]=b;renderHotbar();togglePal(false)};g.appendChild(c)}
+}
+function showOv(id,on){$(id).style.display=on?'flex':'none'}
+function togglePal(on){
+ if(state!=='play')return;
+ if(on===undefined)on=ui!=='pal';
+ if(on&&ui)return;
+ ui=on?'pal':'';if(on)buildPalette();showOv('pal',on);
+ if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
+}
+/* ---- 도어락 키패드 ---- */
+const LKS={x:0,y:0,z:0,buf:'',setMode:false,fails:0,until:0};
+function lockRender(msg,bad){
+ const rec=lockGet(LKS.x,LKS.y,LKS.z),adm=myRole()>=2;
+ $('lkDisp').textContent=[0,1,2,3].map(i=>i<LKS.buf.length?'●':'○').join(' ');
+ let t=msg;
+ if(!t)t=LKS.setMode?'새 비밀번호 4자리를 입력하세요':rec?'비밀번호 4자리를 입력하세요':(adm?'아직 비밀번호가 없습니다 — 아래 [비밀번호 설정]을 누르세요':'비밀번호가 설정되지 않은 도어락입니다');
+ const m=$('lkMsg');m.textContent=t;m.style.color=bad?'#f88':(LKS.setMode?'#fd6':'#bbb');
+ const s=$('lkSet');s.style.display=adm?'block':'none';s.textContent=LKS.setMode?'비밀번호 설정 취소':(rec?'비밀번호 변경':'비밀번호 설정');
+}
+function openLock(x,y,z,setMode){
+ if(state!=='play'||ui)return;
+ ui='lock';LKS.x=x;LKS.y=y;LKS.z=z;LKS.buf='';LKS.setMode=!!setMode&&myRole()>=2;
+ showOv('ovLock',true);if(document.pointerLockElement)document.exitPointerLock();lockRender();
+}
+function closeLock(){if(ui!=='lock')return;ui='';showOv('ovLock',false);lockPointer()}
+function lockPress(k){
+ if(ui!=='lock')return;
+ if(mono()<LKS.until)return lockRender('잠시 후 다시 시도하세요 ('+Math.ceil((LKS.until-mono())/1000)+'초)',true);
+ if(k==='⌫')LKS.buf=LKS.buf.slice(0,-1);else if(k==='C')LKS.buf='';else if(LKS.buf.length<4)LKS.buf+=k;
+ lockRender();
+ if(LKS.buf.length===4)setTimeout(lockSubmit,120);
+}
+function lockSubmit(){
+ if(ui!=='lock'||LKS.buf.length!==4)return;
+ const code=LKS.buf;LKS.buf='';
+ if(LKS.setMode){
+  if(myRole()<2)return;
+  lockSetLocal(LKS.x,LKS.y,LKS.z,code);LKS.setMode=false;sfx(.1,520);
+  toast('✔ 도어락 비밀번호를 설정했습니다',2200);closeLock();return;
+ }
+ const rec=lockGet(LKS.x,LKS.y,LKS.z);
+ if(!rec)return lockRender('비밀번호가 설정되지 않은 도어락입니다',true);
+ if(code===rec.c){LKS.fails=0;sfx(.12,620);closeLock();signalDoors(LKS.x,LKS.y,LKS.z);return}
+ sfx(.15,120);LKS.fails++;
+ if(LKS.fails>=3){LKS.fails=0;LKS.until=mono()+5000;lockRender('3번 틀렸습니다 — 5초 후 다시 시도하세요',true)}
+ else lockRender('비밀번호가 틀렸습니다',true);
+}
+function lockKey(e){
+ e.preventDefault();if(e.repeat)return;
+ if(e.code==='Escape'){closeLock();return}
+ if(e.code==='Backspace'){lockPress('⌫');return}
+ if(/^(Digit|Numpad)\d$/.test(e.code))lockPress(e.code.slice(-1));
+}
+(function(){const g=$('lkPad');['1','2','3','4','5','6','7','8','9','⌫','0','C'].forEach(k=>{const d=document.createElement('div');d.textContent=k;d.addEventListener('pointerdown',e=>{e.preventDefault();lockPress(k)});g.appendChild(d)})})();
+$('lkSet').addEventListener('pointerdown',e=>{e.preventDefault();if(myRole()<2)return;LKS.setMode=!LKS.setMode;LKS.buf='';lockRender()});
+$('lkClose').addEventListener('pointerdown',e=>{e.preventDefault();closeLock()});
+/* 도어락 신호: 도어락 주변 2칸(정육면체) 안의 철문을 한꺼번에 열거나 닫는다 (하나라도 닫혀 있으면 모두 열기) */
+function signalDoors(x,y,z){
+ const pairs=new Map();
+ for(let dy=-2;dy<=2;dy++)for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){
+  const xx=x+dx,yy=y+dy,zz=z+dz,di=DINFO[getBlock(xx,yy,zz)];
+  if(!di||!DEF[di.base].iron)continue;
+  const ly=di.h?yy-1:yy;pairs.set(xx+','+ly+','+zz,[xx,ly,zz]);
+ }
+ const cells=[];
+ for(const [a,b,c] of pairs.values())for(const yy of [b,b+1]){const di=DINFO[getBlock(a,yy,c)];if(di&&DEF[di.base].iron)cells.push([a,yy,c,di])}
+ if(!cells.length)return toast('✔ 인증됨 — 근처 2칸 안에 철문이 없습니다',2200);
+ const open=cells.some(q=>!q[3].o); // 하나라도 닫혀 있으면 모두 열기, 전부 열려 있으면 모두 닫기
+ let n=0;
+ for(const [a,yy,c,di] of cells){if(!!di.o===open)continue;localEdit(a,yy,c,di.base+di.h*8+(open?1:0)*4+di.f);n++}
+ sfx(.12,200);toast(open?'🔓 철문이 열렸습니다':'🔒 철문이 닫혔습니다',1800);
+}
+/* ---- 가구 상호작용 ---- */
+function sleepIn(){ // 침대: 밤(19시~5시)에만 잘 수 있고, 자면 아침이 됨
+ if(state!=='play'||ui)return;
+ const hr=curHour();
+ if(TLOCK!==null)return toast('시간이 고정되어 있어 잘 수 없습니다',1800);
+ if(!(hr>=19||hr<5))return toast('아직 졸리지 않습니다 — 밤(19시~5시)에만 잘 수 있습니다',2200);
+ ui='sleep';$('fade').style.opacity=1;
+ setTimeout(()=>{
+  applyTime(6,false);netBroadcast({k:'tm',h:6,lk:0,sl:1},true);$('fade').style.opacity=0;
+  setTimeout(()=>{if(ui==='sleep')ui='';toast('좋은 아침입니다! ☀',1800)},800);
+ },1300);
+}
+function sitOn(h){ // 소파: 앉기 (이동 키를 누르면 일어남)
+ if(state!=='play'||ui||P.sit)return;
+ const fi=FURN[h.b];if(!fi)return;
+ if(Math.hypot(h.x+.5-P.x,h.z+.5-P.z)>4.5)return toast('너무 멉니다',1000);
+ P.sit={x:h.x,y:h.y,z:h.z};P.fly=false;P.vx=P.vy=P.vz=0;
+ P.x=h.x+.5+DX[fi.f]*.15;P.z=h.z+.5+DZ[fi.f]*.15;P.y=h.y+.5;
+ toast('앉았습니다 — 이동 키(WASD/점프)로 일어서기',1800);
+}
+const PCS={x:0,y:0,z:0,old:''};
+function pcInfo(){
+ const h=curHour(),hh=Math.floor(h),mm=Math.floor((h%1)*60),n=[...peers.values()].filter(p=>p.open).length+1;
+ $('pcHead').textContent='WEBCREAT OS v1.0\n> 월드 '+ROOM+' · 시각 '+String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')+' · 접속자 '+n+'명\n> 내 위치 '+P.x.toFixed(0)+' / '+P.y.toFixed(0)+' / '+P.z.toFixed(0)+'\n> 메모장 — 이 컴퓨터에 저장되고 접속자와 공유됩니다 (300자)';
+}
+function openPC(x,y,z){
+ if(state!=='play'||ui)return;
+ ui='pc';PCS.x=x;PCS.y=y;PCS.z=z;
+ const v=fdGet(x,y,z),m=typeof v==='string'?v:'';PCS.old=m;$('pcMemo').value=m;
+ showOv('ovPC',true);if(document.pointerLockElement)document.exitPointerLock();pcInfo();
+ setTimeout(()=>{try{$('pcMemo').focus()}catch(e){}},50);
+}
+function closePC(save){
+ if(ui!=='pc')return;
+ if(save){const t=fdClean($('pcMemo').value)||'';if(t!==PCS.old){fdSet(PCS.x,PCS.y,PCS.z,t||null);toast('💾 메모를 저장했습니다',1500)}}
+ ui='';showOv('ovPC',false);$('pcMemo').blur();lockPointer();
+}
+$('pcMemo').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();closePC(true)}});
+$('pcMemo').addEventListener('keyup',e=>e.stopPropagation());
+$('pcSave').onclick=()=>closePC(true);$('pcClose').onclick=()=>closePC(false);
+const DRS={x:0,y:0,z:0,key:'',items:[],sel:null};
+function drCell(b,sel,on){
+ const d=document.createElement('div');d.className='dcell'+(sel?' sel':'');
+ if(b){const c=iconCanvas(b,32);c.title=DEF[b].name;d.appendChild(c)}
+ d.addEventListener('pointerdown',e=>{e.preventDefault();on()});return d;
+}
+function drRender(){
+ const g=$('drGrid'),hb=$('drHot');g.textContent='';hb.textContent='';
+ DRS.items.forEach((b,i)=>g.appendChild(drCell(b,!!(DRS.sel&&DRS.sel.src==='d'&&DRS.sel.i===i),()=>drClick('d',i))));
+ hotbar.forEach((b,i)=>hb.appendChild(drCell(b,!!(DRS.sel&&DRS.sel.src==='h'&&DRS.sel.i===i),()=>drClick('h',i))));
+}
+function drClick(src,i){
+ const S=DRS,get=(s,j)=>s==='d'?S.items[j]:hotbar[j],set=(s,j,v)=>{if(s==='d')S.items[j]=v;else hotbar[j]=v};
+ if(!S.sel){if(get(src,i))S.sel={src,i};return drRender()}
+ const a=S.sel;S.sel=null;
+ if(a.src===src&&a.i===i)return drRender();
+ const va=get(a.src,a.i),vb=get(src,i);
+ set(a.src,a.i,vb);set(src,i,va);sfx(.06,500);
+ renderHotbar();drRender();
+ if(a.src==='d'||src==='d')fdSet(S.x,S.y,S.z,S.items.slice());
+}
+function openDresser(x,y,z){
+ if(state!=='play'||ui)return;
+ ui='dr';DRS.x=x;DRS.y=y;DRS.z=z;DRS.key=lkKey(x,y,z);DRS.items=drItems(fdGet(x,y,z));DRS.sel=null;
+ showOv('ovDr',true);if(document.pointerLockElement)document.exitPointerLock();drRender();sfx(.08,300);
+}
+function closeDr(){if(ui!=='dr')return;ui='';DRS.sel=null;showOv('ovDr',false);saveInv();lockPointer()}
+$('drClose').onclick=closeDr;
+/* ---- 인벤토리(핫바) 로컬 저장: 방 + 닉네임별, 15초마다 + 나갈 때/탭 닫을 때 ---- */
+const invKey=()=>'wc_inv_'+ROOM+'_'+bkey(net.name||'player');
+function saveInv(){
+ if(state!=='play')return;
+ try{localStorage.setItem(invKey(),JSON.stringify({h:hotbar.slice(),s:P.sel}))}catch(e){}
+}
+function loadInv(){
+ try{
+  const d=JSON.parse(localStorage.getItem(invKey())||'null');if(!d||!Array.isArray(d.h))return;
+  for(let i=0;i<9;i++){
+   const b=d.h[i]|0;
+   if(b===0){hotbar[i]=0;continue}
+   if(b<0||b>NB||b===B_WATER||DEF[b].hide)continue;
+   if(b===B_BED&&myRole()<1)continue;if(DLSET.has(b)&&myRole()<2)continue;
+   hotbar[i]=b;
+  }
+  P.sel=clamp(d.s|0,0,8);
+ }catch(e){}
+}
+setInterval(saveInv,15000);
+window.addEventListener('pagehide',saveInv);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveInv()});
+/* ---- 왼쪽 위 정보(좌표/FPS/접속 상태): ~ 키로 켜고 끔 ---- */
+let showInfo=false;
+function toggleInfo(){showInfo=!showInfo;$('info').style.display=showInfo?'block':'none'}
+/* ---- 전체 지도 ---- */
+let mapImg=null;
+function buildMap(){
+ const N=200,c=$('mapc'),g=c.getContext('2d');
+ if(!mapImg){
+  mapImg=g.createImageData(N,N);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+   const h=terrainH((i+.5)*WORLD/N,(j+.5)*WORLD/N),o=(j*N+i)*4;let r,gg,b;
+   if(h<SEA){const d=clamp((SEA-h)/14,0,1);r=40-d*20;gg=100-d*40;b=200-d*60}
+   else if(h<=SEA+1){r=222;gg=208;b=150}
+   else if(h>=50){r=240;gg=244;b=250}
+   else if(h>40){r=130;gg=130;b=130}
+   else{const d=(h-SEA)/20;r=84-d*30;gg=160-d*40;b=52}
+   mapImg.data[o]=r;mapImg.data[o+1]=gg;mapImg.data[o+2]=b;mapImg.data[o+3]=255;
+  }
+ }
+ g.putImageData(mapImg,0,0);
+ const dot=(x,z,col,r)=>{g.fillStyle=col;g.beginPath();g.arc(x/WORLD*N,z/WORLD*N,r,0,7);g.fill()};
+ for(const p of peers.values())if(p.open&&p.has)dot(p.rx_,p.rz,'#fff',2);
+ dot(P.x,P.z,'#ff0',3);
+}
+function toggleMap(on){
+ if(state!=='play')return;if(on===undefined)on=ui!=='map';if(on&&ui)return;
+ ui=on?'map':'';showOv('ovMap',on);if(on){buildMap();if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
+}
+function showTab(on){
+ const t=$('tab');if(!on){t.style.display='none';return}
+ t.textContent='';
+ const add=(s)=>{const d=document.createElement('div');d.textContent=s;t.appendChild(d)};
+ add(`접속자 (${[...peers.values()].filter(p=>p.open).length+1}/${MAXP})`);
+ add(net.name+' (나)');
+ for(const p of peers.values())if(p.open)add(p.name+'  '+(p.ping?p.ping+'ms':''));
+ t.style.display='block';
+}
+
+/* ===================== 입력 ===================== */
+function lockPointer(){if(isTouch||state!=='play'||ui)return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
+document.addEventListener('pointerlockchange',()=>{
+ locked=document.pointerLockElement===cv;
+ if(!locked&&state==='play'&&!ui&&!isTouch){ui='pause';openPause()}
+});
+function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 시드 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;showOv('ovPause',true)}
+function resume(){if(ui==='pause'){ui='';showOv('ovPause',false);lockPointer()}}
+$('bResume').onclick=resume;
+$('bExport').onclick=exportWebcraft;
+$('bImport').onclick=()=>{if(!isOwner())return toast('소유자만 사용할 수 있습니다');$('mapFile').click()};
+$('mapFile').addEventListener('change',e=>{importWebcraft(e.target.files&&e.target.files[0]);e.target.value=''});
+$('ovMap').addEventListener('click',()=>toggleMap(false));
+$('rd').oninput=e=>{RD=+e.target.value;$('rdv').textContent=RD;try{localStorage.setItem('wc_rd',RD)}catch(x){}};
+$('bLeave').onclick=()=>{saveNow();csFlush();ui='';showOv('ovPause',false);leaveGame()};
+document.addEventListener('keydown',e=>{
+ if(e.target&&((e.target.tagName==='INPUT'&&e.target.id!=='chatIn')||e.target.tagName==='TEXTAREA'))return;
+ if(state!=='play'){return}
+ if(e.code==='Tab'){e.preventDefault();if(!ui)showTab(true);return}
+ if(chatOpen)return;
+ if(e.code==='Backquote'){toggleInfo();e.preventDefault();return}
+ if(ui==='lock'){lockKey(e);return}
+ if(ui==='dr'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeDr()}return}
+ if(ui==='pc')return;
+ if(e.code==='KeyE'){togglePal();e.preventDefault();return}
+ if(e.code==='KeyM'){toggleMic();return}
+ if(e.code==='KeyN'){toggleMap();return}
+ if(ui==='pause'&&e.code==='Escape'){resume();return}
+ if(e.code==='Escape'&&(ui==='pal'||ui==='map')){ui==='pal'?togglePal(false):toggleMap(false);return}
+ if(ui)return;
+ if(e.repeat&&e.code!=='KeyW')return;
+ keys[e.code]=true;
+ if(e.code==='KeyT'||e.code==='Slash'){e.preventDefault();openChat(e.code==='Slash'?'/':'');return}
+ if(e.code==='Space'){
+  e.preventDefault();const now=mono();
+  if(now-lastSpace<300){P.fly=!P.fly;P.vy=0;toast(P.fly?'비행 모드 ON':'비행 모드 OFF',1200)}lastSpace=now;
+ }
+ if(e.code==='KeyW'){const now=mono();if(!e.repeat){if(now-(keys._w||0)<260)keys.sprintLock=true;keys._w=now}}
+ if(e.code.startsWith('Digit')){const n=+e.code.slice(5);if(n>=1&&n<=9)selectSlot(n-1)}
+});
+document.addEventListener('keyup',e=>{
+ keys[e.code]=false;if(e.code==='KeyW')keys.sprintLock=false;
+ if(e.code==='Tab'){showTab(false)}
+});
+document.addEventListener('wheel',e=>{if(state==='play'&&!ui){selectSlot(P.sel+(e.deltaY>0?1:-1));e.preventDefault()}},{passive:false});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+let hold={b:0,p:0,t:0};
+cv.addEventListener('mousedown',e=>{
+ if(state!=='play'||ui)return;
+ if(!locked&&!isTouch){lockPointer();return}
+ if(e.button===0){breakBlock();hold.b=1;hold.t=.28}
+ else if(e.button===2){if(!useBlock())placeBlock();hold.p=1;hold.t=.28}
+ else if(e.button===1){pickBlock();e.preventDefault()}
+});
+document.addEventListener('mouseup',e=>{if(e.button===0)hold.b=0;if(e.button===2)hold.p=0});
+document.addEventListener('mousemove',e=>{
+ if(!locked||ui)return;
+ cam.yaw-=e.movementX*.0022;cam.pitch=clamp(cam.pitch-e.movementY*.0022,-1.55,1.55);
+});
+window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;hold.b=hold.p=0});
+/* ---- 터치 ---- */
+let touchSprint=false;
+const joy={a:false,x:0,y:0,id:-1};let lookId=-1,lx=0,ly=0;
+if(isTouch){
+ 
+ const jz=$('joy'),jk=$('joyk');
+ jz.addEventListener('touchstart',e=>{const t=e.changedTouches[0];joy.id=t.identifier;joy.a=true;jmove(t);e.preventDefault()},{passive:false});
+ const jmove=t=>{const r=jz.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=(t.clientX-cx)/(r.width/2),dy=(t.clientY-cy)/(r.height/2);const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l}joy.x=dx;joy.y=dy;jk.style.left=(40+dx*40)+'px';jk.style.top=(40+dy*40)+'px'};
+ jz.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===joy.id)jmove(t);e.preventDefault()},{passive:false});
+ const jend=e=>{for(const t of e.changedTouches)if(t.identifier===joy.id){joy.a=false;joy.x=joy.y=0;joy.id=-1;jk.style.left=jk.style.top='40px'}};
+ jz.addEventListener('touchend',jend);jz.addEventListener('touchcancel',jend);
+ cv.addEventListener('touchstart',e=>{if(state!=='play'||ui)return;for(const t of e.changedTouches)if(lookId<0){lookId=t.identifier;lx=t.clientX;ly=t.clientY}e.preventDefault()},{passive:false});
+ cv.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===lookId){cam.yaw-=(t.clientX-lx)*.005;cam.pitch=clamp(cam.pitch-(t.clientY-ly)*.005,-1.55,1.55);lx=t.clientX;ly=t.clientY}e.preventDefault()},{passive:false});
+ const lend=e=>{for(const t of e.changedTouches)if(t.identifier===lookId)lookId=-1};cv.addEventListener('touchend',lend);cv.addEventListener('touchcancel',lend);
+ const btn=(id,dn,up)=>{const b=$(id);b.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&(!ui||id==='tbPal'||id==='tbMap'))dn()},{passive:false});if(up){b.addEventListener('touchend',up);b.addEventListener('touchcancel',up)}};
+ btn('tbJump',()=>{keys.Space=true;const now=mono();if(now-lastSpace<300){P.fly=!P.fly;toast(P.fly?'비행 모드 ON':'비행 모드 OFF',1200)}lastSpace=now},()=>{keys.Space=false});
+ btn('tbBreak',()=>{breakBlock();hold.b=1;hold.t=.3},()=>{hold.b=0});
+ btn('tbPlace',()=>{if(!useBlock())placeBlock();hold.p=1;hold.t=.3},()=>{hold.p=0});
+ btn('tbPal',()=>togglePal());
+ btn('tbChat',()=>{if(state==='play'&&!ui)openChat()});
+ btn('tbMap',()=>toggleMap());
+ btn('tbMic',()=>toggleMic());
+ btn('tbInfo',()=>toggleInfo());
+ btn('tbMenu',()=>{if(state==='play'&&!ui){ui='pause';openPause()}});
+ btn('tbDown',()=>{keys.ShiftLeft=true},()=>{keys.ShiftLeft=false});
+ btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
+}
+
+/* ===================== 다른 플레이어 그리기 ===================== */
+const eb={v:new Float32Array(16*10*6*4*SF),i:new Uint32Array(16*10*6*6),nf:0,cap:960};
+const white=tileUV(T.white);
+function pushBox(cx,cy,cz,hx,hy,hz,yaw,px,py,pz,swing,col,B){
+ // 로컬 중심(cx,cy,cz) 박스를 (px,py,pz) 피벗에서 X축으로 swing 회전 후 yaw 회전
+ const cs=Math.cos(swing),sn=Math.sin(swing),cy_=Math.cos(yaw),sy_=Math.sin(yaw);
+ const tr=(x,y,z)=>{let ry=(y-py)*cs-(z-pz)*sn+py,rz=(y-py)*sn+(z-pz)*cs+pz;let rx=x;
+  return [rx*cy_+rz*sy_,ry,-rx*sy_+rz*cy_]};
+ const C=[];for(let k=0;k<8;k++)C.push(tr(cx+((k&1)?hx:-hx),cy+((k&2)?hy:-hy),cz+((k&4)?hz:-hz)));
+ const quads=[[1,5,7,3,.68],[0,2,6,4,.68],[2,3,7,6,1],[0,4,5,1,.5],[4,6,7,5,.84],[0,1,3,2,.84]];
+ for(const q of quads){
+  if(B.nf>=B.cap)return;const vi=B.nf*4;
+  for(let k=0;k<4;k++){const c=C[q[k]],o=(vi+k)*SF;B.v[o]=c[0];B.v[o+1]=c[1];B.v[o+2]=c[2];B.v[o+3]=white[0]+.001;B.v[o+4]=white[1]+.001;B.v[o+5]=col[0]*q[4];B.v[o+6]=col[1]*q[4];B.v[o+7]=col[2]*q[4];B.v[o+8]=0}
+  const io=B.nf*6;B.i[io]=vi;B.i[io+1]=vi+1;B.i[io+2]=vi+2;B.i[io+3]=vi;B.i[io+4]=vi+2;B.i[io+5]=vi+3;B.nf++;
+ }
+}
+const colOf=id=>{let h=0;for(const c of id)h=(h*31+c.charCodeAt(0))|0;const a=(h>>>0)%360/60,x=1-Math.abs(a%2-1);const [r,g,b]=a<1?[1,x,0]:a<2?[x,1,0]:a<3?[0,1,x]:a<4?[0,x,1]:a<5?[x,0,1]:[1,0,x];return [.35+r*.55,.35+g*.55,.35+b*.55]};
+let entMesh=null;
+function drawPlayers(dt){
+ eb.nf=0;
+ for(const p of peers.values()){
+  if(!p.open||!p.has)continue;
+  const k=Math.min(1,dt*12);
+  const ox=p.rx_,oz=p.rz;
+  p.rx_+=(p.tx-p.rx_)*k;p.ry+=(p.ty-p.ry)*k;p.rz+=(p.tz-p.rz)*k;
+  let dy=p.tyaw-p.yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));p.yaw+=dy*k;p.pitch+=(p.tpitch-p.pitch)*k;
+  const sp=Math.hypot(p.rx_-ox,p.rz-oz)/Math.max(dt,.001);p.spd+=(sp-p.spd)*.2;p.walk+=Math.min(p.spd,8)*dt;
+  const sw=Math.sin(p.walk*2.2)*Math.min(1,p.spd/3)*.8,sh=colOf(p.id),yw=p.yaw+Math.PI;
+  const bx=p.rx_-cam.x,by=p.ry-cam.y,bz=p.rz-cam.z;
+  const part=(cx,cy,cz,hx,hy,hz,pyv,swing,col)=>pushBox(cx,cy,cz,hx,hy,hz,yw,0,pyv,0,swing,col,eb);
+  // 월드 좌표 이동은 정점마다 더해주기 위해 임시로 오프셋 적용
+  const s0=eb.nf;
+  part(-.125,.35,0,.125,.35,.125,.7,sw,[.2,.25,.55]);
+  part(.125,.35,0,.125,.35,.125,.7,-sw,[.2,.25,.55]);
+  part(0,1.0,0,.25,.3,.125,1.0,0,sh);
+  part(-.375,1.0,0,.125,.3,.125,1.3,-sw,[.85,.65,.5]);
+  part(.375,1.0,0,.125,.3,.125,1.3,sw,[.85,.65,.5]);
+  part(0,1.55,0,.25,.25,.25,1.3,-p.pitch*.9,[.9,.72,.55]);
+  for(let q=s0*4;q<eb.nf*4;q++){const o=q*SF;eb.v[o]+=bx;eb.v[o+1]+=by;eb.v[o+2]+=bz}
+ }
+ if(!eb.nf)return;
+ entMesh=updDyn(entMesh,eb.v,eb.nf*4,eb.i,eb.nf*6);
+ gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(entMesh.vao);gl.drawElements(gl.TRIANGLES,entMesh.n,gl.UNSIGNED_INT,0);
+}
+const tagEls=new Map();
+function updateTags(w,h){
+ const box=$('tags');
+ for(const p of peers.values()){
+  let e=tagEls.get(p.id);
+  if(!p.open||!p.has){if(e)e.style.display='none';continue}
+  if(!e){e=document.createElement('div');e.className='tag';box.appendChild(e);tagEls.set(p.id,e)}
+  const x=p.rx_-cam.x,y=p.ry+2.15-cam.y,z=p.rz-cam.z;
+  const cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
+  if(cw<=.1||Math.hypot(x,y,z)>80){e.style.display='none';continue}
+  e.style.display='block';e.textContent=p.name;e.style.left=((cx/cw*.5+.5)*w)+'px';e.style.top=((1-(cy/cw*.5+.5))*h)+'px';
+ }
+ for(const [id,e] of tagEls)if(!peers.has(id)){e.remove();tagEls.delete(id)}
+}
+
+/* ---- 선택 블록 외곽선 ---- */
+let outlineMesh=null;
+const OUTB={v:new Float32Array(12*6*4*SF),i:new Uint32Array(12*6*6),nf:0,cap:72};
+function drawOutline(h){
+ if(!h)return;
+ const e=.004,x0=h.x-cam.x-e,y0=h.y-cam.y-e,z0=h.z-cam.z-e,x1=x0+1+2*e,y1=y0+1+2*e,z1=z0+1+2*e,t=.012;
+ // 12 모서리를 얇은 박스로
+ const bigBuf=OUTB;bigBuf.nf=0;
+ const edge=(ax,ay,az,bx,by,bz)=>pushBoxWorld(ax,ay,az,bx,by,bz,bigBuf);
+ const X=[x0,x1],Y=[y0,y1],Z=[z0,z1];
+ for(const y of Y)for(const z of Z)edge(x0-t,y-t,z-t,x1+t,y+t,z+t);
+ for(const x of X)for(const z of Z)edge(x-t,y0-t,z-t,x+t,y1+t,z+t);
+ for(const x of X)for(const y of Y)edge(x-t,y-t,z0-t,x+t,y+t,z1+t);
+ outlineMesh=updDyn(outlineMesh,bigBuf.v,bigBuf.nf*4,bigBuf.i,bigBuf.nf*6);
+ gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(outlineMesh.vao);gl.drawElements(gl.TRIANGLES,outlineMesh.n,gl.UNSIGNED_INT,0);
+}
+function pushBoxWorld(x0,y0,z0,x1,y1,z1,B){
+ const C=[];for(let k=0;k<8;k++)C.push([k&1?x1:x0,k&2?y1:y0,k&4?z1:z0]);
+ const quads=[[1,5,7,3],[0,2,6,4],[2,3,7,6],[0,4,5,1],[4,6,7,5],[0,1,3,2]];
+ for(const q of quads){const vi=B.nf*4;for(let k=0;k<4;k++){const c=C[q[k]],o=(vi+k)*SF;B.v[o]=c[0];B.v[o+1]=c[1];B.v[o+2]=c[2];B.v[o+3]=white[0]+.001;B.v[o+4]=white[1]+.001;B.v[o+5]=B.v[o+6]=B.v[o+7]=.04;B.v[o+8]=1}
+  const io=B.nf*6;B.i[io]=vi;B.i[io+1]=vi+1;B.i[io+2]=vi+2;B.i[io+3]=vi;B.i[io+4]=vi+2;B.i[io+5]=vi+3;B.nf++}
+}
+
+/* ===================== 게임 흐름 ===================== */
+function findSpawn(){
+ let cx=5000+((Math.random()*40-20)|0),cz=5000+((Math.random()*40-20)|0);
+ for(let r=0;r<2000;r+=7){ // 바다면 육지를 찾아 나선다
+  for(let a=0;a<8;a++){const x=cx+Math.round(Math.cos(a*.785)*r),z=cz+Math.round(Math.sin(a*.785)*r);const h=terrainH(x,z);if(h>SEA+1&&h<44&&!treeAt(x,z))return [x,z]}
+ }
+ return [cx,cz];
+}
+function clearAbove(x,y,z){for(let k=1;k<=5;k++){const b=getBlock(x,y+k,z);if(b&&b!==B_WATER)return false}return true}
+function placeAtSurface(x,z,needClear){
+ ensureAround(x>>4,z>>4,2);
+ let y=WH-1;while(y>1){const b=getBlock(x,y,z);if(b&&b!==B_WATER&&b!==7&&SOLID[b])break;y--}
+ P.sit=null;P.x=x+.5;P.z=z+.5;P.y=y+1.01;P.vx=P.vy=P.vz=0;
+ if(!needClear)return true;
+ for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]])for(let k=1;k<=2;k++){const b=getBlock(x+dx,y+k,z+dz);if(b&&SOLID[b])return false}
+ return clearAbove(x,y,z);
+}
+/* ---- 마지막 위치 저장/복원: 방 + 닉네임(계정)별로 로컬에 저장 · 30초마다 + 나갈 때 + 탭 닫을 때 (솔로/멀티 공통) ---- */
+const posKey=()=>'wc_pos_'+ROOM+'_'+bkey(net.name||'player');
+function savePos(){
+ if(state!=='play'||!fin(P.x)||!fin(P.y)||!fin(P.z))return;
+ try{localStorage.setItem(posKey(),JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}
+}
+function loadPos(){try{return JSON.parse(localStorage.getItem(posKey())||'null')}catch(e){return null}}
+window.addEventListener('pagehide',savePos);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')savePos()});
+function enterGame(){
+ if(state==='play')return;
+ state='play';showOv('ovTitle',false);showOv('ovQueue',false);$('hud').style.display='block';if(isTouch)$('touch').style.display='block';
+ let sp=loadPos();
+ if(sp&&fin(sp.x)&&fin(sp.z)&&sp.x>=0&&sp.z>=0&&sp.x<WORLD&&sp.z<WORLD){ensureAround(sp.x>>4,sp.z>>4,2);placeAtSurface(Math.floor(sp.x),Math.floor(sp.z));if(fin(sp.y)&&sp.y>1&&sp.y<WH){const b=getBlock(Math.floor(sp.x),Math.floor(sp.y),Math.floor(sp.z));if(!SOLID[b])P.y=sp.y}cam.yaw=+sp.yaw||0}
+ else{for(let i=0;i<40;i++){const [x,z]=findSpawn();if(placeAtSurface(x,z,true))break}cam.yaw=Math.random()*6.28}
+ cam.pitch=0;P.fly=false;
+ net.offline=allEdits();loadInv();P.sit=null;renderHotbar();buildPalette();updateStat();
+ chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행 · 채팅에 /help':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · /help 명령어 · N 지도 · M 마이크 · ~ 좌표/정보','sys');
+ if(isTouch)goFS();else lockPointer();
+ if(net.on)toast('대기열 통과! 다른 플레이어와 P2P 연결 중…');
+}
+function goFS(){try{const e=document.documentElement;(e.requestFullscreen||e.webkitRequestFullscreen||(()=>{})).call(e)}catch(x){}}
+function leaveGame(){
+ saveInv();P.sit=null;if(ui==='pc')closePC(true);
+ micOff();
+ savePos();
+ netDisconnect();net.synced=false;
+ state='title';ui='';chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
+ $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
+ for(const [id,e] of tagEls){e.remove()}tagEls.clear();
+ const [x,z]=[5000,5000];placeAtSurface(x,z);
+}
+function readNick(){
+ let n=cleanName($('nick').value);if(!n){n='PLAYER'+(1000+Math.random()*9000|0)}
+ $('nick').value=n;net.name=n;try{localStorage.setItem('wc_nick',n)}catch(e){}return n;
+}
+$('bSolo').onclick=()=>{readNick();enterGame()};
+$('bMulti').onclick=()=>{
+ if(isBanned(readNick()))return toast('🚫 이 닉네임은 이 방에서 영구 차단되었습니다',3500);
+ state='queue';showOv('ovTitle',false);showOv('ovQueue',true);$('bQSolo').style.display='none';
+ $('qMsg').textContent='Firebase 에 연결하는 중…';$('qList').textContent='';netConnect();evalQueue();
+};
+$('bQSolo').onclick=()=>{netDisconnect();enterGame()};
+$('bQBack').onclick=()=>{netDisconnect();state='title';showOv('ovQueue',false);showOv('ovTitle',true)};
+try{$('nick').value=localStorage.getItem('wc_nick')||''}catch(e){}
+$('nick').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')$('bMulti').click()});
+
+/* ===================== 메인 루프 ===================== */
+let last=performance.now(),sendT=0,saveT=0,fpsA=0,fpsN=0,fps=0;
+function resize(){const d=Math.min(devicePixelRatio||1,1.5),w=innerWidth,h=innerHeight;cv.width=Math.max(2,w*d|0);cv.height=Math.max(2,h*d|0)}
+addEventListener('resize',resize);resize();
+function frame(t){
+ requestAnimationFrame(frame);
+ let dt=(t-last)/1000;last=t;if(!(dt>0))dt=.016;if(dt>.25)dt=.25;
+ fpsA+=dt;fpsN++;if(fpsA>.5){fps=Math.round(fpsN/fpsA);fpsA=fpsN=0}
+ const w=cv.width,h=cv.height;
+ if(state==='play'){
+  if(!getChunk(Math.floor(P.x/CH),Math.floor(P.z/CH))){ensureAround(Math.floor(P.x/CH),Math.floor(P.z/CH),1)}
+  const free=!ui&&(locked||isTouch);
+  const mv={f:0,s:0,jump:false,down:false,sprint:false};
+  if(free){
+   mv.f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joy.y;mv.s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joy.x;
+   mv.jump=!!keys.Space;mv.down=!!(keys.ShiftLeft||keys.ShiftRight);mv.sprint=!!(keys.ControlLeft||keys.ControlRight||keys.sprintLock||touchSprint)&&mv.f>0;
+   if(joy.a&&Math.hypot(joy.x,joy.y)>.95)mv.sprint=true;
+   hold.t-=dt;if(hold.t<=0){if(hold.b){breakBlock();hold.t=.17}else if(hold.p){if(!usableAt())placeBlock();hold.t=.2}}
+  }
+  let rem=dt;while(rem>0){const s=Math.min(rem,.016);stepPlayer(s,mv);rem-=s}
+  cam.x=P.x;cam.y=P.y+(P.sit?EYE-.45:EYE);cam.z=P.z;
+  sendT-=dt;if(sendT<=0&&peers.size){sendT=.1;netBroadcast({k:'st',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2),r:+cam.yaw.toFixed(2),p:+cam.pitch.toFixed(2),b:hotbar[P.sel]},false)}
+  saveT-=dt;if(saveT<=0){saveT=30;savePos()}
+ }else{ // 타이틀 배경: 스폰 위를 천천히 돌며 둘러본다
+  const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
+  cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
+ }
+ if(state==='play')updateVoice(dt);
+ updateChunks(cam.x,cam.z,state==='play'?7:12);
+ // ---- 렌더 ----
+ const sk=skyState(),fogFar=RD*CH*.92,fogNear=fogFar*.55;
+ gl.viewport(0,0,w,h);gl.clearColor(sk.c[0],sk.c[1],sk.c[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ const f=buildVP(w,h);
+ gl.useProgram(prog);gl.uniformMatrix4fv(U.vp,false,VP);gl.uniform1f(U.light,sk.light);gl.uniform3f(U.fog,sk.c[0],sk.c[1],sk.c[2]);gl.uniform2f(U.fd,fogNear,fogFar);
+ gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.disable(gl.BLEND);gl.depthMask(true);
+ const vis=[];
+ for(const c of chunks.values()){
+  if(!c.m)continue;
+  const ox=c.cx*CH-cam.x,oz=c.cz*CH-cam.z,mx=ox+8,mz=oz+8,dist=Math.hypot(mx,mz);
+  if(dist>RD*CH+24)continue;
+  if(dist>26&&(mx*f[0]+mz*f[2])/dist<-.2-Math.max(0,(0)))continue;
+  vis.push(c);
+ }
+ for(const c of vis){if(!c.m.s)continue;gl.uniform3f(U.off,c.cx*CH-cam.x,-cam.y,c.cz*CH-cam.z);gl.bindVertexArray(c.m.s.vao);gl.drawElements(gl.TRIANGLES,c.m.s.n,gl.UNSIGNED_INT,0)}
+ if(state==='play'){drawPlayers(dt);if(!ui)drawOutline(ray(6))}
+ gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+ for(const c of vis){if(!c.m.t)continue;gl.uniform3f(U.off,c.cx*CH-cam.x,-cam.y,c.cz*CH-cam.z);gl.bindVertexArray(c.m.t.vao);gl.drawElements(gl.TRIANGLES,c.m.t.n,gl.UNSIGNED_INT,0)}
+ gl.depthMask(true);gl.disable(gl.BLEND);
+ if(state==='play'){
+  updateTags(innerWidth,innerHeight);
+  if(showInfo)$('pos').textContent=`XYZ ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   FPS ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 ${WORLD}×${WORLD} · 변경 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
+ }
+}
+/* 시작 */
+window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
+loadSaved().then(()=>{csLoad();lkSync()});
+ensureAround(5000>>4,5000>>4,3);
+placeAtSurface(5000,5000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
