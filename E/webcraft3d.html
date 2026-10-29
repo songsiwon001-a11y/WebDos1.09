@@ -153,7 +153,7 @@ function terrainH(x,z){
 }
 
 /* ===================== 블록 정의 · 텍스처 아틀라스 ===================== */
-// 타일: 0 grassTop 1 grassSide 2 dirt 3 stone 4 cobble 5 sand 6 logSide 7 logTop 8 leaves 9 planks 10 glass 11 water 12 bricks 13 snow 14 bedrock 15 gravel 16 glow 17.. wool(16..23) 31 white
+// 타일: 0 grassTop 1 grassSide 2 dirt 3 stone 4 cobble 5 sand 6 logSide 7 logTop 8 leaves 9 planks 10 glass 11 water 12 bricks 13 snow 14 bedrock 15 gravel 16 glow 17..24 wool 31 white
 const T={grassTop:0,grassSide:1,dirt:2,stone:3,cobble:4,sand:5,logSide:6,logTop:7,leaves:8,planks:9,glass:10,water:11,bricks:12,snow:13,bedrock:14,gravel:15,glow:16,wool:17,white:31};
 // 신규 타일: 32번부터 차례대로 (기존 타일 번호/모양은 그대로)
 ['stoneBrick','smooth','sandTop','sandSide','sandBot','obsidian','quartzTop','quartzSide','clay','terracotta','birchPlanks','darkPlanks','birchSide','birchTop','bookshelf','ironBlock','goldBlock','diamondBlock','coalOre','ironOre','goldOre','diamondOre','mossy','ice','cactusTop','cactusSide','pumpkinTop','pumpkinSide','melonTop','melonSide','hayTop','haySide','netherrack','redSand','seaLantern','lantern','magma','redLamp','jackFace','neonWhite','neonBlue','neonGreen','neonPurple','neonRed','glassRed','glassBlue','glassGreen','glassYellow'].forEach((n,i)=>{T[n]=32+i});
@@ -548,6 +548,11 @@ function mkMesh(vdata,nv,idata,ni,dyn){
  gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,4,gl.FLOAT,false,STR,20);
  gl.bindVertexArray(null);return {vao,vb,ib,n:ni};
 }
+function updDyn(m,vdata,nv,idata,ni){
+ if(!m)return mkMesh(vdata,nv,idata,ni,true);
+ gl.bindVertexArray(m.vao);gl.bindBuffer(gl.ARRAY_BUFFER,m.vb);gl.bufferData(gl.ARRAY_BUFFER,vdata.subarray(0,nv*SF),gl.DYNAMIC_DRAW);
+ gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,m.ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idata.subarray(0,ni),gl.DYNAMIC_DRAW);m.n=ni;return m;
+}
 const delMesh=m=>{if(m){gl.deleteVertexArray(m.vao);gl.deleteBuffer(m.vb);gl.deleteBuffer(m.ib)}};
 
 /* ---- 청크 메시 (면 컬링 + 정점 AO) ---- */
@@ -560,7 +565,7 @@ const FACES=[ // n, u, v, 원점오프셋, 음영
  {n:[0,0,-1],u:[1,0,0],v:[0,1,0],o:[0,0,0],sh:.84,k:'side'}];
 const PW=18,PS=PW*PW;
 const pad=new Uint16Array(PW*(WH+2)*PW);
-const bufs={s:{v:new Float32Array(14000*4*SF),i:new Uint32Array(14000*6),nf:0,cap:14000},t:{v:new Float32Array(5000*4*SF),i:new Uint32Array(5000*6),nf:0,cap:5000}};
+const bufs={s:{v:new Float32Array(30000*4*SF),i:new Uint32Array(30000*6),nf:0,cap:30000},t:{v:new Float32Array(10000*4*SF),i:new Uint32Array(10000*6),nf:0,cap:10000}};
 const AOF=[.5,.7,.86,1];
 /* ---- 블록 빛: 발광 블록에서 1칸마다 1씩 약해지며 퍼진다 (불투명 블록은 막음, 최대 15칸) ----
    주변 3x3 청크(48x48)를 한 번에 계산. 근처에 발광 블록이 없으면 계산 자체를 건너뜀 */
@@ -690,7 +695,7 @@ function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);if(c.
 function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz))}
 
 /* ---- 청크 로딩 관리 ---- */
-let RD=+(localStorage.getItem('wc_rd')||0)||(isTouch?5:8);
+let RD=(()=>{try{return +(localStorage.getItem('wc_rd')||0)||(isTouch?5:8)}catch(e){return isTouch?5:8}})();
 let chunkList=[],listCx=-999,listCz=-999,listRD=0;
 function refreshList(cx,cz){
  listCx=cx;listCz=cz;listRD=RD;chunkList=[];const R=RD+1;
@@ -876,7 +881,7 @@ function fbInit(){
 /* ---- 클라우드 저장 (Firebase): 모두 나가거나 서버가 닫혀도 맵이 남도록, 블록 변경 기록을 구역(512x512)별 문서로 저장 ----
    · 기존 컬렉션(FS_LOBBY)을 재사용하고 room 값을 'wcsave-방이름' 으로 구분 (보안 규칙 변경 불필요)
    · 문서 1개 ≤ DOC_MAX, 전체 ≤ TOTAL_MAX 를 넘거나 Firebase 한도(resource-exhausted)에 걸리면 자동 업로드가 막힙니다 */
-const CS={room:'wcsave-'+ROOM,dirty:new Set(),sizes:new Map(),blocked:false,loaded:false,busy:false,DOC_MAX:900000,TOTAL_MAX:200*1024*1024};
+const CS={room:'wcsave-'+ROOM,dirty:new Set(),sizes:new Map(),big:new Set(),blocked:false,loaded:false,busy:false,DOC_MAX:900000,TOTAL_MAX:200*1024*1024};
 const regOf=(x,z)=>(x>>9)+'_'+(z>>9);
 const csId=r=>'wcs_'+ROOM+'_'+r;
 function markRegion(x,z){CS.dirty.add(regOf(x,z))}
@@ -901,7 +906,7 @@ function csDecode(str){ // 문서의 변경 기록을 월드에 적용(LWW), 가
 function csText(){
  if(CS.blocked)return ' · ☁ 클라우드 저장 중단(용량/권한)';
  if(!CS.loaded)return ' · ☁ 클라우드 연결 중…';
- return ' · ☁ 클라우드 저장'+(CS.dirty.size?' (대기 '+CS.dirty.size+'구역)':' 완료');
+ return ' · ☁ 클라우드 저장'+(CS.dirty.size?' (대기 '+CS.dirty.size+'구역)':' 완료')+(CS.big.size?' · 용량 초과 '+CS.big.size+'구역 제외':'');
 }
 async function csLoad(){
  if(CS.loaded||CS.busy)return;
@@ -932,17 +937,19 @@ async function csFlush(){
  CS.busy=true;
  try{
   for(const r of [...CS.dirty].slice(0,4)){
-   const ref=db.collection(FS_LOBBY).doc(csId(r));let over=false,len=0;
+   const ref=db.collection(FS_LOBBY).doc(csId(r));let over=0,len=0;
    await db.runTransaction(async tx=>{
-    over=false;
+    over=0;
     const s=await tx.get(ref);
     if(s.exists){const d=s.data()||{};if(typeof d.d==='string'){try{csDecode(d.d)}catch(e){}}} // 남이 올린 변경과 합치기
     const enc=csEncode(r);let total=0;for(const [k,v] of CS.sizes)if(k!==r)total+=v;
-    if(enc.d.length>CS.DOC_MAX||total+enc.d.length>CS.TOTAL_MAX){over=true;return}
+    if(enc.d.length>CS.DOC_MAX){over=1;return}
+    if(total+enc.d.length>CS.TOTAL_MAX){over=2;return}
     len=enc.d.length;
     tx.set(ref,{room:CS.room,r,n:enc.n,mt:enc.mt,d:enc.d,ts:Date.now()});
    });
-   if(over){CS.blocked=true;toast('클라우드 용량 한도 초과 — 자동 업로드를 중단합니다 (내 브라우저에는 계속 저장)',6000);break}
+   if(over===1){CS.dirty.delete(r);if(!CS.big.has(r)){CS.big.add(r);toast('이 구역('+r+')은 너무 커서 클라우드에 올릴 수 없습니다 — 다른 구역은 계속 저장됩니다 (내 브라우저에는 저장)',6000)}continue}
+   if(over===2){CS.blocked=true;toast('클라우드 용량 한도 초과 — 자동 업로드를 중단합니다 (내 브라우저에는 계속 저장)',6000);break}
    CS.sizes.set(r,len);CS.dirty.delete(r);
   }
  }catch(e){
@@ -1299,6 +1306,74 @@ cmd(['blocks','블록'],0,'/blocks [검색어]','블록 번호/이름 보기 (�
  for(let i=0;i<out.length;i+=6)sys(out.slice(i,i+6).join('   '));
 });
 /* ---- 어드민 이상 ---- */
+/* ---- /찾기: 가장 가까운 블록 찾기 → 그 옆으로 순간이동 ---- */
+const NAT_FLAT=[1,2,3,5,10,12,14];
+function natY(id,x,z){ // 자연 지형(생성 규칙)에서 이 칼럼에 id 블록이 있으면 y, 없으면 -1
+ if(id===6||id===7){const t=treeAt(x,z);return t?(id===6?t.h+1:t.h+t.th):-1}
+ const h=terrainH(x,z),beach=h<=SEA+1;
+ switch(id){
+  case 1:return (!beach&&h<50)?h:-1;
+  case 12:return h>=50?h:-1;
+  case 5:return beach?h:-1;
+  case 10:return h<SEA?SEA:-1;
+  case 14:return (beach&&h-4>=1)?h-4:-1;
+  case 2:return (!beach&&h-1>=1)?h-1:-1;
+  case 3:return h-5>=1?h-5:-1;
+ }
+ return -1;
+}
+function findNearestBlock(id){
+ const base=BASEOF[id]!==undefined?BASEOF[id]:id,want=new Uint8Array(NB+1);
+ for(let i=1;i<=NB;i++)if(i===base||BASEOF[i]===base)want[i]=1;
+ const px=P.x,py=P.y,pz=P.z;let best=null,bd=Infinity;
+ const tryP=(x,y,z)=>{const d=(x+.5-px)*(x+.5-px)+(y+.5-py)*(y+.5-py)+(z+.5-pz)*(z+.5-pz);if(d<bd){bd=d;best={x,y,z}}};
+ const gap=(x0,z0)=>{const dx=Math.max(x0-px,0,px-(x0+CH)),dz=Math.max(z0-pz,0,pz-(z0+CH));return dx*dx+dz*dz};
+ // 1) 지금 불러와 있는 청크
+ const lo=want[B_BED]?0:CH*CH;
+ for(const c of chunks.values()){
+  if(gap(c.cx*CH,c.cz*CH)>=bd)continue;
+  const d=c.d,end=(Math.min(WH-1,c.maxY)+1)*CH*CH;
+  for(let i=lo;i<end;i++)if(want[d[i]])tryP(c.cx*CH+(i&15),i>>8,c.cz*CH+((i>>4)&15));
+ }
+ // 2) 아직 안 불러온 곳에 사람이 설치한 블록 (편집 기록)
+ for(const [k,m] of edits){
+  const cx=Math.floor(k/1024),cz=k%1024;if(gap(cx*CH,cz*CH)>=bd)continue;
+  for(const [idx,v] of m)if(want[v[0]])tryP(cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15));
+ }
+ // 3) 멀리 있는 자연 블록은 지형 생성 규칙으로 계산해서 찾기
+ const tree=base===6||base===7;
+ if((tree||NAT_FLAT.includes(base))&&bd>(RD*CH)*(RD*CH)){
+  const step=tree?1:3,maxR=tree?250:800,cx0=Math.floor(px),cz0=Math.floor(pz);
+  const chk=(x,z)=>{if(x<0||z<0||x>=WORLD||z>=WORLD)return;const y=natY(base,x,z);if(y>=1)tryP(x,y,z)};
+  for(let r=0;r<=maxR;r+=step){
+   if(r>Math.sqrt(bd)+step)break;
+   for(let a=-r;a<=r;a+=step){chk(cx0+a,cz0-r);chk(cx0+a,cz0+r);chk(cx0-r,cz0+a);chk(cx0+r,cz0+a)}
+  }
+ }
+ return best&&{x:best.x,y:best.y,z:best.z,dist:Math.sqrt(bd)};
+}
+function standSpot(x,y,z){ // 그 블록 옆에서 몸이 끼지 않는 자리를 찾는다
+ ensureAround(x>>4,z>>4,1);
+ const free=(a,b,c)=>{const q=getBlock(a,b,c);return !q||!SOLID[q]};
+ const fits=(a,b,c)=>b>=1&&b<WH+2&&free(a,b,c)&&free(a,b+1,c);
+ const near=[[0,1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,-1,0]];
+ for(const sup of [true,false])for(const [dx,dy,dz] of near){
+  const a=x+dx,b=y+dy,c=z+dz;
+  if(a<0||c<0||a>=WORLD||c>=WORLD||!fits(a,b,c))continue;
+  if(sup&&!SOLID[getBlock(a,b-1,c)])continue;
+  return [a+.5,b,c+.5];
+ }
+ for(let yy=y+1;yy<WH+2;yy++)if(fits(x,yy,z))return [x+.5,yy,z+.5];
+ return [x+.5,y+1,z+.5];
+}
+cmd(['찾기','find','locate'],1,'/찾기 <블록 이름|번호>','가장 가까운 그 블록으로 순간이동 (/blocks 로 이름 확인)',a=>{
+ if(!a.length)return sys('사용법: /찾기 블록이름  (예: /찾기 다이아몬드 광석)');
+ const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ const r=findNearestBlock(b);
+ if(!r)return sys(DEF[b].name+' 블록을 찾지 못했습니다 (불러온 구역·설치 기록·주변 지형에 없음)');
+ const [sx,sy,sz]=standSpot(r.x,r.y,r.z);teleport(sx,sy,sz);
+ sys(DEF[b].name+' 발견! '+r.x+' / '+r.y+' / '+r.z+' (약 '+Math.round(r.dist)+'칸) 으로 이동했습니다');
+});
 cmd(['time','시간'],1,'/time [set|add|lock|unlock] ...','시간 변경 (예: /time set 밤, /time set 12, /time add 3, /time lock)',a=>{
  const sub=(a[0]||'').toLowerCase();let h=curHour(),lock=TLOCK!==null;
  if(!sub||sub==='query')return sys('현재 시각 '+Math.floor(h)+'시 '+Math.floor((h%1)*60)+'분'+(lock?' (고정됨)':'')+' — /time set <0~24|일출|아침|정오|일몰|밤|자정>, add <시간>, lock, unlock');
@@ -1394,7 +1469,7 @@ function chatAdd(who,txt,cls){
  while(log.children.length>40)log.removeChild(log.firstChild);
  setTimeout(()=>d.classList.add('old'),9000);
 }
-function openChat(){if(state!=='play'||chatOpen)return;chatOpen=true;ui='chat';for(const k in keys)keys[k]=false;$('chat').classList.add('open');if(document.pointerLockElement)document.exitPointerLock();const i=$('chatIn');i.value='';setTimeout(()=>i.focus(),0)}
+function openChat(pre){if(state!=='play'||chatOpen)return;chatOpen=true;ui='chat';for(const k in keys)keys[k]=false;$('chat').classList.add('open');if(document.pointerLockElement)document.exitPointerLock();const i=$('chatIn');i.value=typeof pre==='string'?pre:'';setTimeout(()=>{i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}
 function closeChat(relock){if(!chatOpen)return;chatOpen=false;ui='';$('chat').classList.remove('open');$('chatIn').blur();if(relock)lockPointer()}
 $('chatIn').addEventListener('keydown',e=>{
  e.stopPropagation();
@@ -1492,7 +1567,7 @@ document.addEventListener('keydown',e=>{
  if(ui)return;
  if(e.repeat&&e.code!=='KeyW')return;
  keys[e.code]=true;
- if(e.code==='KeyT'||e.code==='Slash'){e.preventDefault();openChat();return}
+ if(e.code==='KeyT'||e.code==='Slash'){e.preventDefault();openChat(e.code==='Slash'?'/':'');return}
  if(e.code==='Space'){
   e.preventDefault();const now=mono();
   if(now-lastSpace<300){P.fly=!P.fly;P.vy=0;toast(P.fly?'비행 모드 ON':'비행 모드 OFF',1200)}lastSpace=now;
@@ -1588,7 +1663,7 @@ function drawPlayers(dt){
   for(let q=s0*4;q<eb.nf*4;q++){const o=q*SF;eb.v[o]+=bx;eb.v[o+1]+=by;eb.v[o+2]+=bz}
  }
  if(!eb.nf)return;
- delMesh(entMesh);entMesh=mkMesh(eb.v,eb.nf*4,eb.i,eb.nf*6,true);
+ entMesh=updDyn(entMesh,eb.v,eb.nf*4,eb.i,eb.nf*6);
  gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(entMesh.vao);gl.drawElements(gl.TRIANGLES,entMesh.n,gl.UNSIGNED_INT,0);
 }
 const tagEls=new Map();
@@ -1608,17 +1683,18 @@ function updateTags(w,h){
 
 /* ---- 선택 블록 외곽선 ---- */
 let outlineMesh=null;
+const OUTB={v:new Float32Array(12*6*4*SF),i:new Uint32Array(12*6*6),nf:0,cap:72};
 function drawOutline(h){
  if(!h)return;
  const e=.004,x0=h.x-cam.x-e,y0=h.y-cam.y-e,z0=h.z-cam.z-e,x1=x0+1+2*e,y1=y0+1+2*e,z1=z0+1+2*e,t=.012;
  // 12 모서리를 얇은 박스로
- const bigBuf={v:new Float32Array(12*6*4*SF),i:new Uint32Array(12*6*6),nf:0,cap:72};
+ const bigBuf=OUTB;bigBuf.nf=0;
  const edge=(ax,ay,az,bx,by,bz)=>pushBoxWorld(ax,ay,az,bx,by,bz,bigBuf);
  const X=[x0,x1],Y=[y0,y1],Z=[z0,z1];
  for(const y of Y)for(const z of Z)edge(x0-t,y-t,z-t,x1+t,y+t,z+t);
  for(const x of X)for(const z of Z)edge(x-t,y0-t,z-t,x+t,y1+t,z+t);
  for(const x of X)for(const y of Y)edge(x-t,y-t,z0-t,x+t,y+t,z1+t);
- delMesh(outlineMesh);outlineMesh=mkMesh(bigBuf.v,bigBuf.nf*4,bigBuf.i,bigBuf.nf*6,true);
+ outlineMesh=updDyn(outlineMesh,bigBuf.v,bigBuf.nf*4,bigBuf.i,bigBuf.nf*6);
  gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(outlineMesh.vao);gl.drawElements(gl.TRIANGLES,outlineMesh.n,gl.UNSIGNED_INT,0);
 }
 function pushBoxWorld(x0,y0,z0,x1,y1,z1,B){
@@ -1671,7 +1747,7 @@ function leaveGame(){
  micOff();
  savePos();
  netDisconnect();net.synced=false;
- state='title';ui='';chatOpen=false;if(document.pointerLockElement)document.exitPointerLock();
+ state='title';ui='';chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
@@ -1693,7 +1769,7 @@ $('nick').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')
 
 /* ===================== 메인 루프 ===================== */
 let last=performance.now(),sendT=0,saveT=0,fpsA=0,fpsN=0,fps=0;
-function resize(){const d=Math.min(devicePixelRatio||1,isTouch?1.5:1.5),w=innerWidth,h=innerHeight;cv.width=Math.max(2,w*d|0);cv.height=Math.max(2,h*d|0)}
+function resize(){const d=Math.min(devicePixelRatio||1,1.5),w=innerWidth,h=innerHeight;cv.width=Math.max(2,w*d|0);cv.height=Math.max(2,h*d|0)}
 addEventListener('resize',resize);resize();
 function frame(t){
  requestAnimationFrame(frame);
