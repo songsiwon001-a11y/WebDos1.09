@@ -14,7 +14,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #cross{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);mix-blend-mode:difference}
 #cross:before,#cross:after{content:"";position:absolute;background:#fff}
 #cross:before{left:10px;top:2px;width:2px;height:18px}#cross:after{top:10px;left:2px;height:2px;width:18px}
-#info{position:absolute;left:8px;top:6px;font-size:13px;line-height:1.5;text-shadow:1px 1px 0 #000;white-space:pre}
+#info{display:none;position:absolute;left:8px;top:6px;font-size:13px;line-height:1.5;text-shadow:1px 1px 0 #000;white-space:pre}
 #stat.ok{color:#8f8}
 #hot{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:3px;background:rgba(0,0,0,.45);padding:4px;border:2px solid #222}
 .slot{width:44px;height:44px;border:3px solid #555;background:rgba(60,60,60,.6);position:relative;pointer-events:auto}
@@ -49,6 +49,10 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 @media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#bname{bottom:52px}#chat{bottom:52px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
 #joy{position:absolute;left:24px;bottom:70px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
 #joyk{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.4)}
+#lkDisp{font-size:34px;letter-spacing:6px;margin:6px 0 14px}
+#lkPad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+#lkPad div{padding:14px 0;background:#333;border:2px solid #777;font-size:22px;cursor:pointer;pointer-events:auto}
+#lkPad div:active{background:#666}
 </style>
 </head>
 <body>
@@ -72,7 +76,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
   <div class="b" id="bMulti">멀티플레이 (대기열 입장)</div>
   <div class="b dim" id="bSolo">혼자 플레이</div>
-  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 하강 · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅(/help 명령어) · N 전체 지도 · M 마이크 · Tab 접속자</div>
+  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 하강 · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅(/help 명령어) · N 전체 지도 · M 마이크 · Tab 접속자 · ~ 좌표/정보</div>
  </div>
 </div>
 <div class="ov" id="ovQueue">
@@ -103,6 +107,16 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <canvas id="mapc" width="200" height="200"></canvas>
  <div class="sub" style="margin-top:8px">전체 월드 (10000×10000) — 노란 점: 나 · 흰 점: 다른 플레이어 · N 으로 닫기</div>
 </div>
+<div class="ov" id="ovLock">
+ <div class="card" style="width:min(320px,92vw)">
+  <h1 style="font-size:26px">도어락</h1>
+  <div class="sub" id="lkMsg"></div>
+  <div id="lkDisp"></div>
+  <div id="lkPad"></div>
+  <div class="b dim" id="lkSet" style="display:none"></div>
+  <div class="b dim" id="lkClose">닫기 (Esc)</div>
+ </div>
+</div>
 <div id="touch">
  <div id="joy"><div id="joyk"></div></div>
  <div class="tb" id="tbJump" style="right:26px;bottom:150px">점프</div>
@@ -111,6 +125,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div class="tb" id="tbPal" style="right:96px;bottom:154px;width:46px;height:46px">E</div>
  <div class="tb" id="tbChat" style="right:26px;top:14px;width:46px;height:46px">채팅</div>
  <div class="tb" id="tbMap" style="right:80px;top:14px;width:46px;height:46px">지도</div>
+ <div class="tb" id="tbInfo" style="right:242px;top:14px;width:46px;height:46px">정보</div>
  <div class="tb" id="tbMic" style="right:188px;top:14px;width:46px;height:46px">마이크</div>
  <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
  <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
@@ -318,7 +333,21 @@ function mkDoor(name,c,metal){
 }
 mkDoor('참나무 문',[178,140,84]);mkDoor('자작나무 문',[216,203,155]);mkDoor('짙은참나무 문',[88,60,32]);mkDoor('철문',[205,205,210],true);
 
+/* ---- 도어락 (벽에 붙는 키패드): 슈퍼어드민 이상만 설치/부수기/비밀번호 설정, 맞는 번호 → 2칸 안 철문에 신호 ---- */
+const DLB=[],DLINFO=[],DLIDS=[];
+const DL_T=xt([44,46,52],6,null,(x,y)=>{
+ if(x<3||x>12||y<2||y>13)return null;
+ if(x===3||x===12||y===2||y===13)return [100,102,114];
+ if(y===3&&x>=5&&x<=10)return [60,235,100];
+ if((x===5||x===7||x===9)&&(y===5||y===7||y===9||y===11))return [205,205,212];
+ return null;
+});
+const DLP=[[.1875,.125,0,.8125,.875,.125],[.875,.125,.1875,1,.875,.8125],[.1875,.125,.875,.8125,.875,1],[0,.125,.1875,.125,.875,.8125]];
+{const ids=[];for(let f=0;f<4;f++){const id=defx('도어락'+(f?'('+'동남서'[f-1]+')':''),DL_T,DL_T,DL_T,{solid:false,shape:[DLP[f]],hide:f>0?1:0,dlock:1});ids.push(id);DLIDS.push(id)}
+ for(const id of ids){DLINFO[id]=ids[0];BASEOF[id]=ids[0]}DLB[ids[0]]=ids}
+
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
+const DLSET=new Set(DLIDS);
 const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide)PALETTE.push(i);
 const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
@@ -496,13 +525,23 @@ const store={db:null,
  open(){return new Promise(res=>{try{const r=indexedDB.open('webcreat',1);r.onupgradeneeded=()=>r.result.createObjectStore('w');r.onsuccess=()=>{store.db=r.result;res(true)};r.onerror=()=>res(false)}catch(e){res(false)}})},
  get(k){return new Promise(res=>{if(!store.db)return res(null);try{const q=store.db.transaction('w').objectStore('w').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
  put(k,v){try{if(store.db)store.db.transaction('w','readwrite').objectStore('w').put(v,k)}catch(e){}}};
-const SAVE_KEY='edits_'+ROOM;
+const SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM;
+/* ---- 도어락 비밀번호 기록: 위치 -> {c:'1234'|null, t:시각}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase 에 저장 ---- */
+const locks=new Map();let lockDirty=false;const LK={dirty:false,loaded:false,busy:false};
+const lkKey=(x,y,z)=>x+'_'+y+'_'+z;
+const lockGet=(x,y,z)=>{const r=locks.get(lkKey(x,y,z));return r&&r.c?r:null};
+function lockApply(key,c,t){if(!fin(t))return false;const r=locks.get(key);if(r&&r.t>=t)return false;locks.set(key,{c,t});lockDirty=true;LK.dirty=true;return true}
+function lockSetLocal(x,y,z,c){const t=nextT();lockApply(lkKey(x,y,z),c,t);netBroadcast({k:'lk',x,y,z,c,t},true)}
+function lockClear(x,y,z){const r=locks.get(lkKey(x,y,z));if(r&&r.c)lockSetLocal(x,y,z,null)}
+const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t]);
+function lkMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5))}
 async function loadSaved(){
- await store.open();const a=await store.get(SAVE_KEY);
+ await store.open();const a=await store.get(SAVE_KEY);const lkSaved=await store.get(LOCK_KEY);if(Array.isArray(lkSaved))lkMerge(lkSaved);
  if(a&&a.length)for(let i=0;i+4<a.length;i+=5)applyEdit(a[i],a[i+1],a[i+2],a[i+3],a[i+4]);
- saveDirty=false;
+ saveDirty=false;lockDirty=false;
 }
 function saveNow(){
+ if(lockDirty){lockDirty=false;store.put(LOCK_KEY,lkDump())}
  if(!saveDirty)return;saveDirty=false;const e=allEdits(),a=new Float64Array(e.length*5);
  e.forEach((v,i)=>a.set(v,i*5));store.put(SAVE_KEY,a);
 }
@@ -812,7 +851,9 @@ function localEdit(x,y,z,b){
 function breakBlock(){
  const h=ray(6);if(!h||h.y<1)return;
  if(h.b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 부술 수 있습니다',1500);
+ if(DLSET.has(h.b)&&myRole()<2)return toast('도어락은 슈퍼어드민 이상만 부술 수 있습니다',1500);
  localEdit(h.x,h.y,h.z,0);
+ if(DLSET.has(h.b))lockClear(h.x,h.y,h.z);
  const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
  sfx(.12,260);
 }
@@ -821,6 +862,7 @@ function variantFor(b,h){ // 설치할 때 방향/위아래 변형 고르기
  if(STAIRS[b])return STAIRS[b][dirOfYaw()];
  if(SLABTOP[b]!==undefined&&h.ny<0)return SLABTOP[b];
  if(LADB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return LADB[b][f]}
+ if(DLB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return DLB[b][f]}
  return b;
 }
 function toggleDoor(x,y,z){
@@ -833,9 +875,10 @@ function toggleDoor(x,y,z){
 function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 true
  const h=ray(6);if(!h)return false;
  if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
+ if(DLINFO[h.b]!==undefined){openLock(h.x,h.y,h.z);return true}
  return false;
 }
-const usableAt=()=>{const h=ray(6);return !!(h&&DINFO[h.b])};
+const usableAt=()=>{const h=ray(6);return !!(h&&(DINFO[h.b]||DLINFO[h.b]!==undefined))};
 function placeBlock(){
  const h=ray(6);if(!h)return;
  let b=hotbar[P.sel];
@@ -843,6 +886,7 @@ function placeBlock(){
  const x=h.x+h.nx,y=h.y+h.ny,z=h.z+h.nz;if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)return;
  const cur=getBlock(x,y,z);if(cur&&cur!==B_WATER)return;
  if(b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 설치할 수 있습니다',1500);
+ if(DLSET.has(b)&&myRole()<2)return toast('도어락은 슈퍼어드민 이상만 설치할 수 있습니다',1500);
  if(DINFO[b]){ // 문: 위 칸도 비어 있어야 함
   const up=getBlock(x,y+1,z);if(y+1>=WH||(up&&up!==B_WATER))return;
   const base=DINFO[b].base,f=dirOfYaw();localEdit(x,y,z,base+f);localEdit(x,y+1,z,base+8+f);sfx(.1,420);return;
@@ -853,6 +897,7 @@ function placeBlock(){
   for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return;
  }
  localEdit(x,y,z,b);sfx(.1,420);
+ if(DLSET.has(b)){lockClear(x,y,z);setTimeout(()=>openLock(x,y,z,true),0)} // 설치하자마자 비밀번호 설정 창
 }
 function pickBlock(){const h=ray(6);if(!h)return;const pb=BASEOF[h.b]!==undefined?BASEOF[h.b]:h.b,i=hotbar.indexOf(pb);if(i>=0)selectSlot(i);else if(PALETTE.includes(pb)){hotbar[P.sel]=pb;renderHotbar()}}
 
@@ -960,6 +1005,21 @@ async function csFlush(){
  CS.busy=false;updateStat();
 }
 setInterval(()=>{if(!CS.loaded)csLoad();else csFlush()},15000);
+async function lkSync(){ // 도어락 비밀번호 기록을 Firebase 문서 1개에 합쳐서 저장/불러오기
+ if(LK.busy)return;const db=fbInit();if(!db)return;LK.busy=true;
+ const wasDirty=LK.dirty;LK.dirty=false;
+ try{
+  const ref=db.collection(FS_LOBBY).doc('wclock_'+ROOM);
+  await db.runTransaction(async tx=>{
+   const s=await tx.get(ref);
+   if(s.exists){const d=s.data()||{};if(typeof d.l==='string'){try{lkMerge(JSON.parse(d.l))}catch(e){}}}
+   if(wasDirty||LK.dirty||(!s.exists&&locks.size))tx.set(ref,{room:'wclock-'+ROOM,l:JSON.stringify(lkDump()),ts:Date.now()});
+  });
+  LK.loaded=true;
+ }catch(e){if(wasDirty)LK.dirty=true}
+ LK.busy=false;
+}
+setInterval(()=>{if(LK.dirty||!LK.loaded)lkSync()},15000);
 function sendSig(to,obj){if(!fdb||!net.fs)return;fdb.collection(FS_SIG).add({to,s:JSON.stringify(Object.assign({f:net.id},obj)),t:Date.now(),c:++net.sc}).catch(e=>{if(e&&e.code==='resource-exhausted')toast('Firebase 무료 한도 초과 — 새 연결이 안 될 수 있습니다')})}
 function members(){ // 대기열 순서: 먼저 들어온 순 (j, id)
  const now=mono(),arr=[{id:net.id,n:net.name,j:net.j,me:true}];
@@ -1132,6 +1192,7 @@ function streamEdits(p,list){
  },30);
 }
 function bedEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&v[0]===B_BED)}
+function dlEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&DLSET.has(v[0]))}
 function peerMsg(p,s){
  if(typeof s!=='string'||s.length>40000)return;
  let m;try{m=JSON.parse(s)}catch(e){return}
@@ -1150,11 +1211,18 @@ function peerMsg(p,s){
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
    // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
    if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
+   for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,s:1},true)}
    if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
-  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;applyEdit(m.x,m.y,m.z,m.b,m.t);break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if((DLSET.has(m.b)||dlEditAt(m.x,m.y,m.z))&&lvOf(p.name)<2)break;applyEdit(m.x,m.y,m.z,m.b,m.t);break;
+  case 'lk':{ // 도어락 비밀번호 기록 (s=1 은 입장 동기화, 그 외는 슈퍼어드민 이상만)
+   if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
+   if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
+   if(!m.s&&lvOf(p.name)<2)break;
+   lockApply(lkKey(m.x,m.y,m.z),(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,Math.min(m.t,Date.now()+864e5));
+  }break;
   case 'sr':streamEdits(p,allEdits());break;
   case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
   case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
@@ -1397,6 +1465,7 @@ cmd(['speed','속도'],1,'/speed <0.5~10|reset>','이동 속도 배율',a=>{if(a
 cmd(['give','지급'],1,'/give <블록> [슬롯 1~9]','블록을 핫바에 넣기 (/blocks 로 번호 확인)',a=>{
  let slot=P.sel;if(a.length>1&&/^[1-9]$/.test(a[a.length-1])){slot=+a.pop()-1}
  const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
+ if(DLSET.has(b)&&myRole()<2)return sys('도어락은 슈퍼어드민 이상만 지급할 수 있습니다');
  hotbar[slot]=b;renderHotbar();sys((slot+1)+'번 칸에 '+DEF[b].name+' 지급');
 });
 cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하나 설치/제거 (공기 = 제거, ~ 상대좌표)',a=>{
@@ -1405,6 +1474,7 @@ cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하�
  if(![x,y,z].every(Number.isFinite))return sys('좌표가 올바르지 않습니다');
  if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
  if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH)return sys('월드 밖입니다 (y 는 1~'+(WH-1)+')');
+ if(myRole()<2&&(DLSET.has(b)||DLSET.has(getBlock(x,y,z))))return sys('도어락은 슈퍼어드민 이상만 다룰 수 있습니다');
  localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
 });
 cmd(['say','공지'],1,'/say <메시지>','모두에게 공지',a=>{const t=cleanText(a.join(' '));if(!t)return sys('사용법: /say 메시지');chatAdd('[공지] '+net.name,t,'sys');netBroadcast({k:'say',t},true)});
@@ -1460,8 +1530,8 @@ cmd(['banlist','밴목록','차단목록'],1,'/banlist','차단된 닉네임 목
 cmd(['슈퍼어드민','superadmin'],3,'/슈퍼어드민 <닉>','슈퍼어드민 권한 부여',a=>grant(a,2));
 cmd(['소유자','owner'],3,'/소유자 <닉>','소유자 권한 부여',a=>grant(a,3));
 function updateAdminMenu(){const show=isOwner();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
-function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
-function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
+function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits(),locks:lkDump()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('맵을 .webcraft 파일로 내보냈습니다')}
+function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('형식이 올바르지 않습니다');if(d.edits.length>2000000)throw Error('맵 데이터가 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}if(Array.isArray(d.locks))for(const e of d.locks)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.max(nextT(),+e[2]||0));saveNow();toast('맵 불러오기 완료: '+count+'개 변경 사항 적용');}catch(err){toast('불러오기 실패: '+(err.message||'파일 오류'))}};reader.readAsText(file)}
 function chatAdd(who,txt,cls){
  const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
  if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
@@ -1494,7 +1564,7 @@ function renderHotbar(){
 function selectSlot(i){P.sel=(i+9)%9;renderHotbar();const n=$('bname');n.textContent=DEF[hotbar[P.sel]].name;n.style.opacity=1;clearTimeout(selectSlot.h);selectSlot.h=setTimeout(()=>{n.style.opacity=0},1400)}
 function buildPalette(){
  const g=$('palGrid');g.textContent='';
- for(const b of PALETTE){if(b===B_BED&&myRole()<1)continue;const c=iconCanvas(b,32);c.title=DEF[b].name;c.onclick=()=>{hotbar[P.sel]=b;renderHotbar();togglePal(false)};g.appendChild(c)}
+ for(const b of PALETTE){if(b===B_BED&&myRole()<1)continue;if(DLSET.has(b)&&myRole()<2)continue;const c=iconCanvas(b,32);c.title=DEF[b].name;c.onclick=()=>{hotbar[P.sel]=b;renderHotbar();togglePal(false)};g.appendChild(c)}
 }
 function showOv(id,on){$(id).style.display=on?'flex':'none'}
 function togglePal(on){
@@ -1504,6 +1574,72 @@ function togglePal(on){
  ui=on?'pal':'';if(on)buildPalette();showOv('pal',on);
  if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
 }
+/* ---- 도어락 키패드 ---- */
+const LKS={x:0,y:0,z:0,buf:'',setMode:false,fails:0,until:0};
+function lockRender(msg,bad){
+ const rec=lockGet(LKS.x,LKS.y,LKS.z),adm=myRole()>=2;
+ $('lkDisp').textContent=[0,1,2,3].map(i=>i<LKS.buf.length?'●':'○').join(' ');
+ let t=msg;
+ if(!t)t=LKS.setMode?'새 비밀번호 4자리를 입력하세요':rec?'비밀번호 4자리를 입력하세요':(adm?'아직 비밀번호가 없습니다 — 아래 [비밀번호 설정]을 누르세요':'비밀번호가 설정되지 않은 도어락입니다');
+ const m=$('lkMsg');m.textContent=t;m.style.color=bad?'#f88':(LKS.setMode?'#fd6':'#bbb');
+ const s=$('lkSet');s.style.display=adm?'block':'none';s.textContent=LKS.setMode?'비밀번호 설정 취소':(rec?'비밀번호 변경':'비밀번호 설정');
+}
+function openLock(x,y,z,setMode){
+ if(state!=='play'||ui)return;
+ ui='lock';LKS.x=x;LKS.y=y;LKS.z=z;LKS.buf='';LKS.setMode=!!setMode&&myRole()>=2;
+ showOv('ovLock',true);if(document.pointerLockElement)document.exitPointerLock();lockRender();
+}
+function closeLock(){if(ui!=='lock')return;ui='';showOv('ovLock',false);lockPointer()}
+function lockPress(k){
+ if(ui!=='lock')return;
+ if(mono()<LKS.until)return lockRender('잠시 후 다시 시도하세요 ('+Math.ceil((LKS.until-mono())/1000)+'초)',true);
+ if(k==='⌫')LKS.buf=LKS.buf.slice(0,-1);else if(k==='C')LKS.buf='';else if(LKS.buf.length<4)LKS.buf+=k;
+ lockRender();
+ if(LKS.buf.length===4)setTimeout(lockSubmit,120);
+}
+function lockSubmit(){
+ if(ui!=='lock'||LKS.buf.length!==4)return;
+ const code=LKS.buf;LKS.buf='';
+ if(LKS.setMode){
+  if(myRole()<2)return;
+  lockSetLocal(LKS.x,LKS.y,LKS.z,code);LKS.setMode=false;sfx(.1,520);
+  toast('✔ 도어락 비밀번호를 설정했습니다',2200);closeLock();return;
+ }
+ const rec=lockGet(LKS.x,LKS.y,LKS.z);
+ if(!rec)return lockRender('비밀번호가 설정되지 않은 도어락입니다',true);
+ if(code===rec.c){LKS.fails=0;sfx(.12,620);closeLock();signalDoors(LKS.x,LKS.y,LKS.z);return}
+ sfx(.15,120);LKS.fails++;
+ if(LKS.fails>=3){LKS.fails=0;LKS.until=mono()+5000;lockRender('3번 틀렸습니다 — 5초 후 다시 시도하세요',true)}
+ else lockRender('비밀번호가 틀렸습니다',true);
+}
+function lockKey(e){
+ e.preventDefault();if(e.repeat)return;
+ if(e.code==='Escape'){closeLock();return}
+ if(e.code==='Backspace'){lockPress('⌫');return}
+ if(/^(Digit|Numpad)\d$/.test(e.code))lockPress(e.code.slice(-1));
+}
+(function(){const g=$('lkPad');['1','2','3','4','5','6','7','8','9','⌫','0','C'].forEach(k=>{const d=document.createElement('div');d.textContent=k;d.addEventListener('pointerdown',e=>{e.preventDefault();lockPress(k)});g.appendChild(d)})})();
+$('lkSet').addEventListener('pointerdown',e=>{e.preventDefault();if(myRole()<2)return;LKS.setMode=!LKS.setMode;LKS.buf='';lockRender()});
+$('lkClose').addEventListener('pointerdown',e=>{e.preventDefault();closeLock()});
+/* 도어락 신호: 도어락 주변 2칸(정육면체) 안의 철문을 한꺼번에 열거나 닫는다 (하나라도 닫혀 있으면 모두 열기) */
+function signalDoors(x,y,z){
+ const pairs=new Map();
+ for(let dy=-2;dy<=2;dy++)for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){
+  const xx=x+dx,yy=y+dy,zz=z+dz,di=DINFO[getBlock(xx,yy,zz)];
+  if(!di||!DEF[di.base].iron)continue;
+  const ly=di.h?yy-1:yy;pairs.set(xx+','+ly+','+zz,[xx,ly,zz]);
+ }
+ const cells=[];
+ for(const [a,b,c] of pairs.values())for(const yy of [b,b+1]){const di=DINFO[getBlock(a,yy,c)];if(di&&DEF[di.base].iron)cells.push([a,yy,c,di])}
+ if(!cells.length)return toast('✔ 인증됨 — 근처 2칸 안에 철문이 없습니다',2200);
+ const open=cells.some(q=>!q[3].o); // 하나라도 닫혀 있으면 모두 열기, 전부 열려 있으면 모두 닫기
+ let n=0;
+ for(const [a,yy,c,di] of cells){if(!!di.o===open)continue;localEdit(a,yy,c,di.base+di.h*8+(open?1:0)*4+di.f);n++}
+ sfx(.12,200);toast(open?'🔓 철문이 열렸습니다':'🔒 철문이 닫혔습니다',1800);
+}
+/* ---- 왼쪽 위 정보(좌표/FPS/접속 상태): ~ 키로 켜고 끔 ---- */
+let showInfo=false;
+function toggleInfo(){showInfo=!showInfo;$('info').style.display=showInfo?'block':'none'}
 /* ---- 전체 지도 ---- */
 let mapImg=null;
 function buildMap(){
@@ -1559,6 +1695,8 @@ document.addEventListener('keydown',e=>{
  if(state!=='play'){return}
  if(e.code==='Tab'){e.preventDefault();if(!ui)showTab(true);return}
  if(chatOpen)return;
+ if(e.code==='Backquote'){toggleInfo();e.preventDefault();return}
+ if(ui==='lock'){lockKey(e);return}
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
  if(e.code==='KeyM'){toggleMic();return}
  if(e.code==='KeyN'){toggleMap();return}
@@ -1617,6 +1755,7 @@ if(isTouch){
  btn('tbChat',()=>{if(state==='play'&&!ui)openChat()});
  btn('tbMap',()=>toggleMap());
  btn('tbMic',()=>toggleMic());
+ btn('tbInfo',()=>toggleInfo());
  btn('tbMenu',()=>{if(state==='play'&&!ui){ui='pause';openPause()}});
  btn('tbDown',()=>{keys.ShiftLeft=true},()=>{keys.ShiftLeft=false});
  btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
@@ -1738,7 +1877,7 @@ function enterGame(){
  else{for(let i=0;i<40;i++){const [x,z]=findSpawn();if(placeAtSurface(x,z,true))break}cam.yaw=Math.random()*6.28}
  cam.pitch=0;P.fly=false;
  net.offline=allEdits();renderHotbar();buildPalette();updateStat();
- chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행 · 채팅에 /help':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · /help 명령어 · N 지도 · M 마이크','sys');
+ chatAdd('',isTouch?'왼쪽 조이스틱 이동 · 화면 드래그 시점 · 파괴/설치 버튼 · E 블록 목록 · 점프 두 번 = 비행 · 채팅에 /help':'WASD 이동 · 좌클릭 파괴 · 우클릭 설치 · E 블록 목록 · T 채팅 · /help 명령어 · N 지도 · M 마이크 · ~ 좌표/정보','sys');
  if(isTouch)goFS();else lockPointer();
  if(net.on)toast('대기열 통과! 다른 플레이어와 P2P 연결 중…');
 }
@@ -1747,7 +1886,7 @@ function leaveGame(){
  micOff();
  savePos();
  netDisconnect();net.synced=false;
- state='title';ui='';chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);if(document.pointerLockElement)document.exitPointerLock();
+ state='title';ui='';chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
@@ -1818,12 +1957,12 @@ function frame(t){
  gl.depthMask(true);gl.disable(gl.BLEND);
  if(state==='play'){
   updateTags(innerWidth,innerHeight);
-  $('pos').textContent=`XYZ ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   FPS ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 ${WORLD}×${WORLD} · 변경 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
+  if(showInfo)$('pos').textContent=`XYZ ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   FPS ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 ${WORLD}×${WORLD} · 변경 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
  }
 }
 /* 시작 */
 window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
-loadSaved().then(()=>csLoad());
+loadSaved().then(()=>{csLoad();lkSync()});
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
 requestAnimationFrame(frame);
