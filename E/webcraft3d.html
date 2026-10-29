@@ -1460,10 +1460,19 @@ function placeAtSurface(x,z,needClear){
  for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]])for(let k=1;k<=2;k++){const b=getBlock(x+dx,y+k,z+dz);if(b&&SOLID[b])return false}
  return clearAbove(x,y,z);
 }
+/* ---- 마지막 위치 저장/복원: 방 + 닉네임(계정)별로 로컬에 저장 · 30초마다 + 나갈 때 + 탭 닫을 때 (솔로/멀티 공통) ---- */
+const posKey=()=>'wc_pos_'+ROOM+'_'+bkey(net.name||'player');
+function savePos(){
+ if(state!=='play'||!fin(P.x)||!fin(P.y)||!fin(P.z))return;
+ try{localStorage.setItem(posKey(),JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}
+}
+function loadPos(){try{return JSON.parse(localStorage.getItem(posKey())||'null')}catch(e){return null}}
+window.addEventListener('pagehide',savePos);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')savePos()});
 function enterGame(){
  if(state==='play')return;
  state='play';showOv('ovTitle',false);showOv('ovQueue',false);$('hud').style.display='block';if(isTouch)$('touch').style.display='block';
- let sp=null;try{sp=JSON.parse(localStorage.getItem('wc_pos_'+ROOM)||'null')}catch(e){}
+ let sp=loadPos();
  if(sp&&fin(sp.x)&&fin(sp.z)&&sp.x>=0&&sp.z>=0&&sp.x<WORLD&&sp.z<WORLD){ensureAround(sp.x>>4,sp.z>>4,2);placeAtSurface(Math.floor(sp.x),Math.floor(sp.z));if(fin(sp.y)&&sp.y>1&&sp.y<WH){const b=getBlock(Math.floor(sp.x),Math.floor(sp.y),Math.floor(sp.z));if(!SOLID[b])P.y=sp.y}cam.yaw=+sp.yaw||0}
  else{for(let i=0;i<40;i++){const [x,z]=findSpawn();if(placeAtSurface(x,z,true))break}cam.yaw=Math.random()*6.28}
  cam.pitch=0;P.fly=false;
@@ -1475,7 +1484,7 @@ function enterGame(){
 function goFS(){try{const e=document.documentElement;(e.requestFullscreen||e.webkitRequestFullscreen||(()=>{})).call(e)}catch(x){}}
 function leaveGame(){
  micOff();
- try{localStorage.setItem('wc_pos_'+ROOM,JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}
+ savePos();
  netDisconnect();net.synced=false;
  state='title';ui='';chatOpen=false;if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
@@ -1519,7 +1528,7 @@ function frame(t){
   let rem=dt;while(rem>0){const s=Math.min(rem,.016);stepPlayer(s,mv);rem-=s}
   cam.x=P.x;cam.y=P.y+EYE;cam.z=P.z;
   sendT-=dt;if(sendT<=0&&peers.size){sendT=.1;netBroadcast({k:'st',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2),r:+cam.yaw.toFixed(2),p:+cam.pitch.toFixed(2),b:hotbar[P.sel]},false)}
-  saveT-=dt;if(saveT<=0){saveT=3;try{localStorage.setItem('wc_pos_'+ROOM,JSON.stringify({x:P.x,y:P.y,z:P.z,yaw:cam.yaw}))}catch(e){}}
+  saveT-=dt;if(saveT<=0){saveT=30;savePos()}
  }else{ // 타이틀 배경: 스폰 위를 천천히 돌며 둘러본다
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
   cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
