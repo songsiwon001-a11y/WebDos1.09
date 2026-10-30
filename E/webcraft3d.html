@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>WebCreat</title>
+<title>WebCraft</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",monospace;color:#fff;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
@@ -79,7 +79,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 
 <div class="ov" id="ovTitle" style="display:flex">
  <div class="card">
-  <h1>WebCreat</h1>
+  <h1>WebCraft</h1>
   <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
   <div class="b" id="bMulti">멀티플레이</div>
@@ -122,8 +122,12 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  </div>
 </div>
 <div class="ov" id="ovMap">
- <canvas id="mapc" width="200" height="200"></canvas>
- <div class="sub" style="margin-top:8px">N으로 닫으십시오.</div>
+ <canvas id="mapc" width="768" height="768"></canvas>
+ <div class="sub" style="margin-top:8px"><span id="mapNote"></span><br>N으로 닫으십시오.</div>
+ <div style="display:flex;gap:8px;justify-content:center;margin-top:6px">
+  <div class="b dim" id="mapZoomOut" style="width:64px;margin:0;padding:6px">－</div>
+  <div class="b dim" id="mapZoomIn" style="width:64px;margin:0;padding:6px">＋</div>
+ </div>
 </div>
 <div class="ov" id="ovLock">
  <div class="card" style="width:min(320px,92vw)">
@@ -173,7 +177,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <script>
 'use strict';
 /* =====================================================================
-   WebCreat — 마인크래프트식 블록 샌드박스 (HTML/JS 단일 파일, raw WebGL2)
+   WebCraft — 마인크래프트식 블록 샌드박스 (HTML/JS 단일 파일, raw WebGL2)
    · 월드 10000 x 10000 x 64, 시드로 결정되는 절차 생성 (모든 접속자가 같은 지형)
    · 서버 없음: 블록 변경은 접속자끼리 WebRTC 로 직접 주고받고, 각자 IndexedDB 에 저장
    · Firebase(Firestore)는 '대기열'(접속 인원 16명 제한/순번)과 WebRTC 연결 신호 교환에만 사용
@@ -1969,7 +1973,7 @@ function sitOn(h){ // 소파: 앉기 (이동 키를 누르면 일어남)
 const PCS={x:0,y:0,z:0,old:''};
 function pcInfo(){
  const h=curHour(),hh=Math.floor(h),mm=Math.floor((h%1)*60),n=[...peers.values()].filter(p=>p.open).length+1;
- $('pcHead').textContent='WEBCREAT 컴퓨터\n> 월드 '+ROOM+' · 시각 '+String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')+' · 접속자 '+n+'명\n> 내 위치 '+P.x.toFixed(0)+' / '+P.y.toFixed(0)+' / '+P.z.toFixed(0)+'\n> 메모장 — 이 컴퓨터에 저장되고 접속자와 공유됩니다 (300자)';
+ $('pcHead').textContent='WEBCRAFT 컴퓨터\n> 월드 '+ROOM+' · 시각 '+String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')+' · 접속자 '+n+'명\n> 내 위치 '+P.x.toFixed(0)+' / '+P.y.toFixed(0)+' / '+P.z.toFixed(0)+'\n> 메모장 — 이 컴퓨터에 저장되고 접속자와 공유됩니다 (300자)';
 }
 function openPC(x,y,z){
  if(state!=='play'||ui)return;
@@ -2041,29 +2045,91 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 let showInfo=false;
 function toggleInfo(){showInfo=!showInfo;$('info').style.display=showInfo?'block':'none'}
 /* ---- 전체 지도 ---- */
-let mapImg=null;
-function buildMap(){
- const N=200,c=$('mapc'),g=c.getContext('2d');
- if(!mapImg){
-  mapImg=g.createImageData(N,N);
-  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
-   const h=terrainH((i+.5)*WORLD/N,(j+.5)*WORLD/N),o=(j*N+i)*4;let r,gg,b;
-   if(h<SEA){const d=clamp((SEA-h)/14,0,1);r=40-d*20;gg=100-d*40;b=200-d*60}
-   else if(h<=SEA+1){r=222;gg=208;b=150}
-   else if(h>=50){r=240;gg=244;b=250}
-   else if(h>40){r=130;gg=130;b=130}
-   else{const d=(h-SEA)/20;r=84-d*30;gg=160-d*40;b=52}
-   mapImg.data[o]=r;mapImg.data[o+1]=gg;mapImg.data[o+2]=b;mapImg.data[o+3]=255;
+const MAP_S=256,MAP_K=3,MAP_LV=[1,2,4,8,WORLD/MAP_S];
+let mapLv=1,mapBase=null,mapOx=0,mapOz=0,mapSc=2,mapBuilt=0,mapTimer=0,mapBuildLv=-1;
+const mapBlkCol=new Map();
+function mapBlockColor(b){
+ let c=mapBlkCol.get(b);if(c)return c;
+ if(b===B_WATER)c=[40,100,200];
+ else{
+  const df=DEF[b],t=typeof df.top==='number'?df.top:(typeof df.side==='number'?df.side:0);
+  const d=atlas.getContext('2d').getImageData((t%16)*16,((t/16)|0)*16,16,16).data;
+  let r=0,g=0,bb=0,n=0;for(let i=0;i<d.length;i+=4)if(d[i+3]>0){r+=d[i];g+=d[i+1];bb+=d[i+2];n++}
+  c=n?[r/n,g/n,bb/n]:[128,128,128];
+ }
+ mapBlkCol.set(b,c);return c;
+}
+function mapBuild(){
+ const S=MAP_S,sc=MAP_LV[mapLv],span=S*sc;
+ let ox=clamp(P.x-span/2,0,Math.max(0,WORLD-span)),oz=clamp(P.z-span/2,0,Math.max(0,WORLD-span));
+ if(sc>=WORLD/S-1e-6){ox=0;oz=0}
+ mapOx=ox;mapOz=oz;mapSc=sc;mapBuildLv=mapLv;mapBuilt=Date.now();
+ const g0=document.createElement('canvas');g0.width=g0.height=S;const g=g0.getContext('2d');
+ const img=g.createImageData(S,S),D=img.data;
+ for(let j=0;j<S;j++)for(let i=0;i<S;i++){
+  const h=terrainH(ox+(i+.5)*sc,oz+(j+.5)*sc),o=(j*S+i)*4;let r,gg,b;
+  if(h<SEA){const d=clamp((SEA-h)/14,0,1);r=40-d*20;gg=100-d*40;b=200-d*60}
+  else if(h<=SEA+1){r=222;gg=208;b=150}
+  else if(h>=50){r=240;gg=244;b=250}
+  else if(h>40){r=130;gg=130;b=130}
+  else{const d=(h-SEA)/20;r=84-d*30;gg=160-d*40;b=52}
+  D[o]=r;D[o+1]=gg;D[o+2]=b;D[o+3]=255;
+ }
+ // 직접 지은 블록 (칸마다 가장 높은 블록의 색)
+ const topY=new Int16Array(S*S),topB=new Uint16Array(S*S);
+ for(const [k,m] of edits){
+  const cx=Math.floor(k/1024),cz=k%1024,bx=cx*CH,bz=cz*CH;
+  if(bx+CH<ox||bx>ox+span||bz+CH<oz||bz>oz+span)continue;
+  for(const [idx,v] of m){
+   const b=v[0];if(!b)continue;
+   const x=bx+(idx&15),z=bz+((idx>>4)&15),y=idx>>8;
+   const px=Math.floor((x-ox)/sc),pz=Math.floor((z-oz)/sc);
+   if(px<0||pz<0||px>=S||pz>=S)continue;
+   const q=pz*S+px;
+   if(y>=topY[q]){topY[q]=y;topB[q]=b}
   }
  }
- g.putImageData(mapImg,0,0);
- const dot=(x,z,col,r)=>{g.fillStyle=col;g.beginPath();g.arc(x/WORLD*N,z/WORLD*N,r,0,7);g.fill()};
- for(const p of peers.values())if(p.open&&p.has)dot(p.rx_,p.rz,'#fff',2);
- dot(P.x,P.z,'#ff0',3);
+ for(let q=0;q<S*S;q++){
+  if(!topB[q])continue;
+  const px=q%S,pz=(q/S)|0,h=terrainH(ox+(px+.5)*sc,oz+(pz+.5)*sc);
+  if(topY[q]<h-1)continue;
+  const c=mapBlockColor(topB[q]),f=.8+clamp(topY[q]/WH,0,1)*.35,o=q*4;
+  D[o]=clamp(c[0]*f,0,255);D[o+1]=clamp(c[1]*f,0,255);D[o+2]=clamp(c[2]*f,0,255);
+ }
+ g.putImageData(img,0,0);
+ mapBase=g0;
 }
+function mapNeedsBuild(){
+ if(!mapBase||mapBuildLv!==mapLv)return true;
+ if(Date.now()-mapBuilt>=60000)return true;
+ const span=MAP_S*mapSc,m=span*.12;
+ return P.x<mapOx+m&&mapOx>0||P.x>mapOx+span-m&&mapOx+span<WORLD||P.z<mapOz+m&&mapOz>0||P.z>mapOz+span-m&&mapOz+span<WORLD;
+}
+function mapDraw(){
+ const c=$('mapc'),g=c.getContext('2d'),W=MAP_S*MAP_K;
+ if(!mapBase)return;
+ g.imageSmoothingEnabled=false;g.clearRect(0,0,W,W);g.drawImage(mapBase,0,0,W,W);
+ const toX=x=>(x-mapOx)/mapSc*MAP_K,toZ=z=>(z-mapOz)/mapSc*MAP_K;
+ g.fillStyle='#fff';g.strokeStyle='#000';g.lineWidth=1.5;
+ for(const p of peers.values())if(p.open&&p.has){
+  const x=toX(p.rx_),z=toZ(p.rz);if(x<0||z<0||x>W||z>W)continue;
+  g.beginPath();g.arc(x,z,3.5,0,7);g.fill();g.stroke();
+ }
+ // 내 위치: 보고 있는 방향을 가리키는 작은 노란 화살표
+ const x=toX(P.x),z=toZ(P.z),f=fwdOf(cam.yaw,0),a=Math.atan2(f[2],f[0]);
+ g.save();g.translate(x,z);g.rotate(a);
+ g.beginPath();g.moveTo(8,0);g.lineTo(-5,5.5);g.lineTo(-2,0);g.lineTo(-5,-5.5);g.closePath();
+ g.fillStyle='#ff0';g.fill();g.lineWidth=1.5;g.strokeStyle='#000';g.stroke();
+ g.restore();
+ const n=$('mapNote');
+ if(n)n.textContent=(mapSc>=WORLD/MAP_S-1e-6?'월드 전체':'가로 약 '+Math.round(MAP_S*mapSc)+'칸')+' · 지도는 1분마다 새로 그려집니다';
+}
+function buildMap(){if(mapNeedsBuild())mapBuild();mapDraw()}
+function mapZoom(d){const n=clamp(mapLv+d,0,MAP_LV.length-1);if(n===mapLv)return;mapLv=n;buildMap()}
+function mapStart(){clearInterval(mapTimer);mapTimer=setInterval(()=>{if(ui!=='map'){clearInterval(mapTimer);return}buildMap()},500)}
 function toggleMap(on){
  if(state!=='play')return;if(on===undefined)on=ui!=='map';if(on&&ui)return;
- ui=on?'map':'';showOv('ovMap',on);if(on){buildMap();if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
+ ui=on?'map':'';showOv('ovMap',on);if(on){buildMap();mapStart();if(document.pointerLockElement)document.exitPointerLock()}else{clearInterval(mapTimer);lockPointer()}
 }
 function showTab(on){
  const t=$('tab');if(!on){t.style.display='none';return}
@@ -2088,6 +2154,9 @@ $('bExport').onclick=exportWebcraft;
 $('bImport').onclick=()=>{if(!isOwner())return toast('소유자만 사용할 수 있습니다');$('mapFile').click()};
 $('mapFile').addEventListener('change',e=>{importWebcraft(e.target.files&&e.target.files[0]);e.target.value=''});
 $('ovMap').addEventListener('click',()=>toggleMap(false));
+$('mapZoomIn').addEventListener('click',e=>{e.stopPropagation();mapZoom(-1)});
+$('mapZoomOut').addEventListener('click',e=>{e.stopPropagation();mapZoom(1)});
+$('ovMap').addEventListener('wheel',e=>{e.preventDefault();mapZoom(e.deltaY>0?1:-1)},{passive:false});
 $('rd').oninput=e=>{RD=+e.target.value;$('rdv').textContent=RD;try{localStorage.setItem('wc_rd',RD)}catch(x){}};
 $('bLeave').onclick=()=>{saveNow();csFlush();ui='';showOv('ovPause',false);leaveGame()};
 document.addEventListener('keydown',e=>{
@@ -2102,6 +2171,8 @@ document.addEventListener('keydown',e=>{
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
  if(e.code==='KeyM'){toggleMic();return}
  if(e.code==='KeyN'){toggleMap();return}
+ if(ui==='map'&&(e.code==='Equal'||e.code==='NumpadAdd')){mapZoom(-1);return}
+ if(ui==='map'&&(e.code==='Minus'||e.code==='NumpadSubtract')){mapZoom(1);return}
  if(ui==='pause'&&e.code==='Escape'){resume();return}
  if(e.code==='Escape'&&(ui==='pal'||ui==='map')){ui==='pal'?togglePal(false):toggleMap(false);return}
  if(ui==='pal'&&/^Digit[1-9]$/.test(e.code)){selectSlot(+e.code.slice(5)-1);renderPalHot();return}
