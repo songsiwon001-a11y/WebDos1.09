@@ -499,9 +499,94 @@ const SUPER_T=xt([18,18,20],4,null,(x,y)=>{
 def('슈퍼블록',SUPER_T,SUPER_T,SUPER_T,{cmdonly:1});
 const cmdEditAt=(x,y,z)=>{if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&DEF[v[0]]&&DEF[v[0]].cmdonly)};
 
+/* ---- 인챈트 시스템: 청금석 · 책 · 인챈트북 · 인챈트 테이블 · 모루 · 도구 · 방어구 (번호는 뒤에만 추가) ---- */
+const HND=[128,90,50],KN={pick:'곡괭이',axe:'도끼',shovel:'삽',sword:'검',helm:'투구',chest:'갑옷',legs:'레깅스',boots:'부츠'};
+const ENC={pick:['효율','행운'],axe:['효율'],shovel:['효율'],sword:['날카로움','밀치기'],helm:['보호'],chest:['보호'],legs:['신속'],boots:['신속','도약']};
+const ENCALL=['효율','행운','날카로움','밀치기','보호','신속','도약'];
+const ENCD={'효율':'연속으로 부술 때 훨씬 빨라짐','행운':'행운의 빛 (장식)','날카로움':'동물에게 주는 피해 +2','밀치기':'동물을 멀리 밀쳐냄','보호':'보호의 빛 (장식)','신속':'걷는 속도 증가','도약':'점프가 더 높아짐'};
+const ARMS=['helm','chest','legs','boots'];
+const TFN={
+ pick:(x,y)=>(x-y>=6&&x-y<=7&&x+y>=9&&x+y<=20)?2:(x+y===15&&x>=3&&x<=12)?1:0,
+ axe:(x,y)=>((x-11)*(x-11)+(y-5)*(y-5)<=8&&x-y>=3)?2:(x+y===15&&x>=3&&x<=11)?1:0,
+ shovel:(x,y)=>((x-11)*(x-11)+(y-4)*(y-4)<=7)?2:(x+y===15&&x>=3&&x<=10)?1:0,
+ sword:(x,y)=>{const s=x+y;if((s===15||s===14)&&x>=6&&x<=13)return 2;if(s===15&&x>=3&&x<=4)return 1;if(x-y===-5&&s>=12&&s<=18)return 1;return 0}
+};
+const AFN={
+ helm:(x,y)=>y>=3&&y<=10&&x>=3&&x<=12&&!(y>=8&&x>=6&&x<=9)&&!(y===3&&(x<5||x>10)),
+ chest:(x,y)=>y>=2&&y<=14&&((x>=4&&x<=11)||(y<=7&&x>=1&&x<=14))&&!(y<=3&&x>=6&&x<=9)&&!(y>=8&&(x<4||x>11)&&x>=0)&&!(y>7&&(x<4||x>11)),
+ legs:(x,y)=>y>=2&&y<=14&&x>=3&&x<=12&&(y<=5||x<=6||x>=9),
+ boots:(x,y)=>y>=8&&y<=13&&((x>=2&&x<=6)||(x>=9&&x<=13))&&(y<=10?((x>=3&&x<=5)||(x>=10&&x<=12)):true)
+};
+const mkT=(k,c)=>{const f=TFN[k],a=AFN[k];
+ if(f)return xt([0,0,0,0],0,null,(x,y)=>{const r=f(x,y);return r===1?HND:r===2?(((x+y)%3===0)?shd2(c,.82):c):null});
+ return xt([0,0,0,0],0,null,(x,y)=>a(x,y)?((!a(x+1,y)||!a(x,y+1))?shd2(c,.7):(((x*3+y)%5===0)?shd2(c,.88):c)):null)};
+const LAPIS_T=xt([0,0,0,0],0,null,(x,y)=>{const dx=x-7.5,dy=y-7.5,d=dx*dx+dy*dy;if(d>30)return null;return ((x*5+y*7)%6===0)?[140,170,255]:(((x+y)%4===0)?[40,70,170]:[34,64,160])});
+const bookT=(cv,ln)=>xt([0,0,0,0],0,null,(x,y)=>{if(x<3||x>12||y<2||y>13)return null;if(x<=4)return shd2(cv,.7);if(y===2||y===13||x===12)return [236,226,196];return (x>=6&&x<=10&&y>=5&&y<=10&&(y%2))?ln:cv});
+const BOOK_T=bookT([120,70,40],[160,120,80]),EBOOK_T=bookT([96,56,170],[225,195,255]);
+const LAPIS=DEF.length;def('청금석',LAPIS_T,LAPIS_T,LAPIS_T,{item:1,solid:false,icon:LAPIS_T});
+const BOOK0=DEF.length;def('책',BOOK_T,BOOK_T,BOOK_T,{item:1,solid:false,icon:BOOK_T});
+const ENCV={},BOOKID={};
+ENCALL.forEach(e=>{BOOKID[e]=DEF.length;def('인챈트북 ['+e+']',EBOOK_T,EBOOK_T,EBOOK_T,{item:1,solid:false,icon:EBOOK_T,book:e,glint:1})});
+['pick','axe','shovel','sword','helm','chest','legs','boots'].forEach(k=>{
+ [['철',[205,205,210],1],['다이아몬드',[90,230,230],2],['네더라이트',[84,70,84],3]].forEach(([mn,c,lv])=>{
+  const t=mkT(k,c),nm=mn+' '+KN[k],base=DEF.length,o={item:1,solid:false,icon:t,kind:k,dmg:k==='sword'?lv:0},ap=ARMS.indexOf(k);
+  if(ap>=0)o.armor=ap;def(nm,t,t,t,o);ENCV[base]={};
+  for(const e of ENC[k]){ENCV[base][e]=DEF.length;def(nm+' ['+e+']',t,t,t,Object.assign({},o,{nopal:1,ench:e,glint:1}))}
+ })});
+{const ob=[[0,0,0,1,.75,1]];
+ const eTop=xt([34,22,52],10,null,(x,y)=>{if(x===0||y===0||x===15||y===15)return [130,22,40];return (Math.abs(x-7.5)+Math.abs(y-7.5)<=3)?[90,220,230]:(((x+y)%6===0)?[70,50,110]:null)});
+ const eSide=xt([30,24,42],10,null,(x,y)=>y<4?[170,24,40]:((x%5===2&&y%5===2)?[90,220,200]:null)),eBot=xt([26,22,34],10,null);
+ const id=defx('인챈트 테이블',eTop,eSide,eBot,{shape:ob,col:ob});FURN[id]={t:'ench',f:0,base:id};
+ const ab=[[.125,0,.125,.875,.25,.875],[.25,.25,.25,.75,.55,.75],[0,.55,.0625,1,1,.9375]];
+ const aTop=xt([62,62,68],10,null,(x,y)=>(x===0||y===0||x===15||y===15)?[90,90,98]:null),aSide=xt([48,48,54],12,null,(x,y)=>(y<2)?[84,84,92]:null);
+ const aid=defx('모루',aTop,aSide,aSide,{shape:ab,col:ab});FURN[aid]={t:'anvil',f:0,base:aid}}
+const ARM=[0,0,0,0],ENS={mode:0,it:null,bk:null};
+const slotGet=s=>s.src==='h'?hotbar[s.i]:inv[s.i],slotSet=(s,v)=>{if(s.src==='h')hotbar[s.i]=v;else inv[s.i]=v};
+const plainIt=b=>{const d=DEF[b];return !!(d&&d.kind&&!d.ench)};
+function lapisCount(){let n=0;for(const b of hotbar)if(b===LAPIS)n++;for(const b of inv)if(b===LAPIS)n++;return n}
+function useLapis(n){for(const a of [hotbar,inv])for(let i=0;i<a.length&&n>0;i++)if(a[i]===LAPIS){a[i]=0;n--}}
+const armN=e=>ARM.reduce((n,b)=>n+(b&&DEF[b].ench===e?1:0),0);
+const armSpd=()=>1+.1*armN('신속'),armJump=()=>1+.12*armN('도약');
+const heldEnc=()=>{const d=DEF[hotbar[P.sel]];return d&&d.ench||''};
+function renderArm(){let h=$('armHud');if(!h){h=document.createElement('div');h.id='armHud';h.style.cssText='position:fixed;left:10px;bottom:70px;flex-direction:column;gap:2px;background:rgba(0,0,0,.35);padding:3px;border:2px solid #222;pointer-events:none;z-index:5';document.body.appendChild(h)}
+ h.textContent='';h.style.display=(state==='play'&&ARM.some(Boolean))?'flex':'none';
+ ARM.forEach(b=>{if(!b)return;const c=iconCanvas(b,26);c.title=DEF[b].name;h.appendChild(c)})}
+function equipArmor(b){const s=DEF[b].armor,old=ARM[s];ARM[s]=b;hotbar[P.sel]=old;renderHotbar();saveInv();sfx(.08,500);toast(DEF[b].name+' 착용',1400)}
+function enEl(){let el=$('ovEn');if(el)return el;el=document.createElement('div');el.className='ov';el.id='ovEn';el.innerHTML='<div class="card" style="width:min(560px,96vw)"></div>';document.body.appendChild(el);return el}
+function enCell(src,i){const b=src==='h'?hotbar[i]:inv[i],d=document.createElement('div'),on=(ENS.it&&ENS.it.src===src&&ENS.it.i===i)||(ENS.bk&&ENS.bk.src===src&&ENS.bk.i===i);
+ d.className='dcell'+(on?' sel':'');if(b){const c=iconCanvas(b,32);c.title=DEF[b].name;d.appendChild(c)}
+ d.addEventListener('pointerdown',e=>{e.preventDefault();enPick({src,i})});return d}
+function enPick(s){const b=slotGet(s);if(!b)return;const d=DEF[b];
+ if(d.book){if(ENS.mode===1)ENS.bk=s;else return toast('인챈트북은 모루에서 쓸 수 있어요',1500)}
+ else if(plainIt(b)||(b===BOOK0&&ENS.mode===0))ENS.it=s;
+ else return toast(d.ench?'이미 인챈트된 아이템이에요':'인챈트할 수 없는 아이템이에요',1400);
+ sfx(.04,600);enRender()}
+function enRender(){if(ENS.it&&!slotGet(ENS.it))ENS.it=null;if(ENS.bk&&!slotGet(ENS.bk))ENS.bk=null;
+ const card=enEl().firstChild;card.textContent='';
+ const T=(t,st)=>{const e=document.createElement('div');e.className='sub';e.textContent=t;if(st)e.style.cssText=st;card.appendChild(e)};
+ T(ENS.mode?'모루 — 도구·방어구와 인챈트북을 차례로 눌러 고른 뒤 합치세요 (E / Esc 로 닫기)':'인챈트 테이블 — 도구·방어구(또는 책)를 누르고 청금석으로 마법을 부여하세요 (E / Esc 로 닫기)');
+ T('청금석 '+lapisCount()+'개 · 고른 것: '+(ENS.it?DEF[slotGet(ENS.it)].name:'없음')+(ENS.mode&&ENS.bk?' + '+DEF[slotGet(ENS.bk)].name:''),'color:#9cf');
+ const g=(src,arr)=>{const e=document.createElement('div');e.className='grid9';arr.forEach((_,i)=>e.appendChild(enCell(src,i)));card.appendChild(e)};
+ T('내 인벤토리');g('i',inv);T('핫바');g('h',hotbar);
+ const row=document.createElement('div');row.style.cssText='display:flex;flex-wrap:wrap;gap:6px;margin:6px 0';card.appendChild(row);
+ const btn=(t,fn)=>{const e=document.createElement('div');e.className='b';e.style.flex='1 1 45%';e.textContent=t;e.onclick=fn;row.appendChild(e)};
+ const it=ENS.it&&slotGet(ENS.it);
+ if(it){
+  if(ENS.mode===0){if(it===BOOK0)btn('랜덤 인챈트북 만들기 (청금석 2개)',()=>enDo(null,2));else ENC[DEF[it].kind].forEach((e,k)=>btn(e+' — '+ENCD[e]+' (청금석 '+(k+1)+'개)',()=>enDo(e,k+1)))}
+  else if(ENS.bk)btn('합치기',enAnvil)}
+ const c=document.createElement('div');c.className='b dim';c.textContent='닫기';c.onclick=closeEn;card.appendChild(c)}
+function enDo(e,cost){const s=ENS.it,b=s&&slotGet(s);if(!b)return;if(lapisCount()<cost)return toast('청금석이 부족합니다 ('+cost+'개 필요)',1600);
+ const nb=b===BOOK0?BOOKID[ENCALL[Math.random()*ENCALL.length|0]]:ENCV[b][e];
+ useLapis(cost);slotSet(s,nb);ENS.it=null;sfx(.2,880);renderHotbar();saveInv();toast(DEF[nb].name+' 완성!',1600);enRender()}
+function enAnvil(){const s=ENS.it,k=ENS.bk;if(!s||!k)return;const b=slotGet(s),e=DEF[slotGet(k)].book;
+ if(!(ENCV[b]&&ENCV[b][e]))return toast('이 아이템에는 쓸 수 없는 인챈트북입니다',1800);
+ slotSet(s,ENCV[b][e]);slotSet(k,0);ENS.it=ENS.bk=null;sfx(.25,300);renderHotbar();saveInv();toast('모루로 '+e+' 부여!',1600);enRender()}
+function openEnch(m){if(state!=='play'||ui)return;ui='en';ENS.mode=m;ENS.it=ENS.bk=null;enEl();showOv('ovEn',true);if(document.pointerLockElement)document.exitPointerLock();enRender();sfx(.08,300)}
+function closeEn(){if(ui!=='en')return;ui='';showOv('ovEn',false);saveInv();lockPointer()}
+
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
 const DLSET=new Set(DLIDS);
-const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide&&!DEF[i].cmdonly)PALETTE.push(i);
+const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide&&!DEF[i].cmdonly&&!DEF[i].nopal)PALETTE.push(i);
 const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
 
@@ -652,7 +737,7 @@ function markDirty(cx,cz){const c=getChunk(cx,cz);if(c)c.dirty=true}
 function setLoaded(x,y,z,b){
  const c=getChunk(x>>4,z>>4);if(!c)return;
  const idx=(y*CH+(z&15))*CH+(x&15),old=c.d[idx];
- c.d[idx]=b;if(b&&y>c.maxY)c.maxY=Math.min(WH-1,y+1);
+ c.d[idx]=b;if(old===B_WATER)wlev.delete(wkey(x,y,z));wTouch(x,y,z,old,b);if(b&&y>c.maxY)c.maxY=Math.min(WH-1,y+1);
  if(EMIT[old])c.ems.delete(idx);if(EMIT[b])c.ems.add(idx);
  c.dirty=true;const lx=x&15,lz=z&15;
  if(lx===0)markDirty(c.cx-1,c.cz);if(lx===15)markDirty(c.cx+1,c.cz);
@@ -670,6 +755,52 @@ function applyEdit(x,y,z,b,t){
  if(!old)editCount++;
  m.set(idx,[b,t]);if(t>maxT)maxT=t;saveDirty=true;
  setLoaded(x,y,z,b);return true;
+}
+
+/* ===================== 물 흐름 =====================
+   · 물 블록(원천)은 아래가 비면 아래로 떨어지고, 바닥에 닿으면 옆으로 7칸까지 퍼진다 (한 칸마다 수위 -1)
+   · 흐르는 물의 수위는 wlev(칸 -> 1~7)에 기록, wlev 에 없는 물은 원천(수위 8)
+   · 원천을 없애거나 블록으로 막으면 흐르던 물이 서서히 줄어든다
+   · 흐르는 물은 저장/동기화하지 않고 각 접속자가 같은 규칙으로 계산한다 */
+const wlev=new Map(),wq=[],wqs=new Set();let wqh=0,wT=0;
+const wkey=(x,y,z)=>(y*WORLD+z)*WORLD+x;
+const WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
+function wEnq(x,y,z){
+ if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)return;
+ const k=wkey(x,y,z);if(wqs.has(k)||wq.length>90000)return;
+ wqs.add(k);wq.push(x,y,z);
+}
+function wEnqAround(x,y,z){wEnq(x,y,z);wEnq(x+1,y,z);wEnq(x-1,y,z);wEnq(x,y+1,z);wEnq(x,y-1,z);wEnq(x,y,z+1);wEnq(x,y,z-1)}
+function wTouch(x,y,z,old,b){
+ if(old===B_WATER||b===B_WATER||getBlock(x+1,y,z)===B_WATER||getBlock(x-1,y,z)===B_WATER||getBlock(x,y+1,z)===B_WATER||getBlock(x,y-1,z)===B_WATER||getBlock(x,y,z+1)===B_WATER||getBlock(x,y,z-1)===B_WATER)wEnqAround(x,y,z);
+}
+function wLevel(x,y,z){if(getBlock(x,y,z)!==B_WATER)return 0;return wlev.get(wkey(x,y,z))||8}
+function wSide(x,y,z){
+ const d=getBlock(x,y-1,z);if(d===0)return false;
+ if(d===B_WATER)return !wlev.has(wkey(x,y-1,z));
+ return true;
+}
+function flowSet(x,y,z,b,lv){setLoaded(x,y,z,b);if(b===B_WATER)wlev.set(wkey(x,y,z),lv)}
+function waterCell(x,y,z){
+ const k=wkey(x,y,z);
+ if(getBlock(x,y,z)===B_WATER&&wlev.has(k)){
+  let best=wLevel(x,y+1,z)>0?7:0;
+  for(const [dx,dz] of WDIR){const l=wLevel(x+dx,y,z+dz);if(l>1&&l-1>best&&wSide(x+dx,y,z+dz))best=l-1}
+  if(best<=0){flowSet(x,y,z,0,0);return}
+  if(best!==wlev.get(k)){wlev.set(k,best);wEnqAround(x,y,z)}
+ }
+ const L=wLevel(x,y,z);if(!L)return;
+ if(y>1&&getBlock(x,y-1,z)===0){flowSet(x,y-1,z,B_WATER,7);return}
+ if(L>1&&wSide(x,y,z))for(const [dx,dz] of WDIR)if(getBlock(x+dx,y,z+dz)===0)flowSet(x+dx,y,z+dz,B_WATER,L-1);
+}
+function waterFlow(dt){
+ wT-=dt;if(wT>0)return;wT=.2;
+ let n=0;
+ while(wqh<wq.length&&n<600){
+  const x=wq[wqh],y=wq[wqh+1],z=wq[wqh+2];wqh+=3;wqs.delete(wkey(x,y,z));n++;
+  waterCell(x,y,z);
+ }
+ if(wqh>=wq.length){wq.length=0;wqh=0}else if(wqh>30000){wq.splice(0,wqh);wqh=0}
 }
 function allEdits(){const out=[];for(const [k,m] of edits){const cx=Math.floor(k/1024),cz=k%1024;for(const [idx,v] of m)out.push([cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15),v[0],v[1]])}return out}
 
@@ -912,8 +1043,8 @@ function meshChunk(c){
  c.m={s:bufs.s.nf?mkMesh(bufs.s.v,bufs.s.nf*4,bufs.s.i,bufs.s.nf*6):null,t:bufs.t.nf?mkMesh(bufs.t.v,bufs.t.nf*4,bufs.t.i,bufs.t.nf*6):null};
  c.dirty=false;
 }
-function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
-function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz))}
+function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);{const ed=edits.get(ckey(cx,cz));if(ed)for(const [idx,v] of ed)if(v[0]===B_WATER)wEnqAround(cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15))}if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
+function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz));if(wlev.size)for(const k of [...wlev.keys()]){const x=k%WORLD,z=Math.floor(k/WORLD)%WORLD;if((x>>4)===c.cx&&(z>>4)===c.cz)wlev.delete(k)}}
 
 /* ---- 청크 로딩 관리 ---- */
 let RD=(()=>{try{return +(localStorage.getItem('wc_rd')||0)||(isTouch?5:8)}catch(e){return isTouch?5:8}})();
@@ -1008,13 +1139,13 @@ function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
  let wx=(-sp)*mv.f+cp*mv.s,wz=(-cp)*mv.f+(-sp)*mv.s;const l=Math.hypot(wx,wz);if(l>1){wx/=l;wz/=l}
  const feet=getBlock(Math.floor(P.x),Math.floor(P.y+.2),Math.floor(P.z)),head=getBlock(Math.floor(P.x),Math.floor(P.y+1.4),Math.floor(P.z));
  P.inWater=feet===B_WATER||head===B_WATER;const onLad=!P.fly&&(LAD[feet]||LAD[head]);
- const sneak=!P.fly&&mv.down&&!onLad&&!P.inWater;P.sneak=sneak;let spd=P.fly?(mv.sprint?18:9):(sneak?1.35:(mv.sprint?5.8:4.3));if(P.inWater&&!P.fly)spd*=.6;spd*=SPDM;
+ const sneak=!P.fly&&mv.down&&!onLad&&!P.inWater;P.sneak=sneak;let spd=P.fly?(mv.sprint?18:9):(sneak?1.35:(mv.sprint?5.8:4.3));if(P.inWater&&!P.fly)spd*=.6;spd*=SPDM*armSpd();
  const tx=wx*spd,tz=wz*spd,ac=Math.min(1,dt*(P.ground||P.fly?14:3.5));
  P.vx+=(tx-P.vx)*ac;P.vz+=(tz-P.vz)*ac;
  if(P.fly){const ty=((mv.jump?1:0)-(mv.down?1:0))*(mv.sprint?14:8);P.vy+=(ty-P.vy)*Math.min(1,dt*10)}
  else if(onLad){P.vy=mv.jump?3.6:(mv.down?-4:0)}
  else if(P.inWater){P.vy-=9*dt;P.vy*=Math.pow(.15,dt);if(mv.jump)P.vy=Math.min(P.vy+30*dt,3.6)}
- else{P.vy-=28*dt;if(P.vy<-40)P.vy=-40;if(mv.jump&&P.ground){P.vy=8.6;P.ground=false}}
+ else{P.vy-=28*dt;if(P.vy<-40)P.vy=-40;if(mv.jump&&P.ground){P.vy=8.6*armJump();P.ground=false}}
  const wasG=P.ground;P.ground=false;
  const nx=P.x+P.vx*dt;if(!boxHit(nx,P.y,P.z)){if(!sneak||!wasG||boxHit(nx,P.y-.35,P.z))P.x=nx;else P.vx=0}else if(wasG&&!boxHit(nx,P.y+.5001,P.z)&&!boxHit(P.x,P.y+.5001,P.z)){P.x=nx;P.y+=.5001}else P.vx=0;
  const nz=P.z+P.vz*dt;if(!boxHit(P.x,P.y,nz)){if(!sneak||!wasG||boxHit(P.x,P.y-.35,nz))P.z=nz;else P.vz=0}else if(wasG&&!boxHit(P.x,P.y+.5001,nz)&&!boxHit(P.x,P.y+.5001,P.z)){P.z=nz;P.y+=.5001}else P.vz=0;
@@ -1090,6 +1221,8 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
   else if(fi.t==='sofa')sitOn(h);
   else if(fi.t==='dresser')openDresser(h.x,h.y,h.z);
   else if(fi.t==='pc')openPC(h.x,h.y,h.z);
+   else if(fi.t==='ench')openEnch(0);
+   else if(fi.t==='anvil')openEnch(1);
   return true;
  }
  return false;
@@ -1526,7 +1659,7 @@ function peerMsg(p,s){
    }
   }break;
   case 'ad':{const a=animals.get(m.id);if(a&&!a.own&&a.src===p.id)animals.delete(m.id)}break;
-  case 'ah':{const a=animals.get(m.id);if(a&&a.own&&fin(m.dx)&&fin(m.dz)){const l=Math.hypot(m.dx,m.dz)||1;hurtAnimal(a,m.dx/l,m.dz/l)}}break;
+  case 'ah':{const a=animals.get(m.id);if(a&&a.own&&fin(m.dx)&&fin(m.dz)){const l=Math.hypot(m.dx,m.dz)||1;hurtAnimal(a,m.dx/l,m.dz/l,clamp(m.dm|0,1,9),fin(m.kb)?clamp(m.kb,1,3):1)}}break;
   case 'at':{const a=animals.get(m.id);if(a&&a.own&&a.type==='dog'&&!a.owner){removeAnimal(a,true);peerSend(p,{k:'ag',x:a.x,y:a.y,z:a.z},true)}}break;
   case 'ag':if(mono()-tameReqT<6000&&fin(m.x)&&fin(m.y)&&fin(m.z)){tameReqT=-1e9;const d=spawnAnimal('dog',m.x,m.y,m.z,net.name);if(d)saveDogs()}break;
   case 'bye':peerDown(p,'bye');break;
@@ -1741,6 +1874,7 @@ cmd(['tp','텔레포트'],1,'/tp <닉> | <x> <z> | <x> <y> <z>','순간이동 (~
 });
 cmd(['spawn','스폰'],1,'/spawn','월드 중앙(스폰)으로 이동',()=>{placeAtSurface(5000,5000);sys('스폰으로 이동했습니다')});
 cmd(['fly','비행'],1,'/fly','비행 모드 켜기/끄기',()=>{P.fly=!P.fly;P.vy=0;sys(P.fly?'비행 모드 ON':'비행 모드 OFF')});
+cmd(['unequip','장비해제'],0,'/장비해제','입고 있는 방어구를 벗어서 가방에 담기',()=>{let n=0;ARM.forEach((b,s)=>{if(!b)return;let a=hotbar,i=a.indexOf(0);if(i<0){a=inv;i=a.indexOf(0)}if(i<0)return;a[i]=b;ARM[s]=0;n++});renderHotbar();saveInv();sys(n?'방어구 '+n+'개를 벗었습니다':'벗을 방어구가 없거나 빈 칸이 없습니다')});
 cmd(['speed','속도'],1,'/speed <0.5~10|reset>','이동 속도 배율',a=>{if(a[0]==='reset'||a[0]==='초기화'){SPDM=1;return sys('이동 속도를 원래대로 돌렸습니다')}const v=parseFloat(a[0]);if(!isFinite(v)||v<.5||v>10)return sys('사용법: /speed 0.5~10 (또는 reset)');SPDM=v;sys('이동 속도 x'+v)});
 cmd(['give','지급'],1,'/give <블록> [슬롯 1~9]','블록을 핫바에 넣기 (/blocks 로 번호 확인)',a=>{
  let slot=P.sel;if(a.length>1&&/^[1-9]$/.test(a[a.length-1])){slot=+a.pop()-1}
@@ -1841,15 +1975,17 @@ function iconCanvas(b,size){
  const c=document.createElement('canvas');c.width=c.height=size||16;const g=c.getContext('2d');g.imageSmoothingEnabled=false;
  if(!b)return c;const df=DEF[b],t=df.icon!==undefined?df.icon:(b===1?df.top:df.side),sx=(t%16)*16,sy=((t/16)|0)*16;
  g.fillStyle='#4a6a8a';if(TRANS[b]){g.fillStyle='#8aa';}
- g.drawImage(atlas,sx,sy,16,16,0,0,c.width,c.height);return c;
+ g.drawImage(atlas,sx,sy,16,16,0,0,c.width,c.height);
+ if(df.glint){const n=c.width,gr=g.createLinearGradient(0,0,n,n);gr.addColorStop(0,'rgba(190,110,255,.55)');gr.addColorStop(.5,'rgba(120,60,220,.12)');gr.addColorStop(1,'rgba(220,150,255,.6)');g.globalCompositeOperation='source-atop';g.fillStyle=gr;g.fillRect(0,0,n,n);g.globalCompositeOperation='source-over'}
+ return c;
 }
-function renderHotbar(){
+function renderHotbar(){renderArm();
  const h=$('hot');h.textContent='';
  hotbar.forEach((b,i)=>{const s=document.createElement('div');s.className='slot'+(i===P.sel?' sel':'');s.appendChild(iconCanvas(b));const n=document.createElement('i');n.textContent=i+1;s.appendChild(n);
   s.onclick=()=>selectSlot(i);h.appendChild(s)});
 }
 function selectSlot(i){P.sel=(i+9)%9;renderHotbar();const n=$('bname');n.textContent=(DEF[hotbar[P.sel]]||{name:''}).name;n.style.opacity=1;clearTimeout(selectSlot.h);selectSlot.h=setTimeout(()=>{n.style.opacity=0},1400)}
-const PCATS=[['all','모든 블록'],['build','건축'],['nature','자연'],['color','색깔'],['ore','광물'],['light','빛'],['glass','유리·투명'],['stair','계단·반블록'],['fence','울타리·문'],['furn','가구·기능'],['item','동물·아이템']];
+const PCATS=[['all','모든 블록'],['build','건축'],['nature','자연'],['color','색깔'],['ore','광물'],['light','빛'],['glass','유리·투명'],['stair','계단·반블록'],['fence','울타리·문'],['furn','가구·기능'],['item','아이템·도구']];
 const NATURE_NAMES=new Set(['잔디','흙','돌','조약돌','모래','통나무','나뭇잎','눈','기반암','자갈','자작나무 통나무','이끼 낀 조약돌','선인장','호박','수박','건초 더미','네더랙','붉은 모래','점토','균사체','포드졸','거친 흙','이끼 블록','영혼 모래','꽁꽁 얼음','푸른 얼음','심층암','조약 심층암','응회암','방해석','현무암','안산암','섬록암','화강암','엔드 스톤','스펀지','뼈 블록','흑요석','붉은 사암','사암','블랙스톤','프리즈머린','다크 프리즈머린']);
 const CAT_CACHE=[],PALS={cat:'all',q:''};
 function catOf(i){
@@ -2062,9 +2198,9 @@ $('drClose').onclick=closeDr;
 const invKey=()=>'wc_inv2_'+ROOM+'_'+bkey(net.name||'player');
 function saveInv(){
  if(state!=='play')return;
- try{localStorage.setItem(invKey(),JSON.stringify({h:hotbar.slice(),s:P.sel,i:inv.slice()}))}catch(e){}
+ try{localStorage.setItem(invKey(),JSON.stringify({h:hotbar.slice(),s:P.sel,i:inv.slice(),a:ARM.slice()}))}catch(e){}
 }
-function loadInv(){inv.fill(0);hotbar.fill(0);P.sel=0;
+function loadInv(){inv.fill(0);hotbar.fill(0);ARM.fill(0);P.sel=0;
  try{
   const d=JSON.parse(localStorage.getItem(invKey())||'null');if(!d||!Array.isArray(d.h))return;
   for(let i=0;i<9;i++){
@@ -2074,7 +2210,7 @@ function loadInv(){inv.fill(0);hotbar.fill(0);P.sel=0;
    if(b===B_BED&&myRole()<1)continue;
    hotbar[i]=b;
   }
-  P.sel=clamp(d.s|0,0,8);
+  P.sel=clamp(d.s|0,0,8);if(Array.isArray(d.a))for(let s=0;s<4;s++){const b=d.a[s]|0;ARM[s]=(b>0&&b<=NB&&DEF[b].armor===s)?b:0}
   if(Array.isArray(d.i))for(let i=0;i<27;i++){const b=d.i[i]|0;if(b>0&&b<=NB&&b!==B_WATER&&!DEF[b].hide&&!(b===B_BED&&myRole()<1)&&!(DEF[b].cmdonly&&!superOk(net.name)))inv[i]=b}
  }catch(e){}
 }
@@ -2207,6 +2343,7 @@ document.addEventListener('keydown',e=>{
  if(e.code==='Backquote'){toggleInfo();e.preventDefault();return}
  if(ui==='lock'){lockKey(e);return}
  if(ui==='dr'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeDr()}return}
+ if(ui==='en'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeEn()}return}
  if(ui==='pc')return;
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
  if(e.code==='KeyM'){toggleMic();return}
@@ -2658,9 +2795,9 @@ function useAnimal(){ // 우클릭: 개 길들이기 / 앉히기. 처리했으�
  if(bkey(a.owner)===bkey(net.name)){a.sit=!a.sit;sfx(.06,520);toast(a.sit?'개가 앉았습니다':'개가 따라옵니다',1200);return true}
  toast(a.owner+' 님의 개입니다',1200);return true;
 }
-function hurtAnimal(a,dx,dz){
+function hurtAnimal(a,dx,dz,dm,kb){
  if(a.type==='dog'&&a.owner)return;
- a.hp-=1;a.vx=dx*5;a.vz=dz*5;a.vy=5;a.ground=false;a.panic=2.5;a.fdx=dx;a.fdz=dz;
+ a.hp-=(dm||1);a.vx=dx*5*(kb||1);a.vz=dz*5*(kb||1);a.vy=5;a.ground=false;a.panic=2.5;a.fdx=dx;a.fdz=dz;
  if(a.hp<=0)removeAnimal(a,true);
 }
 function attackAnimal(){ // 좌클릭: 동물 때리기. 처리했으면 true
@@ -2668,12 +2805,14 @@ function attackAnimal(){ // 좌클릭: 동물 때리기. 처리했으면 true
  const a=r.a,now=mono();if(now-lastAtk<350)return true;lastAtk=now;
  if(a.type==='dog'&&a.owner){toast(bkey(a.owner)===bkey(net.name)?'내 개는 때릴 수 없습니다':a.owner+' 님의 개는 때릴 수 없습니다',1400);return true}
  const f=fwdOf(cam.yaw,0),l=Math.hypot(f[0],f[2])||1,dx=f[0]/l,dz=f[2]/l;
- if(a.own)hurtAnimal(a,dx,dz);else{const p=peers.get(a.src);if(p)peerSend(p,{k:'ah',id:a.id,dx,dz},true)}
+ const w=DEF[hotbar[P.sel]]||{},dm=1+(w.dmg||0)+(w.ench==='날카로움'?2:0),kb=w.ench==='밀치기'?2.5:1;
+  if(a.own)hurtAnimal(a,dx,dz,dm,kb);else{const p=peers.get(a.src);if(p)peerSend(p,{k:'ah',id:a.id,dx,dz,dm,kb},true)}
  sfx(.08,200);return true;
 }
 function hitOrBreak(){if(!attackAnimal())breakBlock()}
 function useItem(b,h,rep){ // 스폰알 / 뼈 (연속 클릭 방지: 꾹 누르기는 무시)
  if(rep)return;const d=DEF[b];
+ if(d.armor!==undefined){equipArmor(b);return}
  if(d.egg){
   if(!h)return;
   let n=0;for(const a of animals.values())if(a.own)n++;
@@ -2727,7 +2866,7 @@ function leaveGame(){
  micOff();
  savePos();
  netDisconnect();net.synced=false;
- state='title';ui='';chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
+ state='title';ui='';ARM.fill(0);renderArm();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();animals.clear();for(const e of atagEls.values())e.remove();atagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
@@ -2764,7 +2903,7 @@ function frame(t){
    mv.f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joy.y;mv.s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joy.x;
    mv.jump=!!keys.Space;mv.down=!!(keys.ShiftLeft||keys.ShiftRight);mv.sprint=!!(keys.ControlLeft||keys.ControlRight||keys.sprintLock||touchSprint)&&mv.f>0;
    if(joy.a&&Math.hypot(joy.x,joy.y)>.95)mv.sprint=true;
-   hold.t-=dt;if(hold.t<=0){if(hold.b){hitOrBreak();hold.t=.17}else if(hold.p){if(!usableAt()&&!animalTarget(4.5))placeBlock(true);hold.t=.2}}
+   hold.t-=dt;if(hold.t<=0){if(hold.b){hitOrBreak();hold.t=heldEnc()==='효율'?.07:.17}else if(hold.p){if(!usableAt()&&!animalTarget(4.5))placeBlock(true);hold.t=.2}}
   }
   let rem=dt;while(rem>0){const s=Math.min(rem,.016);stepPlayer(s,mv);rem-=s}
   cam.x=P.x;cam.y=P.y+(P.sit?EYE-.45:(P.sneak?EYE-.3:EYE));cam.z=P.z;
@@ -2774,7 +2913,7 @@ function frame(t){
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
   cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
  }
- if(state==='play'){updateVoice(dt);animalTick(dt)}
+ if(state==='play'){updateVoice(dt);animalTick(dt);waterFlow(dt)}
  updateChunks(cam.x,cam.z,state==='play'?7:12);
  // ---- 렌더 ----
  const sk=skyState(),fogFar=RD*CH*.92,fogNear=fogFar*.55;
