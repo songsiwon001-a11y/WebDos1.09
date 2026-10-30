@@ -1141,7 +1141,7 @@ function sfx(dur,freq){
 const firebaseConfig={apiKey:"AIzaSyDU4famr5DzAYlNpjcTcUUqjzDxEvjVeec",authDomain:"webdos-11d5a.firebaseapp.com",projectId:"webdos-11d5a",storageBucket:"webdos-11d5a.firebasestorage.app",messagingSenderId:"500610787415",appId:"1:500610787415:web:75e8268bcbfd2bef211b12"};
 const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig',LOBBY_ROOM='wc-'+ROOM; // 기존 컬렉션을 재사용 (room 값으로 구분) → 규칙 변경 불필요
 const STALE=40000,HB=15000;
-const net={id:'',name:'PLAYER',fs:null,lobby:{},j:0,admitted:false,sc:0,on:false,tm:0,hb:0,synced:false,pulling:'',offline:[],retry:{},pendSig:[]};
+const net={id:'',name:'PLAYER',fs:null,lobby:{},j:0,admitted:false,sc:0,on:false,tm:0,hb:0,synced:false,pulling:'',offline:[],retry:{},pendSig:[],relayFor:{}};
 const peers=new Map();
 let fdb=null;
 const mono=()=>performance.now();
@@ -1267,6 +1267,7 @@ function renderQueue(m){
 }
 function announce(){if(net.fs&&net.fs.doc&&net.fsOk)net.fs.doc.set({room:LOBBY_ROOM,n:net.name,ts:Date.now(),j:net.j}).catch(()=>{})}
 function netConnect(){
+ turnRefresh();
  if(net.on)return;
  const db=fbInit();
  net.id=rid();net.j=Date.now();net.on=true;net.pendSig=[];net.lobby={};net.admitted=false;net.fsOk=false;net.synced=false;net.pulling='';
@@ -1306,7 +1307,7 @@ function netDisconnect(){
  clearInterval(net.tm);
  if(net.fs){clearTimeout(net.fs.tmo);try{net.fs.lobU&&net.fs.lobU()}catch(e){}try{net.fs.sigU&&net.fs.sigU()}catch(e){}try{net.fs.doc.delete().catch(()=>{})}catch(e){}}
  for(const p of [...peers.values()])peerClose(p,false);
- net.fs=null;net.on=false;net.lobby={};net.admitted=false;
+ net.fs=null;net.on=false;net.lobby={};net.admitted=false;net.relayFor={};net.turnHint=0;
 }
 window.addEventListener('pagehide',()=>{saveNow();try{if(net.fs)net.fs.doc.delete()}catch(e){}for(const p of peers.values()){try{if(p.dE&&p.dE.readyState==='open')p.dE.send('{"k":"bye"}')}catch(e){}}});
 
@@ -1323,7 +1324,7 @@ function netTick(){
   if(!p&&peers.size<MAXP-1&&now>(net.retry[m.id]||0))startOffer(m.id);
  }
  for(const p of [...peers.values()]){
-  if(!p.open&&now-p.t0>20000)peerDown(p,'timeout');
+  if(!p.open&&now-p.t0>(p.init&&!p.relay?8000:20000)){if(p.init&&!p.relay){net.relayFor[p.id]=1;peerDown(p,'timeout');net.retry[p.id]=0;continue}if(!net.turnHint){net.turnHint=1;toast('다른 인터넷의 플레이어와 연결하지 못했습니다 — 중계(TURN) 서버가 막혔을 수 있어요. 공개 중계 서버가 막혔거나 불안정할 수 있습니다',7000)}peerDown(p,'timeout')}
   else if(p.open&&now-p.rx>12000)peerDown(p,'silent');
   else if(p.open&&!net.lobby[p.id]&&now-p.rx>6000&&net.fsOk&&!adm.some(v=>v.id===p.id))peerDown(p,'gone');
  }
@@ -1332,10 +1333,34 @@ function netTick(){
 net.pg=0;
 
 /* ---- WebRTC (신호는 Firestore, 전투/블록 데이터는 DataChannel) ---- */
-const RTC_CFG={iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478']}]};
-function mkPeer(id,att,init){
- const pc=new RTCPeerConnection(RTC_CFG);
- const p={id,att,pc,init,open:false,t0:mono(),rx:mono(),name:'PLAYER',dS:null,dE:null,mt:0,
+/* 서로 다른 인터넷(공유기/통신사)끼리는 직접 연결이 막히는 경우가 많아서 TURN(중계) 서버를 보조로 씁니다.
+   · 가입/API 키 없이 쓸 수 있는 공개 서버만 사용 (여러 개를 동시에 넣고, 되는 쪽이 자동으로 선택됨)
+   · 1) Cloudflare 의 무료 TURN (접속할 때 임시 계정을 받아옴 — 실패하면 건너뜀)
+   · 2) 공개 TURN 서버 (anyfirewall, OpenRelay)
+   · 공개 서버라 속도·가용성이 보장되지는 않습니다 */
+const TURN_STATIC=[
+ {urls:['turn:turn.anyfirewall.com:443?transport=tcp'],username:'webrtc',credential:'webrtc'},
+ {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}];
+let turnDyn=[],turnAt=0;
+async function turnRefresh(){
+ if(Date.now()-turnAt<3600000)return;turnAt=Date.now();
+ try{
+  const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),5000);
+  const r=await fetch('https://speed.cloudflare.com/turn-creds',{signal:ac.signal,cache:'no-store'});clearTimeout(tm);
+  if(!r.ok)throw 0;const j=await r.json(),l=Array.isArray(j.iceServers)?j.iceServers:[j],out=[];
+  for(const e of l){
+   const u=(Array.isArray(e.urls)?e.urls:[e.urls]).filter(x=>typeof x==='string'&&/^turns?:/.test(x));
+   if(u.length&&typeof e.username==='string'&&typeof e.credential==='string')out.push({urls:u,username:e.username,credential:e.credential});
+  }
+  if(out.length)turnDyn=out;else turnAt=0;
+ }catch(e){turnAt=Date.now()-3300000} // 실패하면 5분 뒤 다시 시도
+}
+const STUN_LIST=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478']}];
+const RTC_STUN={iceServers:STUN_LIST}; // 1단계: 직접 연결(STUN만). 안 되면 2단계로 TURN 중계
+const rtcCfg=()=>({iceServers:STUN_LIST.concat(turnDyn,TURN_STATIC),iceCandidatePoolSize:2});
+function mkPeer(id,att,init,relay){
+ const pc=new RTCPeerConnection(relay?rtcCfg():RTC_STUN);
+ const p={id,att,pc,init,relay:!!relay,open:false,t0:mono(),rx:mono(),name:'PLAYER',dS:null,dE:null,mt:0,
   x:0,y:0,z:0,yaw:0,pitch:0,rx_:0,rx:mono(),has:false,walk:0,held:1,ping:0,q:[],spd:0};
  p.rx=mono();p.rx_=0;
  p.dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
@@ -1350,13 +1375,14 @@ function mkPeer(id,att,init){
 }
 function waitIce(pc,ms){return new Promise(res=>{if(pc.iceGatheringState==='complete')return res();const t=setTimeout(done,ms);function done(){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',chk);res()}function chk(){if(pc.iceGatheringState==='complete')done()}pc.addEventListener('icegatheringstatechange',chk)})}
 async function startOffer(id){
+ const relay=!!net.relayFor[id];
  if(!window.RTCPeerConnection)return;
  const att=(Math.random()*1e9)|0;let p;
  try{
-  p=mkPeer(id,att,true);
-  const o=await p.pc.createOffer();await p.pc.setLocalDescription(o);await waitIce(p.pc,2500);
+  p=mkPeer(id,att,true,relay);
+  const o=await p.pc.createOffer();await p.pc.setLocalDescription(o);await waitIce(p.pc,p.relay?5000:2500);
   if(peers.get(id)!==p)return;
-  sendSig(id,{k:'sd',a:att,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
+  sendSig(id,{k:'sd',a:att,r:relay?1:0,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
  }catch(e){if(p)peerDown(p,'offer')}
 }
 async function onSignal(m){
@@ -1371,10 +1397,10 @@ async function onSignal(m){
    if(p&&p.att===m.a)return; // 중복
    if(p)peerClose(p,false);
    if(peers.size>=MAXP-1)return;
-   p=mkPeer(id,m.a,false);
+   p=mkPeer(id,m.a,false,!!m.r);
    await p.pc.setRemoteDescription({type:'offer',sdp:m.d.sdp});
    {const tx=p.pc.getTransceivers().find(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='audio');if(tx){try{tx.direction='sendrecv'}catch(e){}p.aTx=tx}}
-   const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,2500);
+   const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,p.relay?5000:2500);
    if(peers.get(id)!==p)return;
    sendSig(id,{k:'sd',a:m.a,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
   }else if(m.d.type==='answer'){
@@ -2777,7 +2803,7 @@ function frame(t){
 }
 /* 시작 */
 window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
-skinInit();
+skinInit();turnRefresh();
 loadSaved().then(()=>{csLoad();lkSync()});
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
