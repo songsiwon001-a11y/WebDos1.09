@@ -80,17 +80,17 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <div class="ov" id="ovTitle" style="display:flex">
  <div class="card">
   <h1>WebCreat</h1>
-  <div class="sub">10000 × 10000 블록 월드 · 서버 없는 P2P 멀티플레이<br>대기열만 Firebase, 게임은 브라우저끼리 직접 연결 (최대 16명)</div>
+  <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
-  <div class="b" id="bMulti">멀티플레이 (대기열 입장)</div>
-  <div class="b dim" id="bSolo">혼자 플레이</div>
-  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 웅크리기(비행 중 하강) · Ctrl 달리기<br>좌클릭 파괴 · 우클릭 설치 · 휠/1~9 선택 · E 블록 목록<br>T 채팅(/help 명령어) · N 전체 지도 · M 마이크 · Tab 접속자 · ~ 좌표/정보<br>E 목록의 스폰알로 동물 소환 · 뼈를 들고 개에게 우클릭 = 길들이기</div>
+  <div class="b" id="bMulti">멀티플레이</div>
+  <div class="b dim" id="bSolo">싱글플레이 (싱글이세요? ㅋㅋ)</div>
+  <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 웅크리기(비행 중 하강) · Ctrl 달리기</div>
  </div>
 </div>
 <div class="ov" id="ovQueue">
  <div class="card">
   <h1 style="font-size:30px">대기열</h1>
-  <div class="sub" id="qMsg">Firebase 에 연결하는 중…</div>
+  <div class="sub" id="qMsg">서버에 연결하는 중…</div>
   <div id="qList"></div>
   <div class="b dim" id="bQSolo" style="display:none">연결 실패 — 혼자 플레이로 시작</div>
   <div class="b dim" id="bQBack">뒤로</div>
@@ -114,7 +114,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <div class="ptabs" id="palTabs"></div>
   <div class="grid" id="palGrid"></div>
   <div class="sub" id="palInfo" style="margin:2px 0 4px"></div>
-  <div class="sub" style="margin:4px 0 0">내 인벤토리 (이 브라우저에 저장됨)</div>
+  <div class="sub" style="margin:4px 0 0">내 인벤토리</div>
   <div class="grid9" id="palInv" style="margin:4px 0"></div>
   <div class="sub" style="margin:4px 0 0">핫바</div>
   <div class="grid9" id="palHot"></div>
@@ -123,7 +123,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 </div>
 <div class="ov" id="ovMap">
  <canvas id="mapc" width="200" height="200"></canvas>
- <div class="sub" style="margin-top:8px">전체 월드 (10000×10000) — 노란 점: 나 · 흰 점: 다른 플레이어 · N 으로 닫기</div>
+ <div class="sub" style="margin-top:8px">N으로 닫으십시오.</div>
 </div>
 <div class="ov" id="ovLock">
  <div class="card" style="width:min(320px,92vw)">
