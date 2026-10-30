@@ -21,8 +21,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 .slot.sel{border-color:#fff}
 .slot canvas{width:100%;height:100%;image-rendering:pixelated;display:block}
 .slot i{position:absolute;left:2px;top:0;font:normal 10px monospace;color:#ddd}
-#bname{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);font-size:14px;text-shadow:1px 1px 0 #000;opacity:0;transition:opacity .4s}
-#chat{position:absolute;left:8px;bottom:70px;width:min(520px,60vw);font-size:14px;text-shadow:1px 1px 0 #000;pointer-events:none}
+#armHud{bottom:68px}
+#bname{position:absolute;left:50%;bottom:104px;transform:translateX(-50%);font-size:14px;text-shadow:1px 1px 0 #000;opacity:0;transition:opacity .4s}
+#chat{position:absolute;left:8px;bottom:112px;width:min(520px,60vw);font-size:14px;text-shadow:1px 1px 0 #000;pointer-events:none}
 #chatLog div{background:rgba(0,0,0,.35);padding:1px 6px;margin-top:1px;word-break:break-all}
 #chatLog div.old{display:none}
 #chat.open #chatLog div.old{display:block}
@@ -46,7 +47,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 #mapc{width:min(80vh,92vw);height:min(80vh,92vw);image-rendering:pixelated;border:2px solid #aaa;background:#123}
 #touch{position:fixed;inset:0;display:none;pointer-events:none}
 .tb{position:absolute;pointer-events:auto;width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.2);border:2px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;font-size:13px}
-@media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#bname{bottom:52px}#chat{bottom:52px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
+@media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#armHud{bottom:48px}#bname{bottom:84px}#chat{bottom:88px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
 #joy{position:absolute;left:24px;bottom:70px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
 #joyk{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.4)}
 #lkDisp{font-size:34px;letter-spacing:6px;margin:6px 0 14px}
@@ -116,10 +117,23 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <div class="ptabs" id="palTabs"></div>
   <div class="grid" id="palGrid"></div>
   <div class="sub" id="palInfo" style="margin:2px 0 4px"></div>
-  <div class="sub" style="margin:4px 0 0">내 인벤토리</div>
-  <div class="grid9" id="palInv" style="margin:4px 0"></div>
-  <div class="sub" style="margin:4px 0 0">핫바</div>
-  <div class="grid9" id="palHot"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-top:4px">
+   <div style="flex:0 0 auto">
+    <div class="sub" style="margin:0 0 4px">내 모습 · 방어구</div>
+    <div style="display:flex;gap:6px;align-items:flex-start">
+     <canvas id="palCharCv" width="96" height="192" style="width:96px;height:192px;image-rendering:pixelated;background:rgba(255,255,255,.06);border:2px solid #555"></canvas>
+     <div id="palArm" style="display:flex;flex-direction:column;gap:4px;width:48px"></div>
+    </div>
+    <div class="b dim" id="palUnequip" style="margin-top:6px;padding:6px;font-size:13px">방어구 모두 벗기</div>
+   </div>
+   <div style="flex:1 1 300px;min-width:260px">
+    <div class="sub" style="margin:0">내 인벤토리</div>
+    <div class="grid9" id="palInv" style="margin:4px 0"></div>
+    <div class="sub" style="margin:4px 0 0">핫바</div>
+    <div class="grid9" id="palHot"></div>
+    <div class="sub" style="margin:4px 0 0">방어구를 누른 뒤 같은 부위 칸을 누르면 입고, 입은 방어구를 누르면 벗어요</div>
+   </div>
+  </div>
   <div style="display:flex;gap:8px"><div class="b dim" id="palClear" style="flex:1">선택 칸 비우기</div><div class="b" id="palClose" style="flex:1">닫기 (E)</div></div>
  </div>
 </div>
@@ -548,9 +562,9 @@ function useLapis(n){for(const a of [hotbar,inv])for(let i=0;i<a.length&&n>0;i++
 const armN=e=>ARM.reduce((n,b)=>n+(b&&DEF[b].ench===e?1:0),0);
 const armSpd=()=>1+.1*armN('신속'),armJump=()=>1+.12*armN('도약');
 const heldEnc=()=>{const d=DEF[hotbar[P.sel]];return d&&d.ench||''};
-function renderArm(){let h=$('armHud');if(!h){h=document.createElement('div');h.id='armHud';h.style.cssText='position:fixed;left:10px;bottom:70px;flex-direction:column;gap:2px;background:rgba(0,0,0,.35);padding:3px;border:2px solid #222;pointer-events:none;z-index:5';document.body.appendChild(h)}
+function renderArm(){let h=$('armHud');if(!h){h=document.createElement('div');h.id='armHud';h.style.cssText='position:fixed;left:50%;transform:translateX(-50%);flex-direction:row;gap:2px;background:rgba(0,0,0,.35);padding:3px;border:2px solid #222;pointer-events:none;z-index:5';document.body.appendChild(h)}
  h.textContent='';h.style.display=(state==='play'&&ARM.some(Boolean))?'flex':'none';
- ARM.forEach(b=>{if(!b)return;const c=iconCanvas(b,26);c.title=DEF[b].name;h.appendChild(c)})}
+ ARM.forEach(b=>{if(!b)return;const c=iconCanvas(b,26);c.title=DEF[b].name;h.appendChild(c)});if(typeof ui!=='undefined'&&ui==='pal'&&typeof renderPalHot==='function')renderPalHot()}
 function equipArmor(b){const s=DEF[b].armor,old=ARM[s];ARM[s]=b;hotbar[P.sel]=old;renderHotbar();saveInv();sfx(.08,500);toast(DEF[b].name+' 착용',1400)}
 function enEl(){let el=$('ovEn');if(el)return el;el=document.createElement('div');el.className='ov';el.id='ovEn';el.innerHTML='<div class="card" style="width:min(560px,96vw)"></div>';document.body.appendChild(el);return el}
 function enCell(src,i){const b=src==='h'?hotbar[i]:inv[i],d=document.createElement('div'),on=(ENS.it&&ENS.it.src===src&&ENS.it.i===i)||(ENS.bk&&ENS.bk.src===src&&ENS.bk.i===i);
@@ -2032,7 +2046,29 @@ function pClick(src,i){
  renderPalHot();
 }
 function pClear(src,i){pSet(src,i,0);PM.src='';renderHotbar();saveInv();renderPalHot()}
+/* ---- 내 모습 그리기 (인벤토리 · 서바이벌 인벤토리 공용): 스킨 앞모습 + 입은 방어구 ---- */
+const ARMN=['투구','갑옷','레깅스','부츠'];
+function drawChar(cvs,arm){
+ if(!cvs||!SKIN.c)return;const g=cvs.getContext('2d');g.imageSmoothingEnabled=false;g.clearRect(0,0,cvs.width,cvs.height);
+ const S=cvs.width/16,c=SKIN.c,aw=SKIN.slim?3:4,px=(sx,sy,w,h,x,y)=>g.drawImage(c,sx,sy,w,h,x*S,y*S,w*S,h*S);
+ px(4,20,4,12,4,20);px(20,52,4,12,8,20);px(20,20,8,12,4,8);px(44,20,aw,12,4-aw,8);px(36,52,aw,12,12,8);px(8,8,8,8,4,0);
+ px(4,36,4,12,4,20);px(4,52,4,12,8,20);px(20,36,8,12,4,8);px(44,36,aw,12,4-aw,8);px(52,52,aw,12,12,8);px(40,8,8,8,4,0);
+ const ov=(s,rects)=>{const b=arm[s];if(!b)return;const col=mapBlockColor(b),f=(x,y,w,h,k)=>{g.fillStyle='rgb('+(col[0]*k|0)+','+(col[1]*k|0)+','+(col[2]*k|0)+')';g.fillRect(x*S,y*S,w*S,h*S)};
+  g.globalAlpha=.9;for(const r of rects){f(r[0],r[1],r[2],r[3],1);f(r[0],r[1]+r[3]-.5,r[2],.5,.6);f(r[0],r[1],.4,r[3],.8)}g.globalAlpha=1};
+ ov(2,[[4,20,4,8],[8,20,4,8]]);ov(1,[[4,8,8,12],[4-aw,8,aw,10],[12,8,aw,10]]);ov(3,[[4,27,4,5],[8,27,4,5]]);ov(0,[[4,0,8,4],[4,4,2,3],[10,4,2,3]]);
+}
+function armUnequip(arr,s,hot,inv_){const b=arr[s];if(!b)return false;let a=hot,i=a.indexOf(0);if(i<0){a=inv_;i=a.indexOf(0)}if(i<0){toast('빈 칸이 없어 벗을 수 없어요',1500);return false}a[i]=b;arr[s]=0;return true}
+function armCell(s){
+ const b=ARM[s],d=document.createElement('div');d.className='dcell';d.title=ARMN[s]+(b?' — '+DEF[b].name:' (비어 있음)');
+ if(b){const c=iconCanvas(b,32);d.appendChild(c)}else{d.style.cssText+=';font-size:10px;color:#888;display:flex;align-items:center;justify-content:center;pointer-events:auto';d.textContent=ARMN[s]}
+ d.addEventListener('pointerdown',e=>{e.preventDefault();
+  if(PM.src){const v=pGet(PM.src,PM.i);if(v&&DEF[v].armor===s){pSet(PM.src,PM.i,ARM[s]);ARM[s]=v;PM.src='';sfx(.08,500);renderHotbar();saveInv();return}
+   if(v){toast(DEF[v].armor!==undefined?'이 방어구는 '+ARMN[DEF[v].armor]+' 칸에 입을 수 있어요':'방어구가 아니에요',1600);return}}
+  if(b&&armUnequip(ARM,s,hotbar,inv)){sfx(.06,400);renderHotbar();saveInv()}});
+ return d;
+}
 function renderPalHot(){
+ const ar=$('palArm');if(ar){ar.textContent='';for(let s=0;s<4;s++)ar.appendChild(armCell(s));drawChar($('palCharCv'),ARM)}
  const h=$('palHot'),v=$('palInv');if(!h||!v)return;h.textContent='';v.textContent='';
  inv.forEach((b,i)=>v.appendChild(pCell(b,false,PM.src==='i'&&PM.i===i,()=>pClick('i',i),()=>pClear('i',i))));
  hotbar.forEach((b,i)=>h.appendChild(pCell(b,i===P.sel,PM.src==='h'&&PM.i===i,()=>pClick('h',i),()=>pClear('h',i))));
@@ -2055,11 +2091,13 @@ $('palQ').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'
 $('palQ').addEventListener('keyup',e=>e.stopPropagation());
 $('palClear').onclick=()=>{hotbar[P.sel]=0;renderHotbar();saveInv();renderPalHot()};
 $('palClose').onclick=()=>togglePal(false);
+$('palUnequip').onclick=()=>{let n=0;for(let s=0;s<4;s++)if(ARM[s]&&armUnequip(ARM,s,hotbar,inv))n++;if(n){sfx(.06,400);renderHotbar();saveInv();toast('방어구 '+n+'개를 벗었습니다',1400)}else toast('벗을 방어구가 없어요',1200)};
 function showOv(id,on){$(id).style.display=on?'flex':'none'}
 function togglePal(on){
  if(state!=='play')return;
  if(on===undefined)on=ui!=='pal';
  if(on&&ui)return;
+ if(on&&SURV.enabled)return openSurv();
  ui=on?'pal':'';if(on){PM.src='';buildPalette()}showOv('pal',on);
  if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
 }
@@ -2194,6 +2232,83 @@ function openDresser(x,y,z){
 }
 function closeDr(){if(ui!=='dr')return;ui='';DRS.sel=null;showOv('ovDr',false);saveInv();lockPointer()}
 $('drClose').onclick=closeDr;
+/* ===================== 서바이벌 전용 인벤토리 (지금은 꺼져 있음) =====================
+   · SURV.enabled = true 가 되면 E 키가 이 인벤토리를 엽니다 (지금은 false 라 기존 크리에이티브 E 화면 그대로)
+   · 크리에이티브 인벤토리와 완전히 따로 저장됩니다 (핫바 / 가방 27칸 / 방어구 4칸 / 제작칸)
+   · 내 모습 + 방어구 칸 + 2x2 제작칸 + 결과칸. 지금은 칸마다 아이템 1개 (수량 개념은 서바이벌 모드를 만들 때 추가)
+   · 켜 보려면 콘솔에서 __wc.SURV.enabled=true */
+const SURV={enabled:false,hotbar:new Array(9).fill(0),inv:new Array(27).fill(0),arm:[0,0,0,0],craft:[0,0,0,0],out:0,sel:null};
+const SRECIPES=[ // 제작칸 4개에 놓인 재료(순서 무관) -> [결과 블록, 개수는 아직 1개 취급]
+ {in:[6],out:8},{in:[3,3,3,3],out:24},{in:[3,3],out:25},{in:[5,5,5,5],out:26},{in:[4,4,4,4],out:11},{in:[8,8,8,8],out:34},{in:[2,2],out:14},{in:[9,9],out:60}];
+const survKey=()=>'wc_surv_'+ROOM+'_'+bkey(net.name||'player');
+function survSave(){try{localStorage.setItem(survKey(),JSON.stringify({h:SURV.hotbar,i:SURV.inv,a:SURV.arm,c:SURV.craft}))}catch(e){}}
+function survLoad(){
+ SURV.hotbar.fill(0);SURV.inv.fill(0);SURV.arm.fill(0);SURV.craft.fill(0);SURV.out=0;
+ try{const d=JSON.parse(localStorage.getItem(survKey())||'null');if(!d)return;
+  const ok=b=>{b|=0;return b>0&&b<=NB&&b!==B_WATER&&!DEF[b].hide&&!DEF[b].cmdonly?b:0};
+  if(Array.isArray(d.h))for(let i=0;i<9;i++)SURV.hotbar[i]=ok(d.h[i]);
+  if(Array.isArray(d.i))for(let i=0;i<27;i++)SURV.inv[i]=ok(d.i[i]);
+  if(Array.isArray(d.c))for(let i=0;i<4;i++)SURV.craft[i]=ok(d.c[i]);
+  if(Array.isArray(d.a))for(let s=0;s<4;s++){const b=d.a[s]|0;SURV.arm[s]=(b>0&&b<=NB&&DEF[b].armor===s)?b:0}
+ }catch(e){}
+ survCalc();
+}
+function survCalc(){
+ const have=SURV.craft.filter(Boolean).sort((a,b)=>a-b).join(',');SURV.out=0;if(!have)return;
+ for(const r of SRECIPES)if(r.in.slice().sort((a,b)=>a-b).join(',')===have){SURV.out=r.out;return}
+}
+const survArr=a=>a==='h'?SURV.hotbar:a==='i'?SURV.inv:SURV.craft;
+function survEl(){let el=$('ovSurv');if(el)return el;el=document.createElement('div');el.className='ov';el.id='ovSurv';el.innerHTML='<div class="card" style="width:min(560px,96vw);text-align:left"></div>';document.body.appendChild(el);return el}
+function survCell(b,sel,on,title){
+ const d=document.createElement('div');d.className='dcell'+(sel?' sel':'');
+ if(b){const c=iconCanvas(b,32);c.title=DEF[b].name;d.appendChild(c)}if(title)d.title=title;
+ d.addEventListener('pointerdown',e=>{e.preventDefault();on()});return d;
+}
+function survClick(a,i){
+ if(a==='o'){ // 결과칸: 눌러서 꺼내기 (재료는 사라짐)
+  if(!SURV.out)return;let t=SURV.hotbar,j=t.indexOf(0);if(j<0){t=SURV.inv;j=t.indexOf(0)}if(j<0)return toast('빈 칸이 없어요',1400);
+  t[j]=SURV.out;SURV.craft.fill(0);SURV.sel=null;survCalc();sfx(.1,700);survSave();return survRender();
+ }
+ const S=SURV;
+ if(!S.sel){if(survArr(a)[i])S.sel={a,i};return survRender()}
+ const p=S.sel;S.sel=null;
+ if(!(p.a===a&&p.i===i)){const A=survArr(p.a),B=survArr(a),t=A[p.i];A[p.i]=B[i];B[i]=t;sfx(.06,500);survCalc();survSave()}
+ survRender();
+}
+function survArmClick(s){
+ const S=SURV;
+ if(S.sel){const A=survArr(S.sel.a),v=A[S.sel.i];
+  if(v&&DEF[v].armor===s){A[S.sel.i]=S.arm[s];S.arm[s]=v;S.sel=null;sfx(.08,500);survSave();return survRender()}
+  S.sel=null;toast('이 칸에는 '+ARMN[s]+'만 입을 수 있어요',1500);return survRender()}
+ if(S.arm[s]&&armUnequip(S.arm,s,S.hotbar,S.inv)){sfx(.06,400);survSave()}
+ survRender();
+}
+function survRender(){
+ const card=survEl().firstChild;card.textContent='';
+ const T=(t,st)=>{const e=document.createElement('div');e.className='sub';e.textContent=t;if(st)e.style.cssText=st;card.appendChild(e)};
+ T('서바이벌 인벤토리 — 칸을 누르고 다른 칸을 누르면 서로 바뀝니다 (E / Esc 로 닫기)');
+ const top=document.createElement('div');top.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start';card.appendChild(top);
+ const L=document.createElement('div');L.style.cssText='display:flex;gap:6px';top.appendChild(L);
+ const cvs=document.createElement('canvas');cvs.width=96;cvs.height=192;cvs.style.cssText='width:96px;height:192px;image-rendering:pixelated;background:rgba(255,255,255,.06);border:2px solid #555';L.appendChild(cvs);
+ const col=document.createElement('div');col.style.cssText='display:flex;flex-direction:column;gap:4px;width:48px';L.appendChild(col);
+ for(let s=0;s<4;s++){const b=SURV.arm[s],d=survCell(b,false,()=>survArmClick(s),ARMN[s]);if(!b){d.style.cssText+=';font-size:10px;color:#888;display:flex;align-items:center;justify-content:center';d.textContent=ARMN[s]}col.appendChild(d)}
+ drawChar(cvs,SURV.arm);
+ const R=document.createElement('div');R.style.cssText='flex:1 1 200px';top.appendChild(R);
+ const t2=document.createElement('div');t2.className='sub';t2.textContent='제작 (2×2)';R.appendChild(t2);
+ const cr=document.createElement('div');cr.style.cssText='display:flex;align-items:center;gap:10px';R.appendChild(cr);
+ const g4=document.createElement('div');g4.style.cssText='display:grid;grid-template-columns:repeat(2,44px);gap:4px';cr.appendChild(g4);
+ SURV.craft.forEach((b,i)=>g4.appendChild(survCell(b,!!(SURV.sel&&SURV.sel.a==='c'&&SURV.sel.i===i),()=>survClick('c',i))));
+ const ar=document.createElement('div');ar.textContent='→';ar.style.fontSize='22px';cr.appendChild(ar);
+ const oc=survCell(SURV.out,false,()=>survClick('o',0),SURV.out?DEF[SURV.out].name+' (눌러서 꺼내기)':'결과');oc.style.width='52px';oc.style.height='52px';cr.appendChild(oc);
+ const g=(a,arr)=>{const e=document.createElement('div');e.className='grid9';arr.forEach((b,i)=>e.appendChild(survCell(b,!!(SURV.sel&&SURV.sel.a===a&&SURV.sel.i===i),()=>survClick(a,i))));card.appendChild(e)};
+ T('가방','margin-top:8px');g('i',SURV.inv);T('핫바');g('h',SURV.hotbar);
+ const c=document.createElement('div');c.className='b dim';c.textContent='닫기';c.onclick=closeSurv;card.appendChild(c);
+}
+function openSurv(){
+ if(state!=='play'||ui)return;ui='surv';SURV.sel=null;survLoad();survEl();showOv('ovSurv',true);
+ if(document.pointerLockElement)document.exitPointerLock();survRender();sfx(.08,300);
+}
+function closeSurv(){if(ui!=='surv')return;ui='';SURV.sel=null;showOv('ovSurv',false);survSave();lockPointer()}
 /* ---- 인벤토리(핫바) 로컬 저장: 방 + 닉네임별, 15초마다 + 나갈 때/탭 닫을 때 ---- */
 const invKey=()=>'wc_inv2_'+ROOM+'_'+bkey(net.name||'player');
 function saveInv(){
@@ -2344,6 +2459,7 @@ document.addEventListener('keydown',e=>{
  if(ui==='lock'){lockKey(e);return}
  if(ui==='dr'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeDr()}return}
  if(ui==='en'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeEn()}return}
+ if(ui==='surv'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeSurv()}return}
  if(ui==='pc')return;
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
  if(e.code==='KeyM'){toggleMic();return}
@@ -2866,7 +2982,7 @@ function leaveGame(){
  micOff();
  savePos();
  netDisconnect();net.synced=false;
- state='title';ui='';ARM.fill(0);renderArm();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
+ state='title';ui='';ARM.fill(0);renderArm();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);if($('ovSurv'))showOv('ovSurv',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();animals.clear();for(const e of atagEls.values())e.remove();atagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
@@ -2941,7 +3057,7 @@ function frame(t){
  }
 }
 /* 시작 */
-window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
+window.__wc={SURV,openSurv,voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
 skinInit();turnRefresh();
 loadSaved().then(()=>{csLoad();lkSync()});
 ensureAround(5000>>4,5000>>4,3);
