@@ -61,6 +61,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 .dcell.sel{border-color:#fd4}
 .dcell canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
 .ptabs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}.ptab{padding:5px 9px;background:#333;border:2px solid #666;font-size:13px;cursor:pointer;pointer-events:auto}.ptab:hover{border-color:#aaa}.ptab.on{background:#3a7a22;border-color:#9d9}
+#skinPrev{max-width:100%}
 </style>
 </head>
 <body>
@@ -84,6 +85,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
   <div class="b" id="bMulti">멀티플레이</div>
   <div class="b dim" id="bSolo">싱글플레이 (싱글이세요? ㅋㅋ)</div>
+  <div class="b dim" id="bSkin">🎨 스킨 변경</div>
   <div class="small">WASD 이동 · Space 점프(두 번 누르면 비행) · Shift 웅크리기(비행 중 하강) · Ctrl 달리기</div>
  </div>
 </div>
@@ -137,6 +139,19 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <div id="lkPad"></div>
   <div class="b dim" id="lkSet" style="display:none"></div>
   <div class="b dim" id="lkClose">닫기 (Esc)</div>
+ </div>
+</div>
+<div class="ov" id="ovSkin">
+ <div class="card" style="width:min(520px,96vw)">
+  <h1 style="font-size:30px">스킨</h1>
+  <div class="sub">마인크래프트 스킨 PNG(64×64 또는 구형 64×32)를 그대로 쓸 수 있어요.<br>파일을 고르거나 이 창에 끌어다 놓으세요.</div>
+  <canvas id="skinPrev" width="216" height="192" style="width:216px;height:192px;image-rendering:pixelated;background:rgba(255,255,255,.06);border:2px solid #555;margin:4px auto 8px;display:block"></canvas>
+  <div class="sub" id="skinInfo"></div>
+  <input id="skinFile" type="file" accept="image/png,image/*" style="display:none">
+  <div class="b" id="skinPick">스킨 파일 선택 (PNG)</div>
+  <div class="b dim" id="skinArm">팔 모양: 자동 감지</div>
+  <div class="b dim" id="skinReset">기본 스킨(스티브)으로 되돌리기</div>
+  <div class="b dim" id="skinClose">닫기</div>
  </div>
 </div>
 <div id="fade"></div>
@@ -1326,7 +1341,7 @@ function mkPeer(id,att,init){
  p.dS=pc.createDataChannel('s',{negotiated:true,id:0,ordered:false,maxRetransmits:0});
  p.dE=pc.createDataChannel('e',{negotiated:true,id:1});
  if(init){try{p.aTx=pc.addTransceiver('audio',{direction:'sendrecv'})}catch(e){}} // 음성용 오디오 줄 (마이크는 나중에 replaceTrack 으로 끼움 → 재협상 없음)
- pc.ontrack=e=>{if(e.track&&e.track.kind==='audio')voiceAttach(p,e.track)};
+ pc.ontrack=e=>{if(e.track&&e.track.kind==='audio'){if(e.transceiver){if(!p.init){try{e.transceiver.direction='sendrecv'}catch(x){}}p.aTx=e.transceiver}voiceAttach(p,e.track)}};
  p.dE.onopen=()=>{if(peers.get(id)===p)peerOpen(p)};
  p.dS.onclose=p.dE.onclose=()=>{if(peers.get(id)===p)peerDown(p,'closed')};
  p.dS.onmessage=p.dE.onmessage=e=>{if(peers.get(id)===p)peerMsg(p,e.data)};
@@ -1369,6 +1384,7 @@ async function onSignal(m){
  }catch(e){const p=peers.get(id);if(p)peerDown(p,'sig')}
 }
 function peerClose(p,notify){
+ if(p.skinTex){try{gl.deleteTexture(p.skinTex)}catch(e){}p.skinTex=null}
  voiceDrop(p);
  if(notify&&p.dE&&p.dE.readyState==='open')try{p.dE.send('{"k":"bye"}')}catch(e){}
  try{p.dS.close()}catch(e){}try{p.dE.close()}catch(e){}try{p.pc.close()}catch(e){}
@@ -1389,7 +1405,7 @@ function peerSend(p,m,rel){
 function netBroadcast(m,rel){for(const p of peers.values())if(p.open)peerSend(p,m,rel)}
 function peerOpen(p){
  p.open=true;p.rx=mono();net.retry[p.id]=0;
- peerSend(p,{k:'hi',n:net.name,mt:maxT},true);updateStat();
+ peerSend(p,{k:'hi',n:net.name,mt:maxT},true);sendSkinTo(p);updateStat();
  if(!net.synced&&!net.pulling)pullFrom(p);
 }
 function pullFrom(p){net.pulling=p.id;peerSend(p,{k:'sr'},true)}
@@ -1462,6 +1478,7 @@ function peerMsg(p,s){
   }break;
   case 'say':if(lvOf(p.name)>=1){const t=cleanText(m.t);if(t)chatAdd('[공지] '+p.name,t,'sys')}break;
   case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
+  case 'sk':peerSkin(p,m);break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
   case 'po':if(fin(m.t))p.ping=Math.round(mono()-m.t);break;
   case 'bn':{ // 차단/해제 기록 (보낸 사람이 어드민 이상이고 대상보다 권한이 높을 때만 인정)
@@ -1505,27 +1522,24 @@ const voiceGain=d=>{const t=clamp((VOICE_MAX-d)/(VOICE_MAX-VOICE_FULL),0,1);retu
 let micTrack=null,micOn=false,micBusy=false,vctx=null,voiceT=0;
 function voiceCtx(){if(!vctx){try{vctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{});return vctx}
 ['pointerdown','keydown','touchstart'].forEach(ev=>addEventListener(ev,()=>{if(vctx&&vctx.state==='suspended')vctx.resume().catch(()=>{})},true));
-function voiceAttach(p,track){
- voiceDrop(p);const ctx=voiceCtx();if(!ctx)return;
+function voiceAttach(p,track){ // 받은 목소리: <audio> 요소로 직접 재생 (가장 호환성이 좋은 방식), 볼륨으로 거리 조절
+ voiceDrop(p);
  try{
-  const st=new MediaStream([track]),el=new Audio();el.srcObject=st;el.muted=true;try{const r=el.play();if(r&&r.catch)r.catch(()=>{})}catch(e){} // 일부 브라우저는 요소에 붙여야 WebAudio 로 소리가 흐름
-  const src=ctx.createMediaStreamSource(st),gn=ctx.createGain(),pn=ctx.createStereoPanner?ctx.createStereoPanner():null;
-  gn.gain.value=0;src.connect(gn);if(pn){gn.connect(pn);pn.connect(ctx.destination)}else gn.connect(ctx.destination);
-  p.vo={el,src,gn,pn};
+  const el=new Audio();el.srcObject=new MediaStream([track]);el.autoplay=true;el.volume=0;
+  const r=el.play();if(r&&r.catch)r.catch(()=>{});
+  p.vo={el};
  }catch(e){p.vo=null}
 }
-function voiceDrop(p){const v=p&&p.vo;if(!v)return;try{v.src.disconnect();v.gn.disconnect();if(v.pn)v.pn.disconnect();v.el.srcObject=null}catch(e){}p.vo=null}
+function voiceDrop(p){const v=p&&p.vo;if(!v)return;try{v.el.pause();v.el.srcObject=null}catch(e){}p.vo=null}
 function sendMicTo(p,on){const want=on&&micTrack?micTrack:null;if(!p.aTx||!p.aTx.sender||p.micT===want)return;p.micT=want;try{p.aTx.sender.replaceTrack(want).catch(()=>{})}catch(e){}}
 function updateVoice(dt){
  voiceT-=dt;if(voiceT>0)return;voiceT=.08;
- const rx=Math.cos(cam.yaw),rz=-Math.sin(cam.yaw);
  for(const p of peers.values()){
   if(!p.open)continue;
   const dx=p.rx_-P.x,dz=p.rz-P.z,d=p.has?Math.hypot(dx,p.ry-P.y,dz):1e9;
   sendMicTo(p,micOn&&d<VOICE_MAX+6);
-  const v=p.vo;if(v&&vctx){
-   v.gn.gain.setTargetAtTime(voiceGain(d),vctx.currentTime,.06);
-   if(v.pn){const h=Math.hypot(dx,dz);v.pn.pan.setTargetAtTime(h>.5?clamp((dx*rx+dz*rz)/h,-1,1)*Math.min(1,h/3)*.85:0,vctx.currentTime,.06)}
+  const v=p.vo;if(v){
+   try{v.el.volume=clamp(voiceGain(d),0,1);if(v.el.paused){const r=v.el.play();if(r&&r.catch)r.catch(()=>{})}}catch(e){}
   }
  }
 }
@@ -1539,7 +1553,7 @@ async function toggleMic(){
  try{
   const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
   micTrack=st.getAudioTracks()[0];micTrack.onended=()=>{if(micOn)micOff()};
-  micOn=true;voiceCtx();voiceT=0;toast('마이크 ON — 가까이 있는 사람에게만 들립니다 (M 으로 끄기)',2500);
+  micOn=true;voiceCtx();voiceT=0;{const n=[...peers.values()].filter(p=>p.open&&p.aTx).length;toast('마이크 ON — 음성 연결 '+n+'명 · 30칸 안의 사람에게만 들립니다 (M 으로 끄기)',3000)}
  }catch(e){toast('마이크를 켤 수 없습니다: '+(e&&e.name==='NotAllowedError'?'권한이 거부되었습니다':'장치를 확인하세요'),3500)}
  micBusy=false;
 }
@@ -2145,7 +2159,7 @@ function showTab(on){
 function lockPointer(){if(isTouch||state!=='play'||ui)return;try{const r=cv.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}
 document.addEventListener('pointerlockchange',()=>{
  locked=document.pointerLockElement===cv;
- if(!locked&&state==='play'&&!ui&&!isTouch){ui='pause';openPause()}
+ if(!locked&&state==='play'&&!ui&&!isTouch&&!micBusy){ui='pause';openPause()}
 });
 function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 이름 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;showOv('ovPause',true)}
 function resume(){if(ui==='pause'){ui='';showOv('ovPause',false);lockPointer()}}
@@ -2235,6 +2249,161 @@ if(isTouch){
  btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
 }
 
+/* ===================== 스킨 (마인크래프트 64x64 스킨 그대로) =====================
+   · 기본값은 스티브 스킨(코드로 생성). 타이틀의 [스킨 변경]에서 PNG 를 고르면 내 브라우저에 저장
+   · 구형 64x32 스킨은 자동으로 64x64 로 변환, 얇은 팔(알렉스)은 자동 감지 + 수동 선택
+   · 접속하면 내 스킨 PNG 를 접속자에게 보내고(WebRTC), 받은 스킨은 그 사람의 몸에 입혀서 그림 */
+const SKIN={c:null,tex:null,slim:false,mode:'auto',url:'',custom:false},STEVE={c:null,tex:null};
+function mkSkinTex(c,old){
+ const t=old||gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,c);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+ gl.bindTexture(gl.TEXTURE_2D,tex);return t;
+}
+function genSteve(){ // 기본 스킨: 스티브 (갈색 머리 · 청록 셔츠 · 파란 바지)
+ const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');
+ let sd=777;const rn=()=>{sd=(Math.imul(sd,1103515245)+12345)>>>0;return sd/4294967296};
+ const R=(x,y,w,h,col,v)=>{for(let j=0;j<h;j++)for(let i=0;i<w;i++){const n=(rn()-.5)*(v===undefined?10:v);g.fillStyle='rgb('+clamp(col[0]+n|0,0,255)+','+clamp(col[1]+n|0,0,255)+','+clamp(col[2]+n|0,0,255)+')';g.fillRect(x+i,y+j,1,1)}};
+ const SK=[190,133,101],HAIR=[66,42,28],SHIRT=[62,170,172],PANTS=[52,64,170],SHOE=[66,66,72];
+ // 머리
+ R(8,0,8,8,HAIR);R(16,0,8,8,[48,30,20]);
+ for(const x0 of [0,16]){R(x0,8,8,4,HAIR);R(x0,12,8,4,SK)}
+ R(24,8,8,8,HAIR);
+ R(8,8,8,2,HAIR);R(8,10,8,6,SK);R(8,10,1,2,HAIR);R(15,10,1,2,HAIR);
+ R(9,12,1,1,[240,240,248],0);R(10,12,1,1,[64,56,150],0);R(13,12,1,1,[64,56,150],0);R(14,12,1,1,[240,240,248],0);
+ R(11,13,2,1,[150,98,74],4);R(10,14,4,1,[116,68,52],4);
+ // 몸통
+ R(20,16,16,4,SHIRT);R(16,20,24,12,SHIRT);
+ // 오른팔 / 왼팔: 윗부분 소매, 아래는 맨살
+ R(44,16,4,4,SHIRT);R(48,16,4,4,SK);R(40,20,16,4,SHIRT);R(40,24,16,8,SK);
+ R(36,48,4,4,SHIRT);R(40,48,4,4,SK);R(32,52,16,4,SHIRT);R(32,56,16,8,SK);
+ // 오른다리 / 왼다리
+ R(4,16,4,4,PANTS);R(8,16,4,4,SHOE);R(0,20,16,10,PANTS);R(0,30,16,2,SHOE);
+ R(20,48,4,4,PANTS);R(24,48,4,4,SHOE);R(16,52,16,10,PANTS);R(16,62,16,2,SHOE);
+ return c;
+}
+function mirrorLimb(D,sx,sy,dx,dy){ // 구형 스킨: 오른쪽 팔/다리를 좌우 반전해서 왼쪽으로 복사
+ const d=D.data,cp=(fx,fy,tx,ty,w,h)=>{for(let j=0;j<h;j++)for(let i=0;i<w;i++){const a=((fy+j)*64+fx+i)*4,b=((ty+j)*64+tx+w-1-i)*4;d[b]=d[a];d[b+1]=d[a+1];d[b+2]=d[a+2];d[b+3]=d[a+3]}};
+ cp(sx+4,sy,dx+4,dy,4,4);cp(sx+8,sy,dx+8,dy,4,4);
+ cp(sx,sy+4,dx+8,dy+4,4,12);cp(sx+4,sy+4,dx+4,dy+4,4,12);cp(sx+8,sy+4,dx,dy+4,4,12);cp(sx+12,sy+4,dx+12,dy+4,4,12);
+}
+function normSkin(img){ // 어떤 스킨 이미지든 64x64 캔버스로. 크기가 맞지 않으면 null
+ const w=img.width,h=img.height;
+ if(!(w>=32&&w<=512&&(h===w||h*2===w)))return null;
+ const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');g.imageSmoothingEnabled=false;
+ const legacy=h*2===w;
+ g.drawImage(img,0,0,w,h,0,0,64,legacy?32:64);
+ if(legacy){const D=g.getImageData(0,0,64,64);mirrorLimb(D,0,16,16,48);mirrorLimb(D,40,16,32,48);g.putImageData(D,0,0)}
+ return c;
+}
+function detectSlim(c){const d=c.getContext('2d').getImageData(54,24,2,1).data;return d[3]===0&&d[7]===0}
+function refreshSlim(){SKIN.slim=SKIN.mode==='slim'?true:SKIN.mode==='wide'?false:(SKIN.custom&&SKIN.c?detectSlim(SKIN.c):false)}
+function setSkinCanvas(c){SKIN.c=c;refreshSlim();SKIN.url=c.toDataURL('image/png');SKIN.tex=mkSkinTex(c,SKIN.tex);skinPreview()}
+function saveSkin(){try{if(SKIN.custom)localStorage.setItem('wc_skin',SKIN.url);else localStorage.removeItem('wc_skin');localStorage.setItem('wc_skin_m',SKIN.mode)}catch(e){}}
+function skinInit(){
+ try{SKIN.mode=localStorage.getItem('wc_skin_m')||'auto'}catch(e){}
+ if(!['auto','wide','slim'].includes(SKIN.mode))SKIN.mode='auto';
+ STEVE.c=genSteve();STEVE.tex=mkSkinTex(STEVE.c);
+ SKIN.custom=false;setSkinCanvas(STEVE.c);
+ let u=null;try{u=localStorage.getItem('wc_skin')}catch(e){}
+ if(u&&u.startsWith('data:image/png;base64,')){const img=new Image();img.onload=()=>{const c=normSkin(img);if(c){SKIN.custom=true;setSkinCanvas(c)}};img.src=u}
+}
+function skinFromFile(f){
+ if(!f)return;if(f.size>800000)return toast('파일이 너무 큽니다',2500);
+ const r=new FileReader();
+ r.onload=()=>{const img=new Image();
+  img.onload=()=>{const c=normSkin(img);if(!c)return toast('스킨 크기가 맞지 않아요 (64×64 또는 64×32 PNG)',3500);
+   SKIN.custom=true;setSkinCanvas(c);saveSkin();
+   toast(SKIN.url.length>38000?'적용했지만 용량이 커서 다른 사람에게는 안 보일 수 있습니다':'스킨을 적용했습니다',2200)};
+  img.onerror=()=>toast('이미지를 읽을 수 없습니다',2500);img.src=String(r.result)};
+ r.readAsDataURL(f);
+}
+function skinPreview(){
+ const cv2=$('skinPrev');if(!cv2||!SKIN.c)return;const g=cv2.getContext('2d');g.imageSmoothingEnabled=false;g.clearRect(0,0,216,192);
+ const S=6,c=SKIN.c,aw=SKIN.slim?3:4,px=(sx,sy,w,h,x,y)=>g.drawImage(c,sx,sy,w,h,x*S,y*S,w*S,h*S);
+ const front=o=>{
+  px(8,8,8,8,o+4,0);px(20,20,8,12,o+4,8);px(44,20,aw,12,o+4-aw,8);px(36,52,aw,12,o+12,8);px(4,20,4,12,o+4,20);px(20,52,4,12,o+8,20);
+  px(40,8,8,8,o+4,0);px(20,36,8,12,o+4,8);px(44,36,aw,12,o+4-aw,8);px(52,52,aw,12,o+12,8);px(4,36,4,12,o+4,20);px(4,52,4,12,o+8,20);
+ };
+ const back=o=>{
+  px(24,8,8,8,o+4,0);px(32,20,8,12,o+4,8);px(48+aw,20,aw,12,o+12,8);px(40+aw,52,aw,12,o+4-aw,8);px(12,20,4,12,o+8,20);px(28,52,4,12,o+4,20);
+  px(56,8,8,8,o+4,0);px(32,36,8,12,o+4,8);px(48+aw,36,aw,12,o+12,8);px(56+aw,52,aw,12,o+4-aw,8);px(12,36,4,12,o+8,20);px(12,52,4,12,o+4,20);
+ };
+ front(0);back(20);
+ $('skinInfo').textContent='현재: '+(SKIN.custom?'내 스킨':'기본 스킨 (스티브)')+' · 팔 '+(SKIN.slim?'얇게 (알렉스)':'굵게 (스티브)');
+ $('skinArm').textContent='팔 모양: '+({auto:'자동 감지',wide:'굵게 (스티브)',slim:'얇게 (알렉스)'})[SKIN.mode];
+}
+$('bSkin').onclick=()=>{showOv('ovTitle',false);showOv('ovSkin',true);skinPreview()};
+$('skinClose').onclick=()=>{showOv('ovSkin',false);showOv('ovTitle',true)};
+$('skinPick').onclick=()=>$('skinFile').click();
+$('skinFile').addEventListener('change',e=>{skinFromFile(e.target.files&&e.target.files[0]);e.target.value=''});
+$('skinArm').onclick=()=>{const m=['auto','wide','slim'];SKIN.mode=m[(m.indexOf(SKIN.mode)+1)%3];refreshSlim();saveSkin();skinPreview()};
+$('skinReset').onclick=()=>{SKIN.custom=false;setSkinCanvas(STEVE.c);saveSkin();toast('기본 스킨으로 되돌렸습니다',1500)};
+$('ovSkin').addEventListener('dragover',e=>e.preventDefault());
+$('ovSkin').addEventListener('drop',e=>{e.preventDefault();skinFromFile(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0])});
+function sendSkinTo(p){if(SKIN.custom&&SKIN.url&&SKIN.url.length<=38000)peerSend(p,{k:'sk',d:SKIN.url,s:SKIN.slim?1:0},true)}
+function peerSkin(p,m){
+ if(typeof m.d!=='string'||m.d.length>38000||!m.d.startsWith('data:image/png;base64,'))return;
+ const now=mono();if(now-(p.skT||-1e9)<1500)return;p.skT=now;
+ const img=new Image();
+ img.onload=()=>{
+  if(peers.get(p.id)!==p||img.width>256||img.height>256)return;
+  const c=normSkin(img);if(!c)return;
+  p.skinTex=mkSkinTex(c,p.skinTex);p.slim=!!m.s;
+ };
+ img.src=m.d;
+}
+/* ---- 스킨 입힌 플레이어 모델 (마인크래프트와 같은 비율: 32픽셀 = 1.8칸) ---- */
+const SKB={v:new Float32Array(72*4*SF),i:new Uint32Array(72*6),nf:0,cap:72};
+let skinMesh=null;
+const KPX=1.8/32,SKSH=[.84,.84,.68,.68,1,.5];
+const SKFACE=[ // 앞, 뒤, 오른쪽(-x), 왼쪽(+x), 위, 아래
+ [[-1,-1,1,0,1],[1,-1,1,1,1],[1,1,1,1,0],[-1,1,1,0,0]],
+ [[1,-1,-1,0,1],[-1,-1,-1,1,1],[-1,1,-1,1,0],[1,1,-1,0,0]],
+ [[-1,-1,-1,0,1],[-1,-1,1,1,1],[-1,1,1,1,0],[-1,1,-1,0,0]],
+ [[1,-1,1,0,1],[1,-1,-1,1,1],[1,1,-1,1,0],[1,1,1,0,0]],
+ [[-1,1,-1,0,0],[1,1,-1,1,0],[1,1,1,1,1],[-1,1,1,0,1]],
+ [[-1,-1,1,0,0],[1,-1,1,1,0],[1,-1,-1,1,1],[-1,-1,-1,0,1]]];
+function skinBox(B,ox,oy,oz,yaw,cx,cy,cz,hx,hy,hz,pvy,swing,u0,v0,pw,ph,pd){
+ const cs=Math.cos(swing),sn=Math.sin(swing),cyw=Math.cos(yaw),syw=Math.sin(yaw);
+ const reg=[[u0+pd,v0+pd,pw,ph],[u0+2*pd+pw,v0+pd,pw,ph],[u0,v0+pd,pd,ph],[u0+pd+pw,v0+pd,pd,ph],[u0+pd,v0,pw,pd],[u0+pd+pw,v0,pw,pd]];
+ for(let f=0;f<6;f++){
+  if(B.nf>=B.cap)return;
+  const r=reg[f],vi=B.nf*4;
+  for(let k=0;k<4;k++){
+   const q=SKFACE[f][k],x=cx+q[0]*hx,y=cy+q[1]*hy,z=cz+q[2]*hz;
+   const ry=(y-pvy)*cs-z*sn+pvy,rz=(y-pvy)*sn+z*cs,o=(vi+k)*SF,A=B.v;
+   A[o]=(x*cyw+rz*syw)*KPX+ox;A[o+1]=ry*KPX+oy;A[o+2]=(-x*syw+rz*cyw)*KPX+oz;
+   A[o+3]=(r[0]+.01+q[3]*(r[2]-.02))/64;A[o+4]=(r[1]+.01+q[4]*(r[3]-.02))/64;
+   A[o+5]=A[o+6]=A[o+7]=SKSH[f];A[o+8]=0;
+  }
+  const I=B.i,io=B.nf*6;I[io]=vi;I[io+1]=vi+1;I[io+2]=vi+2;I[io+3]=vi;I[io+4]=vi+2;I[io+5]=vi+3;B.nf++;
+ }
+}
+function skinPlayer(p,sw,ox,oy,oz){
+ const B=SKB;B.nf=0;
+ const t=p.skinTex||STEVE.tex;if(!t)return;
+ const slim=p.skinTex?!!p.slim:false,aw=slim?3:4,ah=aw/2,ax=slim?5.5:6,yw=p.yaw+Math.PI,pit=-p.pitch*.9;
+ const bx=(cx,cy,cz,hx,hy,hz,pvy,sg,u,v,pw,ph,pd,inf)=>skinBox(B,ox,oy,oz,yw,cx,cy,cz,hx+inf,hy+inf,hz+inf,pvy,sg,u,v,pw,ph,pd);
+ bx(-2,6,0,2,6,2,12,sw,0,16,4,12,4,0);
+ bx(2,6,0,2,6,2,12,-sw,16,48,4,12,4,0);
+ bx(0,18,0,4,6,2,24,0,16,16,8,12,4,0);
+ bx(-ax,18,0,ah,6,2,24,-sw,40,16,aw,12,4,0);
+ bx(ax,18,0,ah,6,2,24,sw,32,48,aw,12,4,0);
+ bx(0,28,0,4,4,4,24,pit,0,0,8,8,8,0);
+ // 겉옷(오버레이) 층
+ bx(-2,6,0,2,6,2,12,sw,0,32,4,12,4,.25);
+ bx(2,6,0,2,6,2,12,-sw,0,48,4,12,4,.25);
+ bx(0,18,0,4,6,2,24,0,16,32,8,12,4,.25);
+ bx(-ax,18,0,ah,6,2,24,-sw,40,32,aw,12,4,.25);
+ bx(ax,18,0,ah,6,2,24,sw,48,48,aw,12,4,.25);
+ bx(0,28,0,4,4,4,24,pit,32,0,8,8,8,.5);
+ skinMesh=updDyn(skinMesh,B.v,B.nf*4,B.i,B.nf*6);
+ gl.bindTexture(gl.TEXTURE_2D,t);gl.uniform3f(U.off,0,0,0);
+ gl.bindVertexArray(skinMesh.vao);gl.drawElements(gl.TRIANGLES,skinMesh.n,gl.UNSIGNED_INT,0);
+}
+
 /* ===================== 다른 플레이어 그리기 ===================== */
 const eb={v:new Float32Array(2600*4*SF),i:new Uint32Array(2600*6),nf:0,cap:2600};
 const white=tileUV(T.white);
@@ -2262,19 +2431,10 @@ function drawPlayers(dt){
   p.rx_+=(p.tx-p.rx_)*k;p.ry+=(p.ty-p.ry)*k;p.rz+=(p.tz-p.rz)*k;
   let dy=p.tyaw-p.yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));p.yaw+=dy*k;p.pitch+=(p.tpitch-p.pitch)*k;
   const sp=Math.hypot(p.rx_-ox,p.rz-oz)/Math.max(dt,.001);p.spd+=(sp-p.spd)*.2;p.walk+=Math.min(p.spd,8)*dt;
-  const sw=Math.sin(p.walk*2.2)*Math.min(1,p.spd/3)*.8,sh=colOf(p.id),yw=p.yaw+Math.PI;
-  const bx=p.rx_-cam.x,by=p.ry-cam.y,bz=p.rz-cam.z;
-  const part=(cx,cy,cz,hx,hy,hz,pyv,swing,col)=>pushBox(cx,cy,cz,hx,hy,hz,yw,0,pyv,0,swing,col,eb);
-  // 월드 좌표 이동은 정점마다 더해주기 위해 임시로 오프셋 적용
-  const s0=eb.nf;
-  part(-.125,.35,0,.125,.35,.125,.7,sw,[.2,.25,.55]);
-  part(.125,.35,0,.125,.35,.125,.7,-sw,[.2,.25,.55]);
-  part(0,1.0,0,.25,.3,.125,1.0,0,sh);
-  part(-.375,1.0,0,.125,.3,.125,1.3,-sw,[.85,.65,.5]);
-  part(.375,1.0,0,.125,.3,.125,1.3,sw,[.85,.65,.5]);
-  part(0,1.55,0,.25,.25,.25,1.3,-p.pitch*.9,[.9,.72,.55]);
-  for(let q=s0*4;q<eb.nf*4;q++){const o=q*SF;eb.v[o]+=bx;eb.v[o+1]+=by;eb.v[o+2]+=bz}
+  const sw=Math.sin(p.walk*2.2)*Math.min(1,p.spd/3)*.8;
+  skinPlayer(p,sw,p.rx_-cam.x,p.ry-cam.y,p.rz-cam.z);
  }
+ gl.bindTexture(gl.TEXTURE_2D,tex);
  drawAnimals(dt);if(!eb.nf)return;
  entMesh=updDyn(entMesh,eb.v,eb.nf*4,eb.i,eb.nf*6);
  gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(entMesh.vao);gl.drawElements(gl.TRIANGLES,entMesh.n,gl.UNSIGNED_INT,0);
@@ -2617,6 +2777,7 @@ function frame(t){
 }
 /* 시작 */
 window.__wc={voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
+skinInit();
 loadSaved().then(()=>{csLoad();lkSync()});
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
