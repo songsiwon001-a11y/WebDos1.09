@@ -1935,11 +1935,21 @@ function peerMsg(p,s){
   case 'bye':peerDown(p,'bye');break;
  }
 }
+function netDbg(){ // 연결 진단 (~ 키로 켜면 보임): 친구를 못 찾는지 / 찾았는데 연결이 안 되는지 알려 줌
+ if(!showInfo)return '';
+ const ids=Object.keys(net.lobby),L=[`방 이름: ${ROOM} · 서버(Firebase): ${net.fsOk?'연결됨':'연결 안 됨'} · 같은 방에 보이는 다른 사람: ${ids.length}명${ids.length?' ('+ids.map(i=>net.lobby[i].n).join(', ')+')':''}`];
+ for(const p of peers.values()){const c=p.ct||{};let ice='';try{ice=p.pc.iceConnectionState}catch(e){}
+  L.push(`· ${p.name&&p.name!=='PLAYER'?p.name:p.id.slice(0,4)}: ${p.open?'연결됨':'연결 시도 중 '+Math.round((mono()-p.t0)/1000)+'초'} · ${p.relay?'중계 포함':'직접만'} · 후보 host ${c.host||0} / srflx ${c.srflx||0} / relay ${c.relay||0} · ICE ${ice}`)}
+ if(ids.length&&!peers.size)L.push('· 로비에서는 보이는데 아직 연결을 시작하지 않았어요 (잠시 기다려 보세요)');
+ L.push('중계 서버: '+(turnMy.length?'내 서버 '+turnMy.length+'곳 설정됨':'없음'));
+ return '\n'+L.join('\n');
+}
 function updateStat(){
  const n=[...peers.values()].filter(p=>p.open).length;
+ if(net.on&&net.admitted&&state==='play'&&!n&&!net.autoInfo&&Date.now()-net.j>25000&&Object.keys(net.lobby).length){net.autoInfo=1;if(!showInfo)toggleInfo()} // 친구가 보이는데 25초째 연결이 안 되면 진단 창을 자동으로 켬
  const el=$('stat');
  if(!net.on){el.textContent='솔로 플레이'+csText();el.className='';return}
- el.textContent=`● 멀티 — 접속 ${n+1}명 / ${MAXP}명${net.synced||!peers.size?'':' (월드 불러오는 중…)'}`+csText();el.className=n?'ok':'';
+ el.style.whiteSpace='pre-wrap';el.textContent=`● 멀티 — 접속 ${n+1}명 / ${MAXP}명${net.synced||!peers.size?'':' (월드 불러오는 중…)'}`+csText()+netDbg();el.className=n?'ok':'';
 }
 setInterval(()=>{if(state==='play')updateStat()},1000);
 
