@@ -3253,7 +3253,7 @@ function noteNext(){
    · 상태(곡 이름/재생 여부/음량 단계/반복/시작 시각)는 가구 데이터(fdata)로 동기화·저장되고 'JB|{json}' 문자열로 들어간다
    · 음악 파일 자체는 올린 사람의 브라우저(IndexedDB)에 저장되고, 필요한 사람이 접속자에게 P2P 로 받아 온다
    · 1단계 = 10칸 안, 2단계 = 20칸 안에서 들리고 가까울수록 크게 들린다. 재생 시작 시각 기준으로 모두 비슷한 위치에서 재생 */
-const JB_MAX=6*1024*1024,AU_CH=12288;
+const JB_MAX=100*1024*1024,JB_MAX_MP3=15*1024*1024,AU_CH=12288;
 function jbParse(v){
  if(typeof v!=='string'||v.slice(0,3)!=='JB|')return null;
  try{const o=JSON.parse(v.slice(3));if(!o||typeof o.a!=='string'||!o.a||o.a.length>40)return null;
@@ -3338,7 +3338,7 @@ function auNo(p,id){const rx=auRx.get(id);if(rx&&rx.tried.has(p.id)&&!rx.from)au
 function auChunk(p,m){
  if(typeof m.i!=='string'||m.i.length>40)return;
  const rx=auRx.get(m.i);if(!rx||!rx.tried.has(p.id)||(rx.from&&rx.from!==p.id))return;
- if(!Number.isInteger(m.n)||!Number.isInteger(m.c)||m.c<1||m.c>700||m.n<0||m.n>=m.c||typeof m.d!=='string'||m.d.length>24000)return;
+ if(!Number.isInteger(m.n)||!Number.isInteger(m.c)||m.c<1||m.c>8700||m.n<0||m.n>=m.c||typeof m.d!=='string'||m.d.length>24000)return;
  if(rx.total&&rx.total!==m.c)return;
  rx.from=p.id;rx.total=m.c;
  if(rx.parts[m.n]===undefined){rx.parts[m.n]=m.d;rx.got++}
@@ -3355,12 +3355,12 @@ async function auServe(p,id){
  p.auOut=p.auOut||new Set();if(p.auOut.has(id))return;
  const blob=await auGet(id);if(!blob)return peerSend(p,{k:'an',i:id},true);
  const u8=new Uint8Array(await blob.arrayBuffer()),total=Math.ceil(u8.length/AU_CH);
- if(!total||total>700)return peerSend(p,{k:'an',i:id},true);
+ if(!total||total>8700)return peerSend(p,{k:'an',i:id},true);
  p.auOut.add(id);let i=0;
  const iv=setInterval(()=>{
   if(peers.get(p.id)!==p||!p.open||!p.dE||p.dE.readyState!=='open'){clearInterval(iv);p.auOut.delete(id);return}
   let n=0;
-  while(i<total&&n<6&&p.dE.bufferedAmount<150000){
+  while(i<total&&n<10&&p.dE.bufferedAmount<200000){
    const sl=u8.subarray(i*AU_CH,(i+1)*AU_CH);let bin='';
    for(let j=0;j<sl.length;j+=8192)bin+=String.fromCharCode.apply(null,sl.subarray(j,j+8192));
    peerSend(p,{k:'ac',i:id,n:i,c:total,d:btoa(bin)},true);i++;n++;
@@ -3413,7 +3413,7 @@ async function jbUpload(file){
  if(!file||ui!=='jb')return;
  const ext=(file.name.split('.').pop()||'').toLowerCase();
  if(ext!=='mp3'&&ext!=='wav')return toast('wav 또는 mp3 파일만 올릴 수 있습니다',2200);
- if(file.size>JB_MAX)return toast('파일이 너무 큽니다 (최대 6MB)',2500);
+ if(file.size>(ext==='wav'?JB_MAX:JB_MAX_MP3))return toast(ext==='wav'?'wav 파일이 너무 큽니다 (최대 100MB)':'mp3 파일이 너무 큽니다 (최대 15MB)',2500);
  if(file.size<100)return toast('올바른 음악 파일이 아닙니다',2000);
  const type=ext==='wav'?'audio/wav':'audio/mpeg';
  let buf;try{buf=await file.arrayBuffer()}catch(e){return toast('파일을 읽지 못했습니다',2000)}
