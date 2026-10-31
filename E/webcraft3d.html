@@ -198,6 +198,8 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div class="tb" id="tbMic" style="right:188px;top:14px;width:46px;height:46px">마이크</div>
  <div class="tb" id="tbMenu" style="right:134px;top:14px;width:46px;height:46px">☰</div>
  <div class="tb" id="tbDown" style="right:166px;bottom:154px;width:46px;height:46px">↓</div>
+ <div class="tb" id="tbView" style="right:296px;top:14px;width:46px;height:46px">시점</div>
+ <div class="tb" id="tbDrop" style="right:166px;bottom:84px;width:46px;height:46px">버리기</div>
  <div class="tb" id="tbRun" style="left:60px;bottom:228px;width:50px;height:50px">달리기</div>
 </div>
 
@@ -598,11 +600,70 @@ function enAnvil(){const s=ENS.it,k=ENS.bk;if(!s||!k)return;const b=slotGet(s),e
 function openEnch(m){if(state!=='play'||ui)return;ui='en';ENS.mode=m;ENS.it=ENS.bk=null;enEl();showOv('ovEn',true);if(document.pointerLockElement)document.exitPointerLock();enRender();sfx(.08,300)}
 function closeEn(){if(ui!=='en')return;ui='';showOv('ovEn',false);saveInv();lockPointer()}
 
+/* ---- 재생기: 우클릭으로 wav/mp3 를 올려 재생 (1단계 10칸 / 2단계 20칸 안에서 들림) ---- */
+const JB_TOP=xt([50,52,60],6,null,(x,y)=>{
+ if(x===0||x===15||y===0||y===15)return [28,28,32];
+ const d=Math.hypot(x-7.5,y-7.5);
+ if(d<=1.6)return [206,64,64];
+ if(d<=5.6)return (Math.abs(d-3.6)<.5)?[40,40,46]:[16,16,18];
+ return null;
+});
+const JB_SIDE=xt([112,78,46],8,null,(x,y)=>{
+ if(x===0||x===15||y===0||y===15)return [72,48,28];
+ const d=Math.hypot(x-7.5,y-7.5);
+ if(d<=1.8)return [96,96,104];
+ if(d<=5.2)return ((x+y)%2&&d>2.6)?[58,58,66]:[26,26,30];
+ return null;
+});
+const JUKE=defx('재생기',JB_TOP,JB_SIDE,JB_SIDE,{});
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
 const DLSET=new Set(DLIDS);
 const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide&&!DEF[i].cmdonly&&!DEF[i].nopal)PALETTE.push(i);
 const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
+
+/* ---- 지지가 필요한 블록: 횃불·카펫(바닥 위), 사다리·도어락(벽에 붙음), 문(바닥 위 / 윗칸은 아랫칸 위) ----
+   · 지지 블록이 없어지면 아이템으로 떨어지고, 물이 닿으면 쓸려 나가 아이템이 된다 (횃불·카펫·사다리·도어락) */
+const SUP=new Uint8Array(NB+1),SUPF=new Uint8Array(NB+1),WASH=new Uint8Array(NB+1); // SUP 1 바닥 2 벽 3 문 윗칸
+const SDX=[0,1,0,-1],SDZ=[-1,0,1,0],supQ=[];let supLive=false,supI=0;
+for(let i=1;i<=NB;i++){const d=DEF[i];if(d.name==='횃불'||/ 카펫$/.test(d.name)){SUP[i]=1;WASH[i]=1}if(DINFO[i])SUP[i]=DINFO[i].h?3:1}
+LADB.forEach(ids=>{if(ids)ids.forEach((id,f)=>{SUP[id]=2;SUPF[id]=f;WASH[id]=1})});
+DLB.forEach(ids=>{if(ids)ids.forEach((id,f)=>{SUP[id]=2;SUPF[id]=f;WASH[id]=1})});
+function supChunkOk(b,x,z){const k=SUP[b];if(!getChunk(x>>4,z>>4))return false;if(k===2){const f=SUPF[b];return !!getChunk((x+SDX[f])>>4,(z+SDZ[f])>>4)}return true}
+function supportedAt(b,x,y,z){
+ const k=SUP[b];if(!k)return true;
+ if(k===1)return SOLID[getBlock(x,y-1,z)]===1;
+ if(k===2){const f=SUPF[b];return SOLID[getBlock(x+SDX[f],y,z+SDZ[f])]===1}
+ const di=DINFO[b],lo=DINFO[getBlock(x,y-1,z)];return !!lo&&!lo.h&&lo.base===di.base;
+}
+function supEnq(x,y,z){
+ if(!supLive||state!=='play'||supQ.length>6000)return;
+ supQ.push(x,y,z,x+1,y,z,x-1,y,z,x,y+1,z,x,y-1,z,x,y,z+1,x,y,z-1);
+}
+function supTick(){
+ let n=0;
+ while(supI<supQ.length&&n<300){
+  const x=supQ[supI],y=supQ[supI+1],z=supQ[supI+2];supI+=3;n++;
+  if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)continue;
+  if(!getChunk(x>>4,z>>4))continue;
+  const b=getBlock(x,y,z);if(!b||!SUP[b]||!supChunkOk(b,x,z))continue;
+  if(supportedAt(b,x,y,z))continue;
+  supPop(x,y,z,b);
+ }
+ if(supI>=supQ.length){supQ.length=0;supI=0}
+}
+function dropItemOf(b){const di=DINFO[b];return di?di.base:(BASEOF[b]!==undefined?BASEOF[b]:b)}
+function supPop(x,y,z,b){ // 지지를 잃은 블록: 없애고 아이템으로 떨군다
+ localEdit(x,y,z,0);
+ if(DLINFO[b]!==undefined)lockClear(x,y,z);
+ const di=DINFO[b];if(di&&di.h)return; // 문 윗칸은 따로 떨구지 않음 (아랫칸이 문 아이템을 떨군다)
+ spawnDrop(dropItemOf(b),x+.5,y+.35,z+.5,{id:'s'+x+'_'+y+'_'+z+'_'+b,vy:2.5});
+}
+function washAway(x,y,z,b){ // 물에 쓸려 나감 (모든 접속자가 같은 규칙으로 계산하므로 방송하지 않는다)
+ applyEdit(x,y,z,0,nextT());
+ if(DLINFO[b]!==undefined)lockClear(x,y,z);
+ spawnDrop(dropItemOf(b),x+.5,y+.35,z+.5,{id:'w'+x+'_'+y+'_'+z+'_'+b,vy:1.5});
+}
 
 const atlas=document.createElement('canvas');atlas.width=atlas.height=256;
 (function drawAtlas(){
@@ -768,7 +829,7 @@ function applyEdit(x,y,z,b,t){
  const old=m.get(idx);if(old&&old[1]>=t)return false;
  if(!old)editCount++;
  m.set(idx,[b,t]);if(t>maxT)maxT=t;saveDirty=true;
- setLoaded(x,y,z,b);return true;
+ setLoaded(x,y,z,b);if(supLive)supEnq(x,y,z);return true;
 }
 
 /* ===================== 물 흐름 =====================
@@ -789,8 +850,10 @@ function wTouch(x,y,z,old,b){
  if(old===B_WATER||b===B_WATER||getBlock(x+1,y,z)===B_WATER||getBlock(x-1,y,z)===B_WATER||getBlock(x,y+1,z)===B_WATER||getBlock(x,y-1,z)===B_WATER||getBlock(x,y,z+1)===B_WATER||getBlock(x,y,z-1)===B_WATER)wEnqAround(x,y,z);
 }
 function wLevel(x,y,z){if(getBlock(x,y,z)!==B_WATER)return 0;return wlev.get(wkey(x,y,z))||8}
+const wFree=b=>b===0||WASH[b]===1; // 물이 흘러들 수 있는 칸 (공기 · 쓸려 나가는 블록)
+function washSet(x,y,z,lv){const o=getBlock(x,y,z);if(o)washAway(x,y,z,o);flowSet(x,y,z,B_WATER,lv)}
 function wSide(x,y,z){
- const d=getBlock(x,y-1,z);if(d===0)return false;
+ const d=getBlock(x,y-1,z);if(wFree(d))return false;
  if(d===B_WATER)return !wlev.has(wkey(x,y-1,z));
  return true;
 }
@@ -804,8 +867,8 @@ function waterCell(x,y,z){
   if(best!==wlev.get(k)){wlev.set(k,best);wEnqAround(x,y,z)}
  }
  const L=wLevel(x,y,z);if(!L)return;
- if(y>1&&getBlock(x,y-1,z)===0){flowSet(x,y-1,z,B_WATER,7);return}
- if(L>1&&wSide(x,y,z))for(const [dx,dz] of WDIR)if(getBlock(x+dx,y,z+dz)===0)flowSet(x+dx,y,z+dz,B_WATER,L-1);
+ if(y>1&&wFree(getBlock(x,y-1,z))){washSet(x,y-1,z,7);return}
+ if(L>1&&wSide(x,y,z))for(const [dx,dz] of WDIR)if(wFree(getBlock(x+dx,y,z+dz)))washSet(x+dx,y,z+dz,L-1);
 }
 function waterFlow(dt){
  wT-=dt;if(wT>0)return;wT=.2;
@@ -842,6 +905,7 @@ function lockZoneAt(x,y,z){
 const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t]);
 function lkMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5))}
 /* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase(도어락 문서에 함께) 저장 ---- */
+const jbState=new Map(),jbAud=new Map(),jbDone=new Set(),auBuf=new Map(),auRx=new Map(),auLast=new Map(),seenNames=new Set();
 const FD_KEY='fd_'+ROOM,fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
 const fdGet=(x,y,z)=>{const r=fdata.get(lkKey(x,y,z));return r&&r.v!=null?r.v:null};
 function drItems(v){const a=Array.isArray(v)?v:[],o=[];for(let i=0;i<27;i++){const n=a[i]|0;o.push(n>0&&n<=NB?n:0)}return o}
@@ -852,7 +916,7 @@ function fdClean(v){
 }
 function fdApply(key,v,t){
  if(!fin(t))return false;const r=fdata.get(key);if(r&&r.t>=t)return false;
- fdata.set(key,{v,t});fdDirty=true;LK.dirty=true;
+ fdata.set(key,{v,t});fdDirty=true;LK.dirty=true;jbOnData(key,v);
  if(ui==='dr'&&DRS.key===key){DRS.items=drItems(v);drRender()}
  return true;
 }
@@ -1091,10 +1155,24 @@ function ensureAround(cx,cz,r){for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++
 
 /* ===================== 행렬 / 카메라 ===================== */
 const cam={x:5000,y:40,z:5000,yaw:0,pitch:0};
+const rc={x:5000,y:40,z:5000,yaw:0,pitch:0}; // 화면을 그리는 카메라 (1인칭이면 cam 과 같음)
+let view3=0; // 0 = 1인칭, 1 = 3인칭(뒤), 2 = 3인칭(앞)
+const VIEW_NAMES=['1인칭','3인칭 (뒤)','3인칭 (앞)'];
+function cycleView(){view3=(view3+1)%3;toast('시점: '+VIEW_NAMES[view3],1200)}
+function camBlocked(x,y,z){const b=getBlock(Math.floor(x),Math.floor(y),Math.floor(z));return !!b&&b!==B_WATER&&(SOLID[b]||!!COLB[b])}
+function updateRenderCam(){
+ rc.x=cam.x;rc.y=cam.y;rc.z=cam.z;rc.yaw=cam.yaw;rc.pitch=cam.pitch;
+ if(!view3||state!=='play')return;
+ const f=fwdOf(cam.yaw,cam.pitch),sg=view3===1?-1:1,D=4.2;
+ let d=D;
+ for(let t=.3;t<=D;t+=.1){if(camBlocked(cam.x+f[0]*sg*t,cam.y+f[1]*sg*t,cam.z+f[2]*sg*t)){d=Math.max(.3,t-.3);break}}
+ rc.x=cam.x+f[0]*sg*d;rc.y=cam.y+f[1]*sg*d;rc.z=cam.z+f[2]*sg*d;
+ if(view3===2){rc.yaw=cam.yaw+Math.PI;rc.pitch=-cam.pitch}
+}
 const fwdOf=(y,p)=>[-Math.sin(y)*Math.cos(p),Math.sin(p),-Math.cos(y)*Math.cos(p)];
 const VP=new Float32Array(16);
 function buildVP(w,h){
- const f=fwdOf(cam.yaw,cam.pitch),r=[Math.cos(cam.yaw),0,-Math.sin(cam.yaw)];
+ const f=fwdOf(rc.yaw,rc.pitch),r=[Math.cos(rc.yaw),0,-Math.sin(rc.yaw)];
  const u=[r[1]*f[2]-r[2]*f[1],r[2]*f[0]-r[0]*f[2],r[0]*f[1]-r[1]*f[0]];
  const V=[r[0],u[0],-f[0],0, r[1],u[1],-f[1],0, r[2],u[2],-f[2],0, 0,0,0,1];
  const fov=(isTouch?75:70)*Math.PI/180,a=w/h,n=.08,fr=1200,t=1/Math.tan(fov/2);
@@ -1136,6 +1214,21 @@ function hitTop(x,y,z){ // 부딪히는 블록 중 가장 높은 윗면 높이 (
  return top;
 }
 const boxHit=(x,y,z)=>hitTop(x,y,z)>=0;
+function doorOverlap(x,y,z){ // 플레이어 몸이 문 판자와 겹쳐 있는지
+ const x0=Math.floor(x-HW),x1=Math.floor(x+HW),y0=Math.floor(y),y1=Math.floor(y+PH-1e-4),z0=Math.floor(z-HW),z1=Math.floor(z+HW);
+ for(let yy=y0;yy<=y1;yy++)for(let zz=z0;zz<=z1;zz++)for(let xx=x0;xx<=x1;xx++){
+  const b=getBlock(xx,yy,zz);if(!b||!DINFO[b])continue;const cb=COLB[b];if(!cb)continue;
+  for(const q of cb)if(x+HW>xx+q[0]&&x-HW<xx+q[3]&&y+PH>yy+q[1]&&y<yy+q[4]&&z+HW>zz+q[2]&&z-HW<zz+q[5])return true;
+ }
+ return false;
+}
+function pushOutOfDoor(){ // 문을 여닫아 판자가 몸을 덮으면, 위로 튕기지 않고 옆으로 가장 가까운 빈 자리로 밀어낸다
+ if(!doorOverlap(P.x,P.y,P.z))return;
+ for(let r=.04;r<=1.01;r+=.04)for(let k=0;k<16;k++){
+  const a=k*Math.PI/8,nx=P.x+Math.cos(a)*r,nz=P.z+Math.sin(a)*r;
+  if(!boxHit(nx,P.y,nz)){P.x=nx;P.z=nz;return}
+ }
+}
 let lastSpace=0,SPDM=1; // SPDM: /speed 배율
 function standUp(){
  const s=P.sit;if(!s)return;P.sit=null;
@@ -1149,6 +1242,7 @@ function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
   if(!sb||sb.t!=='sofa'||mv.f||mv.s||mv.jump||mv.down){standUp();return}
   P.vx=P.vy=P.vz=0;return;
  }
+ if(!P.fly)pushOutOfDoor();
  const sp=Math.sin(cam.yaw),cp=Math.cos(cam.yaw);
  let wx=(-sp)*mv.f+cp*mv.s,wz=(-cp)*mv.f+(-sp)*mv.s;const l=Math.hypot(wx,wz);if(l>1){wx/=l;wz/=l}
  const feet=getBlock(Math.floor(P.x),Math.floor(P.y+.2),Math.floor(P.z)),head=getBlock(Math.floor(P.x),Math.floor(P.y+1.4),Math.floor(P.z));
@@ -1183,7 +1277,7 @@ function ray(maxD){
  return null;
 }
 function localEdit(x,y,z,b){
- const t=nextT();if(!applyEdit(x,y,z,b,t))return;
+ const t=nextT();supLive=true;const okE=applyEdit(x,y,z,b,t);supLive=false;if(!okE)return;
  markRegion(x,z);
  netBroadcast({k:'bk',x,y,z,b,t},true);
 }
@@ -1206,6 +1300,7 @@ function breakBlock(){
   else if(fi.t==='dresser'||fi.t==='pc')fdClear(h.x,h.y,h.z);
  }
  if(DLSET.has(h.b))lockClear(h.x,h.y,h.z);
+ if(h.b===JUKE)fdClear(h.x,h.y,h.z);
  const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
  sfx(.12,260);
 }
@@ -1229,6 +1324,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  const h=ray(6);if(!h)return false;
  if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
  if(DLINFO[h.b]!==undefined){openLock(h.x,h.y,h.z);return true}
+ if(h.b===JUKE){openJuke(h.x,h.y,h.z);return true}
  const fi=FURN[h.b];
  if(fi){
   if(fi.t==='bed')sleepIn();
@@ -1241,7 +1337,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  }
  return false;
 }
-const usableAt=()=>{const h=ray(6);return !!(h&&(DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
+const usableAt=()=>{const h=ray(6);return !!(h&&(h.b===JUKE||DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
 function bodyBlocks(x,y,z){
  if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return true;
  for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return true;
@@ -1263,9 +1359,11 @@ function placeBlock(rep){const h=ray(6);const ib=hotbar[P.sel];if(ib&&DEF[ib].it
  }
  if(DINFO[b]){ // 문: 위 칸도 비어 있어야 함
   const up=getBlock(x,y+1,z);if(y+1>=WH||(up&&up!==B_WATER))return;
+  if(!SOLID[getBlock(x,y-1,z)])return toast('문은 단단한 블록 위에만 설치할 수 있습니다',1400);
   const base=DINFO[b].base,f=dirOfYaw();localEdit(x,y,z,base+f);localEdit(x,y+1,z,base+8+f);sfx(.1,420);return;
  }
  b=variantFor(b,h);
+ if(SUP[b]&&!supportedAt(b,x,y,z))return toast(SUP[b]===2?'벽에 붙일 수 있는 블록이 아닙니다 (지지할 블록이 필요해요)':'바닥의 단단한 블록 위에만 설치할 수 있습니다',1400);
  if(SOLID[b]){ // 내 몸과 겹치면 불가
   if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return;
   for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return;
@@ -1607,19 +1705,20 @@ function peerMsg(p,s){
     p.tx=clamp(m.x,0,WORLD);p.ty=clamp(m.y,-10,WH+50);p.tz=clamp(m.z,0,WORLD);p.tyaw=m.r;p.tpitch=clamp(m.p,-1.6,1.6);p.held=(m.b|0)>0&&(m.b|0)<=NB?m.b|0:1;p.sneak=!!m.sn;
     if(!p.has){p.rx_=p.tx;p.ry=p.ty;p.rz=p.tz;p.yaw=p.tyaw;p.pitch=p.tpitch;p.has=true}
    }break;
-  case 'hi':p.name=cleanName(m.n)||'PLAYER';p.mt=fin(m.mt)?m.mt:0;
+  case 'hi':p.name=cleanName(m.n)||'PLAYER';seenNames.add(String(p.name).toLowerCase());p.mt=fin(m.mt)?m.mt:0;
    if(isBanned(p.name)){banPeer(p,true);break} // 차단된 닉네임은 즉시 연결 종료
    if(myRole()>=1)for(const [bn,r] of banRec)peerSend(p,{k:'bn',n:bn,on:r[0],t:r[1],s:1},true); // 새로 온 사람에게 차단 기록 전달
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
    // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
    if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
    for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,s:1},true)}
+   dropsTo(p);
    for(const [fk,r] of fdata){const q=fk.split('_').map(Number);peerSend(p,{k:'fd',x:q[0],y:q[1],z:q[2],v:r.v,t:r.t},true)}
    if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
-  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if(!superOk(p.name)&&((DEF[m.b]&&DEF[m.b].cmdonly)||cmdEditAt(m.x,m.y,m.z)))break;if(m.b===0&&lvOf(p.name)<1&&Number.isInteger(m.x)&&Number.isInteger(m.y)&&Number.isInteger(m.z)&&lockZoneAt(m.x,m.y,m.z))break;applyEdit(m.x,m.y,m.z,m.b,m.t);break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if(!superOk(p.name)&&((DEF[m.b]&&DEF[m.b].cmdonly)||cmdEditAt(m.x,m.y,m.z)))break;if(m.b===0&&lvOf(p.name)<1&&Number.isInteger(m.x)&&Number.isInteger(m.y)&&Number.isInteger(m.z)&&lockZoneAt(m.x,m.y,m.z))break;supLive=true;applyEdit(m.x,m.y,m.z,m.b,m.t);supLive=false;break;
   case 'lk':{ // 도어락 비밀번호 기록 (s=1 은 입장 동기화, 그 외는 슈퍼어드민 이상만)
    if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
    if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
@@ -1631,6 +1730,8 @@ function peerMsg(p,s){
    if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
    fdApply(lkKey(m.x,m.y,m.z),fdClean(m.v),Math.min(m.t,Date.now()+864e5));
   }break;
+  case 'di':dropFrom(m);break;
+  case 'dp':if(typeof m.i==='string'&&m.i.length<=60)removeDrop(m.i,false);break;
   case 'sr':streamEdits(p,allEdits());break;
   case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
   case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
@@ -1649,7 +1750,10 @@ function peerMsg(p,s){
    if(!n||n===OWNER||typeof lv!=='number'||lv<0||lv>3||lv%1)break;
    if(canSetRole(lvOf(p.name),lvOf(n),lv)){setRole(n,lv);if(!m.s&&n===String(net.name).toLowerCase())chatAdd('',lv?RNAME[lv]+' 권한이 부여되었습니다':'관리자 권한이 해제되었습니다','sys')}
   }break;
-  case 'say':if(lvOf(p.name)>=1){const t=cleanText(m.t);if(t)chatAdd('[공지] '+p.name,t,'sys')}break;
+  case 'say':if(lvOf(p.name)>=1){const t=sayClean(m.t);if(t&&(!m.to||String(m.to).toLowerCase()===String(net.name).toLowerCase()))showNotice(t,p.name,!!m.to)}break;
+  case 'aq':if(typeof m.i==='string'&&m.i.length<=40)auServe(p,m.i);break;
+  case 'an':if(typeof m.i==='string')auNo(p,m.i);break;
+  case 'ac':auChunk(p,m);break;
   case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
   case 'sk':peerSkin(p,m);break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
@@ -1910,7 +2014,20 @@ cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하�
  if(myRole()<1&&lockZoneAt(x,y,z)&&(b===0||(getBlock(x,y,z)&&getBlock(x,y,z)!==B_WATER)))return sys('🔒 도어락 보호 구역입니다 — 어드민 이상만 바꿀 수 있습니다');
  localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
 });
-cmd(['say','공지'],1,'/say <메시지>','모두에게 공지',a=>{const t=cleanText(a.join(' '));if(!t)return sys('사용법: /say 메시지');chatAdd('[공지] '+net.name,t,'sys');netBroadcast({k:'say',t},true)});
+cmd(['say','공지'],1,'/say <메시지>  또는  /say <닉네임> <메시지>','화면 가운데에 크게 공지 (닉네임을 쓰면 그 사람에게만 보임)',a=>{
+ if(!a.length)return sys('사용법: /say 메시지   또는   /say 닉네임 메시지');
+ const first=a[0],low=first.toLowerCase(),tp=peerByName(first),self=low===String(net.name).toLowerCase();
+ if(tp||self||(a.length>1&&seenNames.has(low))){ // 첫 단어가 접속자 닉네임이면 그 사람에게만
+  if(a.length<2)return sys('보낼 내용을 입력하세요: /say '+first+' 메시지');
+  const t=sayClean(a.slice(1).join(' '));if(!t)return;
+  if(tp){peerSend(tp,{k:'say',t,to:tp.name},true);sys('📢 '+tp.name+' 님에게 공지: '+t)}
+  else if(self){showNotice(t,net.name,true)}
+  else sys(first+' 님은 지금 접속해 있지 않습니다');
+  return;
+ }
+ const t=sayClean(a.join(' '));if(!t)return;
+ showNotice(t,net.name,false);netBroadcast({k:'say',t},true);
+});
 /* ---- 슈퍼어드민 이상 ---- */
 cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블록으로 채움 (최대 30000칸, 공기 = 지우기)',a=>{
  if(a.length<7)return sys('사용법: /fill x1 y1 z1 x2 y2 z2 블록   (~ 는 내 위치 기준)');
@@ -2102,18 +2219,18 @@ function togglePal(on){
  if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
 }
 /* ---- 도어락 키패드 ---- */
-const LKS={x:0,y:0,z:0,buf:'',setMode:false,fails:0,until:0};
+const LKS={x:0,y:0,z:0,buf:'',setMode:false,verified:false,fails:0,until:0}; // verified: 기존 비밀번호 확인 완료
 function lockRender(msg,bad){
  const rec=lockGet(LKS.x,LKS.y,LKS.z),adm=!rec||myRole()>=2;
  $('lkDisp').textContent=[0,1,2,3].map(i=>i<LKS.buf.length?'●':'○').join(' ');
  let t=msg;
- if(!t)t=LKS.setMode?'새 비밀번호 4자리를 입력하세요':rec?'비밀번호 4자리를 입력하세요':(adm?'아직 비밀번호가 없습니다 — 아래 [비밀번호 설정]을 누르세요':'비밀번호가 설정되지 않은 도어락입니다');
+ if(!t)t=LKS.setMode?(rec&&!LKS.verified?'기존 비밀번호 4자리를 먼저 입력하세요':'새 비밀번호 4자리를 입력하세요'):rec?'비밀번호 4자리를 입력하세요':(adm?'아직 비밀번호가 없습니다 — 아래 [비밀번호 설정]을 누르세요':'비밀번호가 설정되지 않은 도어락입니다');
  const m=$('lkMsg');m.textContent=t;m.style.color=bad?'#f88':(LKS.setMode?'#fd6':'#bbb');
  const s=$('lkSet');s.style.display=adm?'block':'none';s.textContent=LKS.setMode?'비밀번호 설정 취소':(rec?'비밀번호 변경':'비밀번호 설정');
 }
 function openLock(x,y,z,setMode){
  if(state!=='play'||ui)return;
- ui='lock';LKS.x=x;LKS.y=y;LKS.z=z;LKS.buf='';LKS.setMode=!!setMode&&(!lockGet(x,y,z)||myRole()>=2);
+ ui='lock';LKS.x=x;LKS.y=y;LKS.z=z;LKS.buf='';LKS.verified=false;LKS.setMode=!!setMode&&(!lockGet(x,y,z)||myRole()>=2);
  showOv('ovLock',true);if(document.pointerLockElement)document.exitPointerLock();lockRender();
 }
 function closeLock(){if(ui!=='lock')return;ui='';showOv('ovLock',false);lockPointer()}
@@ -2128,8 +2245,15 @@ function lockSubmit(){
  if(ui!=='lock'||LKS.buf.length!==4)return;
  const code=LKS.buf;LKS.buf='';
  if(LKS.setMode){
-  if(lockGet(LKS.x,LKS.y,LKS.z)&&myRole()<2)return;
-  lockSetLocal(LKS.x,LKS.y,LKS.z,code);LKS.setMode=false;sfx(.1,520);
+  const cur=lockGet(LKS.x,LKS.y,LKS.z);
+  if(cur&&myRole()<2)return;
+  if(cur&&!LKS.verified){ // 기존 비밀번호를 한 번 입력해야 변경 가능
+   if(code===cur.c){LKS.verified=true;LKS.fails=0;sfx(.1,520);return lockRender('✔ 확인되었습니다 — 새 비밀번호 4자리를 입력하세요')}
+   sfx(.15,120);LKS.fails++;
+   if(LKS.fails>=3){LKS.fails=0;LKS.until=mono()+5000;return lockRender('3번 틀렸습니다 — 5초 후 다시 시도하세요',true)}
+   return lockRender('기존 비밀번호가 틀렸습니다',true);
+  }
+  lockSetLocal(LKS.x,LKS.y,LKS.z,code);LKS.setMode=false;LKS.verified=false;sfx(.1,520);
   toast('✔ 도어락 비밀번호를 설정했습니다',2200);closeLock();return;
  }
  const rec=lockGet(LKS.x,LKS.y,LKS.z);
@@ -2146,7 +2270,7 @@ function lockKey(e){
  if(/^(Digit|Numpad)\d$/.test(e.code))lockPress(e.code.slice(-1));
 }
 (function(){const g=$('lkPad');['1','2','3','4','5','6','7','8','9','⌫','0','C'].forEach(k=>{const d=document.createElement('div');d.textContent=k;d.addEventListener('pointerdown',e=>{e.preventDefault();lockPress(k)});g.appendChild(d)})})();
-$('lkSet').addEventListener('pointerdown',e=>{e.preventDefault();if(lockGet(LKS.x,LKS.y,LKS.z)&&myRole()<2)return;LKS.setMode=!LKS.setMode;LKS.buf='';lockRender()});
+$('lkSet').addEventListener('pointerdown',e=>{e.preventDefault();if(lockGet(LKS.x,LKS.y,LKS.z)&&myRole()<2)return;LKS.setMode=!LKS.setMode;LKS.verified=false;LKS.buf='';lockRender()});
 $('lkClose').addEventListener('pointerdown',e=>{e.preventDefault();closeLock()});
 /* 도어락 신호: 도어락 주변 2칸(정육면체) 안의 철문을 한꺼번에 열거나 닫는다 (하나라도 닫혀 있으면 모두 열기) */
 function signalDoors(x,y,z){
@@ -2460,8 +2584,10 @@ document.addEventListener('keydown',e=>{
  if(ui==='dr'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeDr()}return}
  if(ui==='en'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeEn()}return}
  if(ui==='surv'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeSurv()}return}
+ if(ui==='jb'){if(e.code==='Escape'){e.preventDefault();closeJuke()}return}
  if(ui==='pc')return;
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
+ if(e.code==='F5'||e.code==='KeyV'){e.preventDefault();if(!ui)cycleView();return}
  if(e.code==='KeyM'){toggleMic();return}
  if(e.code==='KeyN'){toggleMap();return}
  if(ui==='map'&&(e.code==='Equal'||e.code==='NumpadAdd')){mapZoom(-1);return}
@@ -2470,6 +2596,7 @@ document.addEventListener('keydown',e=>{
  if(e.code==='Escape'&&(ui==='pal'||ui==='map')){ui==='pal'?togglePal(false):toggleMap(false);return}
  if(ui==='pal'&&/^Digit[1-9]$/.test(e.code)){selectSlot(+e.code.slice(5)-1);renderPalHot();return}
  if(ui)return;
+ if(e.code==='KeyQ'&&!e.repeat&&!e.ctrlKey&&!e.metaKey){throwItem();return}
  if(e.repeat&&e.code!=='KeyW')return;
  keys[e.code]=true;
  if(e.code==='KeyT'||e.code==='Slash'){e.preventDefault();openChat(e.code==='Slash'?'/':'');return}
@@ -2523,6 +2650,8 @@ if(isTouch){
  btn('tbMap',()=>toggleMap());
  btn('tbMic',()=>toggleMic());
  btn('tbInfo',()=>toggleInfo());
+ btn('tbDrop',()=>throwItem());
+ btn('tbView',()=>{if(!ui)cycleView()});
  btn('tbMenu',()=>{if(state==='play'&&!ui){ui='pause';openPause()}});
  btn('tbDown',()=>{keys.ShiftLeft=true},()=>{keys.ShiftLeft=false});
  btn('tbRun',()=>{touchSprint=!touchSprint;$('tbRun').style.background=touchSprint?'rgba(120,255,120,.5)':''});
@@ -2711,10 +2840,14 @@ function drawPlayers(dt){
   let dy=p.tyaw-p.yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));p.yaw+=dy*k;p.pitch+=(p.tpitch-p.pitch)*k;
   const sp=Math.hypot(p.rx_-ox,p.rz-oz)/Math.max(dt,.001);p.spd+=(sp-p.spd)*.2;p.walk+=Math.min(p.spd,8)*dt;
   const sw=Math.sin(p.walk*2.2)*Math.min(1,p.spd/3)*.8;
-  skinPlayer(p,sw,p.rx_-cam.x,p.ry-cam.y,p.rz-cam.z);
+  skinPlayer(p,sw,p.rx_-rc.x,p.ry-rc.y,p.rz-rc.z);
+ }
+if(view3&&state==='play'){ // 3인칭: 내 캐릭터도 그린다
+  const spd=Math.hypot(P.vx,P.vz);
+  skinPlayer({yaw:cam.yaw,pitch:cam.pitch,skinTex:SKIN.tex||null,slim:SKIN.slim},Math.sin(P.walk*2.2)*Math.min(1,spd/3)*.8,P.x-rc.x,P.y-(P.sneak?.15:0)-rc.y,P.z-rc.z);
  }
  gl.bindTexture(gl.TEXTURE_2D,tex);
- drawAnimals(dt);if(!eb.nf)return;
+ drawAnimals(dt);drawDrops();if(!eb.nf)return;
  entMesh=updDyn(entMesh,eb.v,eb.nf*4,eb.i,eb.nf*6);
  gl.uniform3f(U.off,0,0,0);gl.bindVertexArray(entMesh.vao);gl.drawElements(gl.TRIANGLES,entMesh.n,gl.UNSIGNED_INT,0);
 }
@@ -2725,7 +2858,7 @@ function updateTags(w,h){
   let e=tagEls.get(p.id);
   if(!p.open||!p.has||p.sneak){if(e)e.style.display='none';continue}
   if(!e){e=document.createElement('div');e.className='tag';box.appendChild(e);tagEls.set(p.id,e)}
-  const x=p.rx_-cam.x,y=p.ry+2.15-cam.y,z=p.rz-cam.z;
+  const x=p.rx_-rc.x,y=p.ry+2.15-rc.y,z=p.rz-rc.z;
   const cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
   if(cw<=.1||Math.hypot(x,y,z)>80){e.style.display='none';continue}
   e.style.display='block';e.textContent=p.name;e.style.left=((cx/cw*.5+.5)*w)+'px';e.style.top=((1-(cy/cw*.5+.5))*h)+'px';
@@ -2738,7 +2871,7 @@ let outlineMesh=null;
 const OUTB={v:new Float32Array(12*6*4*SF),i:new Uint32Array(12*6*6),nf:0,cap:72};
 function drawOutline(h){
  if(!h)return;
- const e=.004,x0=h.x-cam.x-e,y0=h.y-cam.y-e,z0=h.z-cam.z-e,x1=x0+1+2*e,y1=y0+1+2*e,z1=z0+1+2*e,t=.012;
+ const e=.004,x0=h.x-rc.x-e,y0=h.y-rc.y-e,z0=h.z-rc.z-e,x1=x0+1+2*e,y1=y0+1+2*e,z1=z0+1+2*e,t=.012;
  // 12 모서리를 얇은 박스로
  const bigBuf=OUTB;bigBuf.nf=0;
  const edge=(ax,ay,az,bx,by,bz)=>pushBoxWorld(ax,ay,az,bx,by,bz,bigBuf);
@@ -2851,7 +2984,7 @@ function drawAnimals(dt){
    a.spd+=(Math.hypot(a.x-ox,a.z-oz)/Math.max(dt,.001)-a.spd)*.2;a.walk+=a.spd*dt;
    if(mono()-a.seen>3500){animals.delete(a.id);continue}
   }
-  const dx=a.x-cam.x,dy=a.y-cam.y,dz=a.z-cam.z;if(dx*dx+dz*dz>4900)continue;
+  const dx=a.x-rc.x,dy=a.y-rc.y,dz=a.z-rc.z;if(dx*dx+dz*dz>4900)continue;
   if(eb.nf>eb.cap-60)break;
   const T=ATYPES[a.type],yw=a.yaw+Math.PI,s0=eb.nf,sw=a.sit?0:Math.sin(a.walk*3)*Math.min(1,a.spd/2)*.8;
   for(const q of T.parts)pushBox(q[0],q[1]-(a.sit&&!q[7]?.1:0),q[2],q[3],q[4],q[5],yw,0,q[8],q[2],q[7]*sw,q[6],eb);
@@ -2863,7 +2996,7 @@ function updateAnimalTags(w,h){
  const box=$('tags'),seen=new Set();
  for(const a of animals.values()){
   if(a.type!=='dog'||!a.owner)continue;
-  const x=a.x-cam.x,y=a.y+ATYPES.dog.h+.3-cam.y,z=a.z-cam.z;
+  const x=a.x-rc.x,y=a.y+ATYPES.dog.h+.3-rc.y,z=a.z-rc.z;
   const cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
   if(cw<=.1||Math.hypot(x,y,z)>40)continue;
   let e=atagEls.get(a.id);if(!e){e=document.createElement('div');e.className='tag';box.appendChild(e);atagEls.set(a.id,e)}
@@ -2978,6 +3111,7 @@ function enterGame(){
 }
 function goFS(){try{const e=document.documentElement;(e.requestFullscreen||e.webkitRequestFullscreen||(()=>{})).call(e)}catch(x){}}
 function leaveGame(){
+ drops.clear();dropSeen.clear();supQ.length=0;supI=0;for(const k of [...jbAud.keys()])jbStop(k);
  saveInv();P.sit=null;if(ui==='pc')closePC(true);
  micOff();
  savePos();
@@ -3001,6 +3135,298 @@ $('bQSolo').onclick=()=>{netDisconnect();enterGame()};
 $('bQBack').onclick=()=>{netDisconnect();state='title';showOv('ovQueue',false);showOv('ovTitle',true)};
 try{$('nick').value=localStorage.getItem('wc_nick')||''}catch(e){}
 $('nick').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')$('bMulti').click()});
+
+/* ===================== 떨어진 아이템 (Q 로 던지기) =====================
+   · 5분 동안 떨어져 있으면 사라지고, 가까이 가면 주워진다. 던진 것은 접속자 모두에게 보인다 (각자 같은 규칙으로 계산)
+   · 지지가 없어져 떨어진 횃불 등은 자리 기준 고정 id 로 만들어져서 여러 접속자가 만들어도 한 개만 생긴다 */
+const drops=new Map(),dropSeen=new Map(),DROP_LIFE=300000,DROP_MAX=300;
+function spawnDrop(b,x,y,z,o){
+ o=o||{};const id=o.id||('d'+Math.random().toString(36).slice(2,9)+Date.now().toString(36)),now=Date.now();
+ if(drops.has(id)||dropSeen.has(id))return null;
+ if(!(b>0&&b<=NB)||b===B_WATER||!fin(x)||!fin(y)||!fin(z))return null;
+ if(drops.size>=DROP_MAX){let oldest=null;for(const d of drops.values())if(!oldest||d.born<oldest.born)oldest=d;if(oldest)drops.delete(oldest.id)}
+ const d={id,b,x,y,z,vx:o.vx||0,vy:o.vy||0,vz:o.vz||0,born:now-(o.age||0),wait:o.wait===undefined?1200:o.wait,ph:Math.random()*6.28};
+ drops.set(id,d);dropSeen.set(id,now);return d;
+}
+function dropSolid(x,y,z){const b=getBlock(Math.floor(x),Math.floor(y),Math.floor(z));return !!b&&b!==B_WATER&&SOLID[b]===1}
+function removeDrop(id,tell){if(drops.delete(id)||tell){dropSeen.set(id,Date.now());if(tell)netBroadcast({k:'dp',i:id},true)}}
+function tryPickup(d){
+ let ok=false;
+ for(let i=0;i<9;i++)if(!hotbar[i]){hotbar[i]=d.b;ok=true;break}
+ if(!ok)for(let i=0;i<inv.length;i++)if(!inv[i]){inv[i]=d.b;ok=true;break}
+ if(!ok)return;
+ renderHotbar();saveInv();removeDrop(d.id,true);sfx(.06,760);
+ const n=$('bname');n.textContent=DEF[d.b].name+' 획득';n.style.opacity=1;clearTimeout(selectSlot.h);selectSlot.h=setTimeout(()=>{n.style.opacity=0},1200);
+}
+function dropTick(dt){
+ const now=Date.now();
+ if(dropSeen.size>400||(dropTick.c=(dropTick.c||0)+dt)>5){dropTick.c=0;for(const [k,t] of dropSeen)if(now-t>8000&&!drops.has(k))dropSeen.delete(k)}
+ for(const d of [...drops.values()]){
+  if(now-d.born>DROP_LIFE){drops.delete(d.id);continue}
+  if(d.wait>0)d.wait-=dt*1000;
+  if(!getChunk(Math.floor(d.x)>>4,Math.floor(d.z)>>4))continue;
+  const inW=getBlock(Math.floor(d.x),Math.floor(d.y+.1),Math.floor(d.z))===B_WATER;
+  if(dropSolid(d.x,d.y+.1,d.z))d.y=Math.floor(d.y)+1.001; // 블록 속에 끼면 위로 빼낸다
+  d.vy-=(inW?4:22)*dt;if(inW){const k=Math.pow(.15,dt);d.vx*=k;d.vz*=k;d.vy*=k}if(d.vy<-30)d.vy=-30;
+  const nx=d.x+d.vx*dt;if(dropSolid(nx,d.y+.15,d.z))d.vx*=-.35;else d.x=nx;
+  const nz=d.z+d.vz*dt;if(dropSolid(d.x,d.y+.15,nz))d.vz*=-.35;else d.z=nz;
+  const ny=d.y+d.vy*dt;let g=false;
+  if(d.vy<=0&&dropSolid(d.x,ny,d.z)){d.y=Math.floor(ny)+1;d.vy=0;g=true}
+  else if(d.vy>0&&dropSolid(d.x,ny+.3,d.z))d.vy=0;
+  else d.y=ny;
+  if(g){const k=Math.pow(.01,dt);d.vx*=k;d.vz*=k}
+  if(d.y<-10){drops.delete(d.id);continue}
+  if(d.wait<=0&&!ui&&state==='play'){
+   const dx=P.x-d.x,dz=P.z-d.z,dy=(P.y+.9)-d.y;
+   if(dx*dx+dz*dz<1.3&&Math.abs(dy)<1.7)tryPickup(d);
+  }
+ }
+}
+function throwItem(){
+ if(state!=='play'||ui||P.sit)return;
+ const b=hotbar[P.sel];if(!b)return;
+ const f=fwdOf(cam.yaw,cam.pitch),sp=6.5;
+ const d=spawnDrop(b,cam.x+f[0]*.5,cam.y-.3+f[1]*.5,cam.z+f[2]*.5,{vx:f[0]*sp,vy:f[1]*sp+1.6,vz:f[2]*sp,wait:1500});
+ if(!d)return;
+ hotbar[P.sel]=0;renderHotbar();saveInv();sfx(.07,300);
+ netBroadcast({k:'di',i:d.id,b,x:+d.x.toFixed(2),y:+d.y.toFixed(2),z:+d.z.toFixed(2),vx:+d.vx.toFixed(2),vy:+d.vy.toFixed(2),vz:+d.vz.toFixed(2)},true);
+}
+function dropFrom(m){ // 다른 접속자가 던진/가지고 있던 아이템
+ if(typeof m.i!=='string'||m.i.length>60||!Number.isInteger(m.b)||!fin(m.x)||!fin(m.y)||!fin(m.z))return;
+ if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<-5||m.y>WH+60)return;
+ const c=v=>fin(v)?clamp(v,-30,30):0;
+ spawnDrop(m.b,m.x,m.y,m.z,{id:m.i,vx:c(m.vx),vy:c(m.vy),vz:c(m.vz),age:fin(m.a)?clamp(m.a,0,DROP_LIFE):0,wait:fin(m.a)&&m.a>1500?0:1500});
+}
+function dropsTo(p){let n=0;for(const d of drops.values()){if(n++>150)break;peerSend(p,{k:'di',i:d.id,b:d.b,x:+d.x.toFixed(2),y:+d.y.toFixed(2),z:+d.z.toFixed(2),vx:0,vy:0,vz:0,a:Date.now()-d.born},true)}}
+// 그리기: 블록은 작은 회전 큐브, 아이템/횃불 같은 것은 납작한 그림
+const CUBEQ=[[1,5,7,3,.68,0],[0,2,6,4,.68,1],[2,3,7,6,1,2],[0,4,5,1,.5,3],[4,6,7,5,.84,4],[0,1,3,2,.84,5]];
+const CUBEUV=[[0,1,2,3],[0,3,2,1],[0,1,2,3],[0,1,2,3],[0,3,2,1],[0,1,2,3]]; // 각 면의 꼭짓점 -> [왼아래,오른아래,오른위,왼위] 순서 번호
+function dropVert(B,vi,k,x,y,z,u,v,sh){const o=(vi+k)*SF;B.v[o]=x;B.v[o+1]=y;B.v[o+2]=z;B.v[o+3]=u;B.v[o+4]=v;B.v[o+5]=B.v[o+6]=B.v[o+7]=sh;B.v[o+8]=.35}
+function dropQuad(B){const vi=B.nf*4,io=B.nf*6;B.i[io]=vi;B.i[io+1]=vi+1;B.i[io+2]=vi+2;B.i[io+3]=vi;B.i[io+4]=vi+2;B.i[io+5]=vi+3;B.nf++;return vi}
+function drawDrops(){
+ if(!drops.size)return;
+ const B=eb,tm=performance.now()/1000,now=Date.now();
+ for(const d of drops.values()){
+  const dx=d.x-rc.x,dy=d.y-rc.y,dz=d.z-rc.z;if(dx*dx+dy*dy+dz*dz>4096)continue;
+  if(B.nf>B.cap-14)break;
+  if(DROP_LIFE-(now-d.born)<10000&&((tm*4)|0)%2)continue; // 사라지기 10초 전부터 깜빡
+  const df=DEF[d.b],cx=dx,cy=dy+.2+Math.sin(tm*2+d.ph)*.05,cz=dz,a=tm*1.6+d.ph,ca=Math.cos(a),sa=Math.sin(a);
+  if(df.item||SUP[d.b]){
+   const t=tileUV(df.icon!==undefined?df.icon:df.top),hw=.24,UV=[[t[0],t[3]],[t[2],t[3]],[t[2],t[1]],[t[0],t[1]]],X=[-1,1,1,-1],Y=[0,0,2,2];
+   for(let side=0;side<2;side++){ // 앞뒤 양면
+    const vi=dropQuad(B);
+    for(let k=0;k<4;k++){const lx=(side?-X[k]:X[k])*hw;dropVert(B,vi,k,cx+lx*ca,cy+Y[k]*hw,cz-lx*sa,UV[k][0],UV[k][1],.95)}
+   }
+  }else{
+   const hs=.16,C=[];
+   for(let k=0;k<8;k++){const lx=((k&1)?hs:-hs),ly=((k&2)?hs:-hs)+hs,lz=((k&4)?hs:-hs);C.push([cx+lx*ca+lz*sa,cy+ly,cz-lx*sa+lz*ca])}
+   for(const q of CUBEQ){
+    const tile=q[5]===2?df.top:q[5]===3?df.bot:df.side,t=tileUV(tile),UV=[[t[0],t[3]],[t[2],t[3]],[t[2],t[1]],[t[0],t[1]]],ord=CUBEUV[q[5]];
+    const vi=dropQuad(B);
+    for(let k=0;k<4;k++){const c=C[q[k]],uv=UV[ord[k]];dropVert(B,vi,k,c[0],c[1],c[2],uv[0],uv[1],q[4])}
+   }
+  }
+ }
+}
+
+/* ===================== 화면 가운데 공지 (/say) ===================== */
+const sayClean=s=>String(s==null?'':s).replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,120);
+(function(){
+ const st=document.createElement('style');
+ st.textContent='#notice{position:fixed;left:0;right:0;top:30%;z-index:9;text-align:center;pointer-events:none;opacity:0;transition:opacity .35s;padding:0 5vw}#notice.on{opacity:1}#noticeT{display:inline-block;max-width:92vw;font-size:clamp(26px,5.4vw,60px);font-weight:900;color:#fff;line-height:1.25;word-break:keep-all;overflow-wrap:anywhere;text-shadow:0 0 14px #000,3px 3px 0 #000,-3px 3px 0 #000,3px -3px 0 #000,-3px -3px 0 #000}#noticeS{margin-top:10px;font-size:clamp(13px,2vw,18px);color:#fd6;text-shadow:0 2px 0 #000,0 0 6px #000}';
+ document.head.appendChild(st);
+ const d=document.createElement('div');d.id='notice';d.innerHTML='<div id="noticeT"></div><div id="noticeS"></div>';document.body.appendChild(d);
+})();
+const noteQ=[];let noteBusy=false;
+function showNotice(t,from,priv){noteQ.push({t,from,priv});if(noteQ.length>8)noteQ.shift();if(!noteBusy)noteNext()}
+function noteNext(){
+ const n=noteQ.shift(),el=$('notice');
+ if(!n){noteBusy=false;return}
+ noteBusy=true;
+ $('noticeT').textContent=n.t;$('noticeS').textContent=(n.priv?'🔔 나에게만 온 공지':'📢 공지')+(n.from?' · '+n.from:'');
+ el.classList.add('on');sfx(.18,520);
+ const ms=Math.min(9000,Math.max(3500,2800+n.t.length*90));
+ setTimeout(()=>{el.classList.remove('on');setTimeout(noteNext,450)},ms);
+}
+
+/* ===================== 재생기 (음악 올리기 · 재생 · 공유) =====================
+   · 상태(곡 이름/재생 여부/음량 단계/반복/시작 시각)는 가구 데이터(fdata)로 동기화·저장되고 'JB|{json}' 문자열로 들어간다
+   · 음악 파일 자체는 올린 사람의 브라우저(IndexedDB)에 저장되고, 필요한 사람이 접속자에게 P2P 로 받아 온다
+   · 1단계 = 10칸 안, 2단계 = 20칸 안에서 들리고 가까울수록 크게 들린다. 재생 시작 시각 기준으로 모두 비슷한 위치에서 재생 */
+const JB_MAX=6*1024*1024,AU_CH=12288;
+function jbParse(v){
+ if(typeof v!=='string'||v.slice(0,3)!=='JB|')return null;
+ try{const o=JSON.parse(v.slice(3));if(!o||typeof o.a!=='string'||!o.a||o.a.length>40)return null;
+  return {a:o.a,n:String(o.n||'').slice(0,40),s:Math.max(0,o.s|0),v:o.v===2?2:1,p:o.p?1:0,l:o.l?1:0,t:fin(o.t)?o.t:0}}catch(e){return null}
+}
+function jbOnData(key,v){
+ const st=jbParse(v);
+ if(st)jbState.set(key,st);else{jbState.delete(key);jbStop(key)}
+ if(ui==='jb'&&JBS.key===key)jbRender();
+}
+function jbStop(key){
+ const a=jbAud.get(key);if(!a)return;
+ a.stopped=true;jbAud.delete(key);
+ try{a.el.pause();a.el.removeAttribute('src');a.el.load()}catch(e){}
+ try{URL.revokeObjectURL(a.url)}catch(e){}
+}
+function jbStart(key,st,blob){
+ const url=URL.createObjectURL(blob),el=new Audio();
+ el.preload='auto';el.src=url;el.loop=!!st.l;el.volume=0;
+ const a={el,url,id:st.a,t:st.t,ready:false,retry:0,stopped:false},dk=key+'|'+st.t;
+ jbAud.set(key,a);
+ el.addEventListener('loadedmetadata',()=>{
+  if(a.stopped)return;
+  const dur=el.duration;let pos=Math.max(0,(Date.now()-st.t)/1000);
+  if(isFinite(dur)&&dur>0){
+   if(st.l)pos%=dur;else if(pos>=dur){jbDone.add(dk);jbStop(key);return}
+   try{el.currentTime=pos}catch(e){}
+  }
+  a.ready=true;el.play().catch(()=>{});
+ });
+ el.addEventListener('ended',()=>{if(a.stopped||el.loop)return;jbDone.add(dk);jbStop(key)});
+ el.addEventListener('error',()=>{if(a.stopped)return;jbDone.add(dk);jbStop(key)});
+ return a;
+}
+function jbTick(){
+ if(state!=='play')return;
+ const now=Date.now();
+ for(const [key,st] of jbState){
+  const q=key.split('_'),x=+q[0],y=+q[1],z=+q[2],R=st.v===2?20:10;
+  const d=Math.hypot(x+.5-P.x,y+.5-(P.y+.9),z+.5-P.z);
+  let a=jbAud.get(key);
+  if(!st.p||d>=R||getBlock(x,y,z)!==JUKE){if(a)jbStop(key);continue}
+  if(a&&(a.id!==st.a||a.t!==st.t)){jbStop(key);a=null}
+  if(!a){
+   if(jbDone.has(key+'|'+st.t))continue;
+   const blob=auBuf.get(st.a);if(!blob){auNeed(st.a);continue}
+   if(jbAud.size>=6)continue;
+   a=jbStart(key,st,blob);
+  }
+  a.el.loop=!!st.l;
+  a.el.volume=clamp(Math.pow(Math.max(0,1-d/R),1.3),0,1);
+  if(a.ready&&a.el.paused&&now>a.retry){a.retry=now+1000;a.el.play().catch(()=>{})}
+ }
+ if(jbDone.size>200)jbDone.clear();
+}
+/* ---- 음악 파일 P2P 전송 ---- */
+async function auGet(id){
+ if(auBuf.has(id))return auBuf.get(id);
+ const r=await store.get('au_'+ROOM+'_'+id);
+ if(r&&r.buf){const b=new Blob([r.buf],{type:r.type||'audio/mpeg'});auBuf.set(id,b);return b}
+ return null;
+}
+function auNeed(id){
+ if(auBuf.has(id)||auRx.has(id))return;
+ const now=mono();if(now-(auLast.get(id)||-1e9)<20000)return;
+ auLast.set(id,now);auFetch(id);
+}
+async function auFetch(id){
+ const b=await auGet(id);if(b){if(ui==='jb')jbRender();return}
+ if(auRx.has(id))return;
+ auRx.set(id,{tried:new Set(),from:'',parts:[],total:0,got:0,timer:0});auAsk(id);
+}
+function auAsk(id){
+ const rx=auRx.get(id);if(!rx)return;clearTimeout(rx.timer);
+ const cand=[...peers.values()].find(p=>p.open&&!rx.tried.has(p.id));
+ if(!cand){auRx.delete(id);return}
+ rx.tried.add(cand.id);rx.from='';rx.parts=[];rx.total=0;rx.got=0;
+ peerSend(cand,{k:'aq',i:id},true);
+ rx.timer=setTimeout(()=>{if(auRx.get(id)===rx)auAsk(id)},6000);
+}
+function auNo(p,id){const rx=auRx.get(id);if(rx&&rx.tried.has(p.id)&&!rx.from)auAsk(id)}
+function auChunk(p,m){
+ if(typeof m.i!=='string'||m.i.length>40)return;
+ const rx=auRx.get(m.i);if(!rx||!rx.tried.has(p.id)||(rx.from&&rx.from!==p.id))return;
+ if(!Number.isInteger(m.n)||!Number.isInteger(m.c)||m.c<1||m.c>700||m.n<0||m.n>=m.c||typeof m.d!=='string'||m.d.length>24000)return;
+ if(rx.total&&rx.total!==m.c)return;
+ rx.from=p.id;rx.total=m.c;
+ if(rx.parts[m.n]===undefined){rx.parts[m.n]=m.d;rx.got++}
+ clearTimeout(rx.timer);rx.timer=setTimeout(()=>{if(auRx.get(m.i)===rx)auAsk(m.i)},10000);
+ if(rx.got<rx.total)return;
+ clearTimeout(rx.timer);auRx.delete(m.i);
+ try{
+  const arr=[];for(let i=0;i<rx.total;i++){const bin=atob(rx.parts[i]),u=new Uint8Array(bin.length);for(let j=0;j<bin.length;j++)u[j]=bin.charCodeAt(j);arr.push(u)}
+  const blob=new Blob(arr,{type:'audio/mpeg'});if(blob.size>JB_MAX+AU_CH)return;
+  blob.arrayBuffer().then(buf=>{auBuf.set(m.i,blob);store.put('au_'+ROOM+'_'+m.i,{buf,type:blob.type});if(ui==='jb')jbRender();toast('🎵 음악을 받았습니다',1500)});
+ }catch(e){}
+}
+async function auServe(p,id){
+ p.auOut=p.auOut||new Set();if(p.auOut.has(id))return;
+ const blob=await auGet(id);if(!blob)return peerSend(p,{k:'an',i:id},true);
+ const u8=new Uint8Array(await blob.arrayBuffer()),total=Math.ceil(u8.length/AU_CH);
+ if(!total||total>700)return peerSend(p,{k:'an',i:id},true);
+ p.auOut.add(id);let i=0;
+ const iv=setInterval(()=>{
+  if(peers.get(p.id)!==p||!p.open||!p.dE||p.dE.readyState!=='open'){clearInterval(iv);p.auOut.delete(id);return}
+  let n=0;
+  while(i<total&&n<6&&p.dE.bufferedAmount<150000){
+   const sl=u8.subarray(i*AU_CH,(i+1)*AU_CH);let bin='';
+   for(let j=0;j<sl.length;j+=8192)bin+=String.fromCharCode.apply(null,sl.subarray(j,j+8192));
+   peerSend(p,{k:'ac',i:id,n:i,c:total,d:btoa(bin)},true);i++;n++;
+  }
+  if(i>=total){clearInterval(iv);p.auOut.delete(id)}
+ },20);
+}
+/* ---- 재생기 화면 ---- */
+const JBS={x:0,y:0,z:0,key:''};
+function jbEl(){
+ let el=$('ovJb');if(el)return el;
+ el=document.createElement('div');el.className='ov';el.id='ovJb';
+ el.innerHTML='<div class="card" style="width:min(380px,94vw)"><h1 style="font-size:26px">🎵 재생기</h1><div class="sub" id="jbInfo"></div>'
+  +'<div class="b" id="jbUp">음악 파일 올리기 (wav · mp3)</div><input type="file" id="jbFile" accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" style="display:none">'
+  +'<div style="display:flex;gap:8px"><div class="b" id="jbPlay" style="flex:1"></div><div class="b dim" id="jbStop" style="flex:1">정지</div></div>'
+  +'<div class="b dim" id="jbVol"></div><div class="b dim" id="jbLoop"></div><div class="b dim" id="jbClose">닫기 (Esc)</div></div>';
+ document.body.appendChild(el);
+ $('jbUp').onclick=()=>$('jbFile').click();
+ $('jbFile').onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value='';jbUpload(f)};
+ $('jbPlay').onclick=()=>{const st=jbState.get(JBS.key);if(!st)return toast('먼저 음악 파일을 올려 주세요',1500);jbSet({p:1,t:Date.now()});sfx(.08,520)};
+ $('jbStop').onclick=()=>{const st=jbState.get(JBS.key);if(st&&st.p)jbSet({p:0})};
+ $('jbVol').onclick=()=>{const st=jbState.get(JBS.key)||{v:1};jbSetOrKeep({v:st.v===2?1:2})};
+ $('jbLoop').onclick=()=>{const st=jbState.get(JBS.key)||{l:0};jbSetOrKeep({l:st.l?0:1})};
+ $('jbClose').onclick=closeJuke;
+ return el;
+}
+function jbRender(){
+ const st=jbState.get(JBS.key)||null;
+ let info='올려진 음악이 없습니다';
+ if(st){info='🎵 '+st.n+' ('+(st.s/1048576).toFixed(1)+'MB)'+(st.p?' — 재생 중':' — 정지');if(!auBuf.has(st.a))info+='\n(다른 접속자에게서 파일을 받는 중이거나, 파일을 가진 사람이 접속해 있지 않습니다)'}
+ $('jbInfo').style.whiteSpace='pre-line';$('jbInfo').textContent=info;
+ $('jbPlay').textContent=st&&st.p?'▶ 처음부터':'▶ 재생';
+ const v=st?st.v:1;
+ $('jbVol').textContent='음량: '+(v===2?'2단계 — 20칸 안에서 들림':'1단계 — 10칸 안에서 들림')+'  (누르면 바뀜)';
+ $('jbLoop').textContent='반복: '+(st&&st.l?'켜짐':'꺼짐');
+}
+function jbSet(patch){
+ const cur=jbState.get(JBS.key)||{a:'',n:'',s:0,v:1,p:0,l:0,t:0},n=Object.assign({},cur,patch);
+ if(!n.a)return;
+ fdSet(JBS.x,JBS.y,JBS.z,'JB|'+JSON.stringify({a:n.a,n:n.n,s:n.s,v:n.v,p:n.p,l:n.l,t:n.t}));
+}
+function jbSetOrKeep(patch){if(!jbState.get(JBS.key))return toast('먼저 음악 파일을 올려 주세요',1500);jbSet(patch)}
+function openJuke(x,y,z){
+ if(state!=='play'||ui)return;
+ jbEl();ui='jb';JBS.x=x;JBS.y=y;JBS.z=z;JBS.key=lkKey(x,y,z);
+ showOv('ovJb',true);if(document.pointerLockElement)document.exitPointerLock();jbRender();
+}
+function closeJuke(){if(ui!=='jb')return;ui='';showOv('ovJb',false);lockPointer()}
+async function jbUpload(file){
+ if(!file||ui!=='jb')return;
+ const ext=(file.name.split('.').pop()||'').toLowerCase();
+ if(ext!=='mp3'&&ext!=='wav')return toast('wav 또는 mp3 파일만 올릴 수 있습니다',2200);
+ if(file.size>JB_MAX)return toast('파일이 너무 큽니다 (최대 6MB)',2500);
+ if(file.size<100)return toast('올바른 음악 파일이 아닙니다',2000);
+ const type=ext==='wav'?'audio/wav':'audio/mpeg';
+ let buf;try{buf=await file.arrayBuffer()}catch(e){return toast('파일을 읽지 못했습니다',2000)}
+ const blob=new Blob([buf],{type});
+ const ok=await new Promise(res=>{const u=URL.createObjectURL(blob),a=new Audio();let d=false;const fin_=r=>{if(d)return;d=true;try{URL.revokeObjectURL(u)}catch(e){}res(r)};a.onloadedmetadata=()=>fin_(true);a.onerror=()=>fin_(false);setTimeout(()=>fin_(false),8000);a.preload='metadata';a.src=u});
+ if(!ok)return toast('재생할 수 없는 파일입니다',2200);
+ if(ui!=='jb')return;
+ const id=Date.now().toString(36)+file.size.toString(36)+Math.random().toString(36).slice(2,6);
+ auBuf.set(id,blob);store.put('au_'+ROOM+'_'+id,{buf,type});
+ const name=file.name.replace(/\.[^.]+$/,'').replace(/[\u0000-\u001f]/g,'').slice(0,36)||'음악';
+ jbSet({a:id,n:name,s:file.size,p:0,t:0});
+ toast('🎵 올렸습니다 — ▶ 재생을 누르세요',2200);
+}
 
 /* ===================== 메인 루프 ===================== */
 let last=performance.now(),sendT=0,saveT=0,fpsA=0,fpsN=0,fps=0;
@@ -3029,8 +3455,9 @@ function frame(t){
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
   cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
  }
- if(state==='play'){updateVoice(dt);animalTick(dt);waterFlow(dt)}
- updateChunks(cam.x,cam.z,state==='play'?7:12);
+ if(state==='play'){updateVoice(dt);animalTick(dt);waterFlow(dt);supTick();dropTick(dt);jbTick()}
+ updateRenderCam();
+ updateChunks(rc.x,rc.z,state==='play'?7:12);
  // ---- 렌더 ----
  const sk=skyState(),fogFar=RD*CH*.92,fogNear=fogFar*.55;
  gl.viewport(0,0,w,h);gl.clearColor(sk.c[0],sk.c[1],sk.c[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
@@ -3041,15 +3468,15 @@ function frame(t){
  const vis=[];
  for(const c of chunks.values()){
   if(!c.m)continue;
-  const ox=c.cx*CH-cam.x,oz=c.cz*CH-cam.z,mx=ox+8,mz=oz+8,dist=Math.hypot(mx,mz);
+  const ox=c.cx*CH-rc.x,oz=c.cz*CH-rc.z,mx=ox+8,mz=oz+8,dist=Math.hypot(mx,mz);
   if(dist>RD*CH+24)continue;
   if(dist>26&&(mx*f[0]+mz*f[2])/dist<-.2-Math.max(0,(0)))continue;
   vis.push(c);
  }
- for(const c of vis){if(!c.m.s)continue;gl.uniform3f(U.off,c.cx*CH-cam.x,-cam.y,c.cz*CH-cam.z);gl.bindVertexArray(c.m.s.vao);gl.drawElements(gl.TRIANGLES,c.m.s.n,gl.UNSIGNED_INT,0)}
+ for(const c of vis){if(!c.m.s)continue;gl.uniform3f(U.off,c.cx*CH-rc.x,-rc.y,c.cz*CH-rc.z);gl.bindVertexArray(c.m.s.vao);gl.drawElements(gl.TRIANGLES,c.m.s.n,gl.UNSIGNED_INT,0)}
  if(state==='play'){drawPlayers(dt);if(!ui)drawOutline(ray(6))}
  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
- for(const c of vis){if(!c.m.t)continue;gl.uniform3f(U.off,c.cx*CH-cam.x,-cam.y,c.cz*CH-cam.z);gl.bindVertexArray(c.m.t.vao);gl.drawElements(gl.TRIANGLES,c.m.t.n,gl.UNSIGNED_INT,0)}
+ for(const c of vis){if(!c.m.t)continue;gl.uniform3f(U.off,c.cx*CH-rc.x,-rc.y,c.cz*CH-rc.z);gl.bindVertexArray(c.m.t.vao);gl.drawElements(gl.TRIANGLES,c.m.t.n,gl.UNSIGNED_INT,0)}
  gl.depthMask(true);gl.disable(gl.BLEND);
  if(state==='play'){
   updateTags(innerWidth,innerHeight);updateAnimalTags(innerWidth,innerHeight);
