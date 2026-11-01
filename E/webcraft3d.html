@@ -1182,7 +1182,7 @@ const store={db:null,
  open(){return new Promise(res=>{try{const r=indexedDB.open('webcreat',1);r.onupgradeneeded=()=>r.result.createObjectStore('w');r.onsuccess=()=>{store.db=r.result;res(true)};r.onerror=()=>res(false)}catch(e){res(false)}})},
  get(k){return new Promise(res=>{if(!store.db)return res(null);try{const q=store.db.transaction('w').objectStore('w').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
  put(k,v){try{if(store.db)store.db.transaction('w','readwrite').objectStore('w').put(v,k)}catch(e){}}};
-const SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM;
+let SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM,WMODE='';
 /* ---- 도어락 비밀번호 기록: 위치 -> {c:'1234'|null, t:시각}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase 에 저장 ---- */
 const locks=new Map();let lockDirty=false;const LK={dirty:false,loaded:false,busy:false};
 const lkKey=(x,y,z)=>x+'_'+y+'_'+z;
@@ -1202,7 +1202,7 @@ const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t]);
 function lkMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5))}
 /* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase(도어락 문서에 함께) 저장 ---- */
 const jbState=new Map(),jbAud=new Map(),jbDone=new Set(),auBuf=new Map(),auRx=new Map(),auLast=new Map(),seenNames=new Set();
-const FD_KEY='fd_'+ROOM,fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
+let FD_KEY='fd_'+ROOM;const fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
 const fdGet=(x,y,z)=>{const r=fdata.get(lkKey(x,y,z));return r&&r.v!=null?r.v:null};
 function drItems(v){const a=Array.isArray(v)?v:[],o=[];for(let i=0;i<27;i++){const n=a[i]|0,b=n&1023;o.push(n>0&&b>0&&b<=NB?n:0)}return o}
 function fdClean(v){
@@ -1221,18 +1221,37 @@ function fdClear(x,y,z){const r=fdata.get(lkKey(x,y,z));if(r&&r.v!=null)fdSet(x,
 const fdDump=()=>[...fdata].map(([k,r])=>[k,r.v,r.t]);
 function fdMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))fdApply(e[0],fdClean(e[1]),Math.min(+e[2],Date.now()+864e5))}
 async function loadSaved(){
- await store.open();const a=await store.get(SAVE_KEY);const lkSaved=await store.get(LOCK_KEY);if(Array.isArray(lkSaved))lkMerge(lkSaved);
+ if(!store.db)await store.open();const a=await store.get(SAVE_KEY);const lkSaved=await store.get(LOCK_KEY);if(Array.isArray(lkSaved))lkMerge(lkSaved);
  const fdSaved=await store.get(FD_KEY);if(Array.isArray(fdSaved))fdMerge(fdSaved);
  if(a&&a.length)for(let i=0;i+4<a.length;i+=5)applyEdit(a[i],a[i+1],a[i+2],a[i+3],a[i+4]);
  saveDirty=false;lockDirty=false;fdDirty=false;
 }
+/* 싱글/멀티는 서로 다른 월드: 저장 키가 다르고, 싱글은 온라인(Firebase) 저장과 접속자 동기화를 전혀 쓰지 않는다 */
+async function setWorldMode(m){
+ if(WMODE===m)return;
+ saveNow();WMODE=m;
+ wlev.clear();wq.length=0;wqs.clear();wqh=0;supQ.length=0;supI=0;
+ for(const c of [...chunks.values()])freeChunk(c);
+ edits.clear();editCount=0;maxT=0;lastT=0;saveDirty=false;
+ locks.clear();lockDirty=false;LK.dirty=false;LK.loaded=false;
+ fdata.clear();fdDirty=false;
+ CS.dirty.clear();CS.sizes.clear();CS.big.clear();CS.blocked=false;CS.loaded=false;
+ drops.clear();dropSeen.clear();mapBase=null;listCx=-999;
+ const sf=m==='solo'?'_solo':'';SAVE_KEY='edits_'+ROOM+sf;LOCK_KEY='locks_'+ROOM+sf;FD_KEY='fd_'+ROOM+sf;
+ await loadSaved();
+ if(m==='multi'){csLoad();lkSync()}
+}
 function saveNow(){
+ if(!WMODE)return;
  if(lockDirty){lockDirty=false;store.put(LOCK_KEY,lkDump())}
  if(fdDirty){fdDirty=false;store.put(FD_KEY,fdDump())}
  if(!saveDirty)return;saveDirty=false;const e=allEdits(),a=new Float64Array(e.length*5);
  e.forEach((v,i)=>a.set(v,i*5));store.put(SAVE_KEY,a);
 }
 setInterval(saveNow,3000);
+/* 싱글 맵 자동 저장: 3초마다 + 탭 숨김/닫기 즉시 + 브라우저가 지우지 않도록 영구 저장소 요청 */
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveNow()});
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
 
 /* ===================== WebGL ===================== */
 const cv=$('gl');
@@ -1987,7 +2006,7 @@ async function csFlush(){
  }
  CS.busy=false;updateStat();
 }
-setInterval(()=>{if(!CS.loaded)csLoad();else csFlush()},15000);
+setInterval(()=>{if(WMODE!=='multi')return;if(!CS.loaded)csLoad();else csFlush()},15000);
 async function lkSync(){ // 도어락 비밀번호 기록을 Firebase 문서 1개에 합쳐서 저장/불러오기
  if(LK.busy)return;const db=fbInit();if(!db)return;LK.busy=true;
  const wasDirty=LK.dirty;LK.dirty=false;
@@ -2002,7 +2021,7 @@ async function lkSync(){ // 도어락 비밀번호 기록을 Firebase 문서 1�
  }catch(e){if(wasDirty)LK.dirty=true}
  LK.busy=false;
 }
-setInterval(()=>{if(LK.dirty||!LK.loaded)lkSync()},15000);
+setInterval(()=>{if(WMODE!=='multi')return;if(LK.dirty||!LK.loaded)lkSync()},15000);
 function sendSig(to,obj){if(!fdb||!net.fs)return;fdb.collection(FS_SIG).add({to,s:JSON.stringify(Object.assign({f:net.id},obj)),t:Date.now(),c:++net.sc}).catch(e=>{if(e&&e.code==='resource-exhausted')toast('접속자가 너무 많아 새 친구가 들어오기 어려울 수 있습니다')})}
 function members(){ // 대기열 순서: 먼저 들어온 순 (j, id)
  const now=mono(),arr=[{id:net.id,n:net.name,j:net.j,me:true}];
@@ -3770,7 +3789,7 @@ function armorFactor(){let r=0;for(const b of ARM){if(!b)continue;const n=DEF[b]
 (function(){
  if(!SVMODE)return;
  const st=document.createElement('style');
- st.textContent='#vit{position:absolute;left:0;right:0;bottom:70px;font-size:17px;line-height:1;pointer-events:none}#vit>div{position:absolute;bottom:0;white-space:nowrap;letter-spacing:1px;text-shadow:1px 1px 0 #000}#vitH{right:calc(50% + 64px)}#vitF{left:calc(50% + 64px)}@media (max-width:760px),(max-height:520px){#vit{bottom:48px;font-size:12px}#vitH{right:calc(50% + 62px)}#vitF{left:calc(50% + 62px)}}#hurt{position:fixed;inset:0;z-index:4;pointer-events:none;background:radial-gradient(transparent 35%,rgba(210,0,0,.65));opacity:0;transition:opacity .4s}';
+ st.textContent='#vit{position:absolute;left:50%;transform:translateX(-50%);bottom:68px;width:432px;display:flex;justify-content:space-between;align-items:flex-end;font-size:16px;line-height:1;pointer-events:none}#vit>div{white-space:nowrap;letter-spacing:0;text-shadow:1px 1px 0 #000}#vit .vi{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;font-size:15px}#vitF{display:flex;flex-direction:row-reverse}#armHud{bottom:94px!important}#bname{bottom:126px!important}@media (max-width:760px),(max-height:520px){#vit{bottom:48px;width:332px;font-size:11px}#vit .vi{width:14px;height:14px;line-height:14px;font-size:12px}#armHud{bottom:72px!important}#bname{bottom:100px!important}}#hurt{position:fixed;inset:0;z-index:4;pointer-events:none;background:radial-gradient(transparent 35%,rgba(210,0,0,.65));opacity:0;transition:opacity .4s}';
  document.head.appendChild(st);
  const v=document.createElement('div');v.id='vit';v.innerHTML='<div id="vitH"></div><div id="vitF"></div>';$('hud').appendChild(v);
  const hu=document.createElement('div');hu.id='hurt';document.body.appendChild(hu);
@@ -3780,12 +3799,15 @@ function armorFactor(){let r=0;for(const b of ARM){if(!b)continue;const n=DEF[b]
  $('bRespawn').addEventListener('pointerdown',e=>{e.preventDefault();respawn()});
 })();
 let _vk='';
+function syncVit(){const v=$('vit'),h=$('hot');if(!v||!h)return;const r=h.getBoundingClientRect();if(r.width<50)return;v.style.left=r.left+'px';v.style.width=r.width+'px';v.style.transform='none'}
+addEventListener('resize',()=>{if(typeof syncVit==='function')setTimeout(syncVit,50)});
 function renderVitals(){
  if(!SVMODE)return;
  const e=$('vit');if(!e)return;const on=state==='play';e.style.display=on?'block':'none';if(!on)return;
+ {const now=mono();if(now-(renderVitals.t||0)>400){renderVitals.t=now;syncVit()}}
  const k=P.hp+'|'+P.food;if(k===_vk)return;_vk=k;
  let h='',f='';
- for(let i=0;i<10;i++){const v=P.hp-i*2,w=P.food-i*2;h+='<span style="color:'+(v>=2?'#e33':v===1?'#e88':'#4a2a2a')+'">♥</span>';f+='<span style="opacity:'+(w>=2?1:w===1?.55:.2)+'">🍗</span>'}
+ for(let i=0;i<10;i++){const v=P.hp-i*2,w=P.food-i*2;h+='<span class="vi" style="'+(v>=2?'':v===1?'opacity:.6':'filter:grayscale(1) brightness(.35)')+'">❤️</span>';f+='<span class="vi" style="'+(w>=2?'':w===1?'opacity:.6':'filter:grayscale(1) brightness(.35)')+'">🍗</span>'}
  $('vitH').innerHTML=h;$('vitF').innerHTML=f;
 }
 function hurtFlash(){const e=$('hurt');if(!e)return;e.style.opacity=.9;setTimeout(()=>{e.style.opacity=0},130)}
@@ -3924,15 +3946,18 @@ function readNick(){
  let n=cleanName($('nick').value);if(!n){n='PLAYER'+(1000+Math.random()*9000|0)}
  $('nick').value=n;net.name=n;try{localStorage.setItem('wc_nick',n)}catch(e){}return n;
 }
-function startSolo(){readNick();enterGame()}
+async function startSolo(){if(startSolo.b)return;startSolo.b=1;try{readNick();await setWorldMode('solo');if(state==='title')enterGame()}finally{startSolo.b=0}}
 $('bSolo').onclick=()=>openSel('solo');
-function startMulti(){
+async function startMulti(){
  if(isBanned(readNick()))return toast('🚫 이 닉네임은 이 방에서 영구 차단되었습니다',3500);
+ if(state!=='title')return;
  state='queue';showOv('ovTitle',false);showOv('ovQueue',true);$('bQSolo').style.display='none';
- $('qMsg').textContent='접속하는 중…';$('qList').textContent='';netConnect();evalQueue();
+ $('qMsg').textContent='접속하는 중…';$('qList').textContent='';
+ await setWorldMode('multi');if(state!=='queue')return;
+ netConnect();evalQueue();
 }
 $('bMulti').onclick=()=>openSel('multi');
-$('bQSolo').onclick=()=>{netDisconnect();enterGame()};
+$('bQSolo').onclick=()=>{netDisconnect();setWorldMode('solo').then(()=>{if(state==='queue')enterGame()})};
 $('bQBack').onclick=()=>{netDisconnect();state='title';showOv('ovQueue',false);showOv('ovTitle',true)};
 try{$('nick').value=localStorage.getItem('wc_nick')||''}catch(e){}
 $('nick').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')$('bMulti').click()});
@@ -4287,7 +4312,6 @@ function frame(t){
 window.__wc={animals,hurtPlayer,SURV,openSurv,voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
 skinInit();turnRefresh();
 {const go=Q.get('go');if(go==='multi'||go==='solo'){try{const u=new URL(location.href);u.searchParams.delete('go');history.replaceState(null,'',u)}catch(e){}setTimeout(()=>{if(state==='title'){if(go==='multi')startMulti();else startSolo()}},400)}}
-loadSaved().then(()=>{csLoad();lkSync()});
 ensureAround(5000>>4,5000>>4,3);
 placeAtSurface(5000,5000);
 requestAnimationFrame(frame);
