@@ -4769,9 +4769,9 @@ addEventListener('message',ev=>{
  if(d.event==='onError'){const k=+d.info;toast(k===101||k===150||k===153?'이 영상은 주인이 퍼가기를 막아 두었어요. 다른 영상을 골라 주세요':'영상을 재생하지 못했어요 (오류 '+k+')',3500);return}
  if(!i||typeof i!=='object')return;
  if(fin(i.currentTime)){tvP.ct=i.currentTime;tvP.at=Date.now()}
- if(fin(i.duration)&&i.duration>0)tvP.dur=i.duration;
+ if(fin(i.duration)&&i.duration>0){tvP.dur=i.duration;if(i.duration>(tvP.mainDur||0))tvP.mainDur=i.duration}
  if(typeof i.playerState==='number'){if(tvP.ps!==i.playerState)tvP.psT=Date.now();tvP.ps=i.playerState}
- const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))tvP.id=vd.video_id;
+ const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id)){if(tvP.id!==vd.video_id)tvP.mainDur=0;tvP.id=vd.video_id}
 });
 function tvSv(st){return st.t+'|'+(st.p?1:0)+'|'+(st.p?Math.round((st.pt||0)*10)/10:0)}
 function tvStart(st){return st.t?Math.max(0,Math.min(43200,Math.floor(st.p?(st.pt||0):(sNow()-st.t)/1000))):0}
@@ -4789,27 +4789,24 @@ function tvSyncBack(){
  if(c.v===tvP.id&&Math.abs(cur-(sNow()-c.t)/1000)<2)return;
  tvPanelPush(g,Object.assign({},c,{v:tvP.id}),false,cur);
 }
-function tvPanelClear(){if(tvP.el){tvP.el.remove();tvP.el=null}tvP.sig='';tvP.id='';tvP.ps=0;tvP.ct=0}
-function tvPanel(c){
- const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl)),sig=on?c.v+'|'+c.pl+'|'+c.l:'';
- if(sig===tvP.sig&&(on?tvP.el:!tvP.el))return;
- tvPanelClear();tvP.sig=sig;box.textContent='';
- if(!on){box.textContent=c&&(c.v||c.pl)?'전원이 꺼져 있어요':'유튜브 링크를 붙여넣고 ▶ 재생을 누르세요';return}
- const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(tvStart(c))});
- if(location.protocol.slice(0,4)==='http')p.set('origin',location.origin);
- let src;
- if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
- else{src='https://www.youtube.com/embed/videoseries?';p.set('list',c.pl)}
- if(c.pl&&c.l)p.set('loop','1');
- const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
- el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
- el.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:auto';
- el.onload=()=>{try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
- el.src=src+p.toString();box.appendChild(el);tvP.el=el;tvP.id=c.v||'';tvP.ct=0;tvP.at=Date.now();tvP.tA=c.t;tvP.sv=tvSv(c);tvP.psT=0;tvP.born=Date.now();tvP.ls=0;tvP.dur=0;tvP.dc=0;
+function tvPanelClear(){tvP.el=null;tvP.sig='';tvP.id='';tvP.ps=0;tvP.ct=0;tvP.psT=0;tvP.mainDur=0}
+function tvDockKey(){if(ui!=='tv')return '';const g=tvGroup(TVS.x,TVS.y,TVS.z);return (g&&g.win)||''}
+function tvPanel(c){ // 조작창에는 따로 플레이어를 만들지 않는다: 월드 TV 의 플레이어(iframe)를 이 자리에 그대로 옮겨 보여준다 (같은 화면 · 광고 건너뛰기 · 되감기 모두 공유)
+ const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl));
+ box.textContent=on?'화면을 불러오는 중…':(c&&(c.v||c.pl)?'전원이 꺼져 있어요':'유튜브 링크를 붙여넣고 ▶ 재생을 누르세요');
+ if(!on)tvP.el=null;
+}
+function tvDockAttach(){ // 조작창 로직(tvP)이 월드 TV 플레이어를 바라보게 연결
+ const key=tvDockKey(),e=key&&tvFr.get(key),g=key&&tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
+ if(!e||!c||!c.on||!(c.v||c.pl)){tvP.el=null;return}
+ if(tvP.el!==e.el){
+  tvP.el=e.el;tvP.id=c.v||'';tvP.sv=tvSv(c);tvP.tA=c.t;tvP.ps=e.ps||0;tvP.psT=e.psT||1;tvP.ct=e.ct||0;tvP.at=e.at||Date.now();
+  tvP.dur=e.dur||0;tvP.mainDur=e.dur||0;tvP.born=e.born;tvP.ls=0;tvP.dc=0;
+ }
 }
 function tvRender(init){
  const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
- $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n월드 TV 화면과 이 창은 항상 같은 시점으로 맞춰져요 (일시정지 · 되감기 · 건너뛰기도 바로 함께 적용) · 창을 닫아도 전원을 끄기 전까지 계속 재생돼요'):'TV를 찾을 수 없어요';
+ $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n이 창에 보이는 화면은 월드 TV 와 같은 화면이에요 (광고 건너뛰기 · 일시정지 · 되감기 · 전체화면이 그대로 월드 TV 에 보이고, 다른 접속자 TV 는 위치를 따라가요) · 창을 닫아도 전원을 끄기 전까지 계속 재생돼요'):'TV를 찾을 수 없어요';
  if(init){
   if(c&&c.v)$('tvUrl').value='https://youtu.be/'+c.v+(c.pl?'?list='+c.pl:'');
   else if(c&&c.pl)$('tvUrl').value='https://www.youtube.com/playlist?list='+c.pl;
@@ -4851,15 +4848,15 @@ function tvFrame(c,W,H){
  if(e&&e.sig!==sig){e.el.remove();tvFr.delete(key);e=null}
  if(!e){
   let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
-  const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(tvStart(st))});
+  const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(tvStart(st))});
   let src;
   if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
   else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
   if(st.pl&&st.l)p.set('loop','1');
   const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
-  el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
+  el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
-  e={el,sig,pw,ph,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0};
+  e={el,sig,pw,ph,dk:0,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0};
   el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
   el.src=src+p.toString();tvLayer.appendChild(el);tvFr.set(key,e);
  }
@@ -4868,12 +4865,19 @@ function tvFrame(c,W,H){
  const n=g.nrm;
  let show=e.los&&((rc.x-g.center[0])*n[0]+(rc.z-g.center[2])*n[2])>.05;
  if(show){let any=false;for(const q of g.cs){if(VP[3]*(q[0]-rc.x)+VP[7]*(q[1]-rc.y)+VP[11]*(q[2]-rc.z)>.05){any=true;break}}show=any}
- const m=show?tvMatrix(g,e.pw,e.ph,W,H):null;
- if(m){el.style.transform=m;if(!e.vis){el.style.visibility='visible';e.vis=true}}
- else if(e.vis){el.style.visibility='hidden';e.vis=false}
- if(now-e.vt>250){ // 거리에 따른 음량: 25칸 밖 0 → 가까울수록 커짐
-  e.vt=now;let v=Math.round(100*Math.pow(clamp(1-c.d/TVRANGE,0,1),1.4));if(ui==='tv'){const pg=tvGroup(TVS.x,TVS.y,TVS.z);if(pg&&pg.win===key)v=0} // 조작창이 열려 있으면 월드 쪽 소리는 끈다 (플레이어와 겹치지 않게)
-  
+ const dock=tvDockKey()===key;
+ if(dock){ // 조작창이 열려 있으면 이 플레이어를 조작창 화면 자리에 크게 보여준다
+  const r=$('tvBox').getBoundingClientRect();
+  el.style.transform='none';el.style.left=r.left+'px';el.style.top=r.top+'px';el.style.width=r.width+'px';el.style.height=r.height+'px';
+  el.style.pointerEvents='auto';el.style.visibility='visible';e.vis=true;e.dk=1;
+ }else{
+  if(e.dk){e.dk=0;el.style.left='0px';el.style.top='0px';el.style.width=e.pw+'px';el.style.height=e.ph+'px';el.style.pointerEvents='none';e.vis=!e.vis;el.style.visibility='hidden';e.vis=false}
+  const m=(show&&ui!=='tv')?tvMatrix(g,e.pw,e.ph,W,H):null;
+  if(m){el.style.transform=m;if(!e.vis){el.style.visibility='visible';e.vis=true}}
+  else if(e.vis){el.style.visibility='hidden';e.vis=false}
+ }
+ if(now-e.vt>250){ // 거리에 따른 음량: 25칸 밖 0 → 가까울수록 커짐 (조작창에 띄운 TV 는 크게)
+  e.vt=now;let v=Math.round(100*Math.pow(clamp(1-c.d/TVRANGE,0,1),1.4));if(dock)v=100;
   if(v!==e.vol){e.vol=v;tvCmd(el,'setVolume',[v]);if(v>0)tvCmd(el,'unMute')}
  }
 }
@@ -4939,6 +4943,7 @@ function tvSyncTick(){
  const now=Date.now();
  for(const [key,e] of tvFr){ // 월드 속 TV 화면: 항상 TV 상태(기준 시각/일시정지)를 따라감
   const st=tvState.get(key);if(!st||!st.on||!st.v||st.pl)continue;
+  if(ui==='tv'&&tvP.el===e.el)continue;
   const sv=tvSv(st);
   if(e.sv!==sv){e.sv=sv;e.tA=st.t;e.ls=now;e.dc=0;tvCmd(e.el,'seekTo',[tvExp(st,e.dur),true]);tvCmd(e.el,st.p?'pauseVideo':'playVideo');continue}
   if(st.p){if(e.ps===1&&now-e.pl>1500){e.pl=now;tvCmd(e.el,'pauseVideo')}continue}
@@ -4954,11 +4959,11 @@ function tvSyncTick(){
    const sv=tvSv(c);
    if(tvP.sv!==sv){tvP.sv=sv;tvP.tA=c.t;tvP.ls=now;tvP.dc=0;tvCmd(tvP.el,'seekTo',[tvExp(c,tvP.dur),true]);tvCmd(tvP.el,c.p?'pauseVideo':'playVideo')}
    else if(tvP.psT>0){
-    const cur=tvP.ct+(now-tvP.at)/1000,calm=now-tvP.born>3000&&now-tvP.ls>1500&&now-tvP.psT>700;
+    const cur=tvP.ct+(now-tvP.at)/1000,adOn=tvP.dur>0&&tvP.mainDur>0&&Math.abs(tvP.dur-tvP.mainDur)>1.5,calm=!adOn&&now-tvP.born>3000&&now-tvP.ls>1500&&now-tvP.psT>700;
     if(c.p){
      if(tvP.ps===1){if(now-tvP.born<3500)tvCmd(tvP.el,'pauseVideo');else if(calm)tvPanelPush(g,c,false,cur)}
     }else if(tvP.ps===2){if(calm)tvPanelPush(g,c,true,tvP.ct)}
-    else if(tvP.ps===1&&fin(tvP.ct)&&now-tvP.at<2500&&now-tvP.ls>2500&&now-tvP.born>3000&&!(c.l&&!(tvP.dur>0))&&(c.l||!(tvP.dur>0)||tvExp(c,tvP.dur)<tvP.dur-1.5)){
+    else if(tvP.ps===1&&fin(tvP.ct)&&now-tvP.at<2500&&now-tvP.ls>2500&&!adOn&&now-tvP.born>3000&&!(c.l&&!(tvP.dur>0))&&(c.l||!(tvP.dur>0)||tvExp(c,tvP.dur)<tvP.dur-1.5)){
      if(Math.abs(tvDrift(c,tvP.dur||0,cur))>1.5){if(++tvP.dc>=2)tvPanelPush(g,c,false,cur)}else tvP.dc=0;
     }
    }
@@ -4972,7 +4977,7 @@ setInterval(()=>{
  for(const s of tvState.values())if(s.on&&(s.v||s.pl)){tvRecordNow();return}
 },30000);
 function tvUpdate(W,H){
- if(!tvState.size){if(tvFr.size)tvClear();return}
+ if(!tvState.size){if(tvFr.size)tvClear();tvLayer.style.zIndex='0';return}
  const cand=[];
  for(const [key,st] of tvState){
   if(!st.on||(!st.v&&!st.pl))continue;
@@ -4985,8 +4990,10 @@ function tvUpdate(W,H){
  }
  cand.sort((a,b)=>a.d-b.d);cand.length=Math.min(cand.length,3);
  const live=new Set();
+ tvLayer.style.zIndex=ui==='tv'?'6':'0';
  for(const c of cand){live.add(c.key);tvFrame(c,W,H)}
  for(const [k,e] of [...tvFr])if(!live.has(k)){e.el.remove();tvFr.delete(k)}
+ if(ui==='tv')tvDockAttach();
 }
 
 /* ===================== 가구 상호작용: 서랍장 · 컴퓨터(메모) · 침대 · 소파 ===================== */
