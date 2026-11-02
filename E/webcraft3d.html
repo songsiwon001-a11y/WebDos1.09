@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>WebCraft</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/neodgm/neodgm-webfont@latest/neodgm/style.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",monospace;color:#fff;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
@@ -35,6 +37,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 .card{background:rgba(25,25,25,.94);border:2px solid #777;padding:22px 26px;width:min(460px,92vw);max-height:92vh;overflow:auto}
 h1{font-size:44px;letter-spacing:4px;color:#7ddc4a;text-shadow:3px 3px 0 #2a4a14;margin-bottom:4px}
 .sub{font-size:13px;color:#bbb;margin-bottom:16px;line-height:1.5}
+/* DOS 느낌 글꼴(도트 폰트): 둥근모꼴 → Perfect DOS VGA → VT323 → 고정폭. 글꼴 파일을 못 받으면 고정폭으로 대신 나옵니다 */
+.logoWrap{position:relative;margin-bottom:26px}
+#splash{position:absolute;left:50%;bottom:-20px;transform:translateX(-50%) rotate(-8deg);white-space:nowrap;pointer-events:none;color:#ffff55;text-shadow:2px 2px 0 #3f3f00;
+ font-family:'NeoDunggeunmo','DungGeunMo','Perfect DOS VGA 437','Px437 IBM VGA 8x16','VT323','Courier New',monospace;font-weight:400;font-size:20px;letter-spacing:0;
+ -webkit-font-smoothing:none;font-smooth:never;text-rendering:optimizeSpeed;animation:splashPulse .5s ease-in-out infinite alternate}
+@keyframes splashPulse{from{transform:translateX(-50%) rotate(-8deg) scale(1)}to{transform:translateX(-50%) rotate(-8deg) scale(1.08)}}
 input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;font:inherit;font-size:16px;text-align:center;margin-bottom:12px;user-select:text}
 .b{display:block;width:100%;padding:11px;margin-top:8px;background:#3a7a22;border:2px solid #9d9;color:#fff;font:inherit;font-size:16px;cursor:pointer;pointer-events:auto}
 .b:hover{background:#4a9a2c}.b.dim{background:#444;border-color:#888}
@@ -82,7 +90,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 
 <div class="ov" id="ovTitle" style="display:flex">
  <div class="card">
-  <h1>WebCraft</h1>
+  <div class="logoWrap"><h1>WebCraft</h1><div id="splash"></div></div>
   <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
   <input class="t" id="nick" maxlength="12" placeholder="닉네임" autocomplete="off">
   <div class="b" id="bMulti">멀티플레이</div>
@@ -4357,7 +4365,7 @@ function leaveGame(){
  savePos();
  netDisconnect();net.synced=false;
  state='title';ui='';ARM.fill(0);renderArm();renderVitals();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);if($('ovSurv'))showOv('ovSurv',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
- $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
+ $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);newSplash();showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();animals.clear();for(const e of atagEls.values())e.remove();atagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
 }
@@ -4729,6 +4737,46 @@ function frame(t){
 }
 /* 시작 */
 window.__wc={animals,hurtPlayer,SURV,openSurv,voiceGain,setDay(v){DAY_OFF=v},runCommand,roles,applyTime,curHour,computeLight,lightNear,LG,LB,findBlock,P,cam,peers,net,chunks,edits,getBlock,applyEdit,localEdit,get state(){return state},enterGame,findSpawn,placeAtSurface,terrainH,SEA};
+/* ===================== 타이틀 스플래시 문구 (랜덤 150개, 접속/타이틀로 돌아올 때마다 하나씩) ===================== */
+const SPLASHES=[
+'나는 네가 와서 기뻐!','블록을 부수면 기분이 좋아져요!','16명이 한 월드에!','Hello, 월드!','오늘도 곡괭이 들고 출근!',
+'침대는 밤에만 잘 수 있어요','횃불은 많을수록 좋아요','좀비는 낮에 불타요','땅을 파고 내려가 봐요!','다이아몬드는 어디에?',
+'조약돌 부자 되기','집부터 지으세요!','WASD 로 움직여요','점프 두 번이면 비행!','Shift 는 몰래 걷기',
+'Ctrl 누르고 달리기!','N 키로 지도를 열어요','M 키로 마이크 켜기!','T 키로 수다 떨기','E 로 가방 열기',
+'/help 를 입력해 보세요','도어락 비밀번호는 4자리','철문은 레드스톤 없이도 열려요','서랍장에 보물을 숨겨요','컴퓨터에 메모를 남겨요',
+'소파에 앉아서 쉬어요','재생기로 음악을 틀어요!','개한테 뼈를 줘 보세요','멍멍! 길들이기 성공?','꼬꼬댁!',
+'돼지는 사랑입니다','소는 우유가 아니라 가죽을 줘요','양털 색이 8가지!','선인장은 따갑대요','호박등 반짝반짝',
+'바다 랜턴이 예뻐요','네온 블록 짱!','마그마 블록 위는 뜨거워요','흑요석은 단단해요','기반암은 못 부숴요',
+'하늘에 천국이 있대요','발광석 틀에 불을 붙여 보세요','천국엔 몬스터가 없어요','협곡에서 길을 잃지 마세요','동굴 속은 어두워요',
+'천공을 조심하세요!','지하 호수에서 수영!','종유석 아래를 지나가요','수정 동굴은 보랏빛!','이끼 낀 동굴 탐험',
+'10000 x 10000 의 거대한 세상','끝이 안 보이는 지평선','모래성도 성입니다','삽질은 즐거워','도끼질은 힘들어',
+'곡괭이는 만능이 아니에요','검은 동물을 지켜줘요','효율 인챈트 최고!','행운은 장식이에요','청금석을 모아요',
+'인챈트 테이블 설치 완료?','모루로 책을 합쳐요','방어구 입고 출발!','네더라이트는 비싸요','금 장비는 빨리 캐요',
+'가죽 갑옷도 갑옷이에요','철 주괴 9개 = 철 블록','작업대가 없으면 막막해요','화로에 석탄을 넣어요','막대기 두 개로 시작',
+'나무를 때려서 시작해요','잔디는 흙 위에 자라요','눈 덮인 산꼭대기','협곡 바닥엔 시냇물이','물은 아래로 흘러요',
+'물에 횃불이 쓸려 가요','카펫은 바닥에만 깔려요','사다리를 타고 올라가요','문은 위아래가 한 쌍','울타리 너머 이웃집',
+'유리판이 이어져요','철창은 감옥용?','침대 두 칸 차지!','밤엔 좀비가 와요','아침이 오면 안심',
+'배고프면 체력이 줄어요','사과는 나무에서!','구운 고기가 맛있어요','빵은 밀로 만들어요','금 사과는 비싸요',
+'수박 조각 냠냠','당근은 좀비가 줘요','감자도 구워 먹어요','떨어진 아이템은 5분 뒤 사라져요','Q 로 아이템 던지기!',
+'죽으면 물건이 떨어져요','스폰 위치는 랜덤','내 스킨은 내가 그려요','스킨 편집기 열어 보세요','알렉스 팔도 지원!',
+'닉네임은 12자까지','영구 차단은 신중하게','/time set 낮 입력해 보세요','밤이 너무 길어요','일출이 예뻐요',
+'노을이 질 때 집으로!','별은 없지만 밤은 있어요','하루는 10분!','다른 접속자와 시간이 같아요','서버 없이 P2P!',
+'친구를 초대해 보세요','같은 주소로 접속하세요','?room=이름 으로 비밀 월드','대기열에서 기다리는 중…','정원은 16명입니다',
+'싱글이세요? ㅋㅋ','혼자서도 재밌어요','월드는 내 브라우저에 저장돼요','자동 저장 중…','탭을 닫아도 괜찮아요',
+'월드 파일을 만들어 보세요','~ 키로 정보 보기','프레임이 떨어지면 멀리 보기를 줄여요','모바일에서도 돼요!','조이스틱으로 이동',
+'터치 버튼으로 파괴/설치','점프 버튼 두 번 = 비행','번개처럼 빠른 WebGL','순수 JS 100%','HTML 파일 하나로 끝!',
+'외부 라이브러리 없음!','픽셀이 곧 예술이다','네모난 세상','블록 하나하나가 소중해요','부수고 쌓고 반복!',
+'오늘은 뭘 지어볼까?','대저택 짓기 도전!','지하 벙커 만들기','하늘 위 집 짓기','다리를 놓아 건너요',
+'피라미드는 사암으로','성벽은 석재 벽돌로','정원은 잔디로','분수는 물 블록으로','등대는 발광석으로',
+'버그가 아니라 기능입니다','가끔 렉도 낭만','이 문구는 랜덤입니다','150개 중 하나!','다시 접속하면 다른 문구가 나와요'
+];
+let _splashLast=-1;
+function fitSplash(){const e=$('splash');if(!e)return;e.style.fontSize='20px';const max=320;if(e.scrollWidth>max)e.style.fontSize=Math.max(11,Math.floor(20*max/e.scrollWidth))+'px'}
+function newSplash(){
+ const e=$('splash');if(!e)return;let i;do{i=(Math.random()*SPLASHES.length)|0}while(i===_splashLast&&SPLASHES.length>1);
+ _splashLast=i;e.textContent=SPLASHES[i];fitSplash();
+}
+newSplash();if(document.fonts&&document.fonts.ready)document.fonts.ready.then(fitSplash);
 skinInit();turnRefresh();
 {const go=Q.get('go');if(go==='multi'||go==='solo'){try{const u=new URL(location.href);u.searchParams.delete('go');history.replaceState(null,'',u)}catch(e){}setTimeout(()=>{if(state==='title'){if(go==='multi')startMulti();else startSolo()}},400)}}
 ensureAround(5000>>4,5000>>4,3);
