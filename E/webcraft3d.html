@@ -1608,7 +1608,7 @@ function quickMove(c1,i,c2){ // 한 칸의 아이템을 맞은편 묶음으로 �
  for(let j=0;j<c2.a.length&&n>0;j++)if(!c2.a[j]){c2.a[j]=b;const t=Math.min(mx,n);c2.n[j]=t;n-=t}
  if(n===start)return false;if(n>0)c1.n[i]=n;else c1.a[i]=0;return true;
 }
-const contOf=src=>src==='h'?{a:hotbar,n:hotN}:{a:inv,n:invN};
+const contOf=src=>src==='h'?{a:hotbar,n:hotN}:src==='d'?DRS.c:{a:inv,n:invN};
 const cntLoad=(arr,i,b)=>Math.max(1,Math.min(STK[b]||1,Array.isArray(arr)?((arr[i]|0)||1):1));
 const decSel=()=>{if(hotN[P.sel]>1)hotN[P.sel]--;else hotbar[P.sel]=0};
 const keys={};
@@ -1982,11 +1982,12 @@ function remoteStep(p){
 /* ===================== 멀티플레이: Firebase 대기열 + WebRTC 메시 ===================== */
 const firebaseConfig={apiKey:"AIzaSyDU4famr5DzAYlNpjcTcUUqjzDxEvjVeec",authDomain:"webdos-11d5a.firebaseapp.com",projectId:"webdos-11d5a",storageBucket:"webdos-11d5a.firebasestorage.app",messagingSenderId:"500610787415",appId:"1:500610787415:web:75e8268bcbfd2bef211b12"};
 const FS_LOBBY='wolf_lobby',FS_SIG='wolf_sig',LOBBY_ROOM='wc-'+ROOM; // 기존 컬렉션을 재사용 (room 값으로 구분) → 규칙 변경 불필요
-const STALE=40000,HB=15000;
+const STALE=50000,HB=15000;
 const net={id:'',name:'PLAYER',fs:null,lobby:{},j:0,admitted:false,sc:0,on:false,tm:0,hb:0,synced:false,pulling:'',offline:[],retry:{},pendSig:[],relayFor:{}};
 const peers=new Map();
 let fdb=null;
 const mono=()=>performance.now();
+const sNow=()=>Date.now()+(net.clk||0); // 접속자 모두가 같은 시계(가장 작은 ID 접속자 기준)로 맞춘 현재 시각 — TV 동기화에 사용
 function fbInit(){
  if(fdb)return fdb;if(!window.firebase)return null;
  try{if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);fdb=firebase.firestore();try{fdb.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}}catch(e){console.error(e);fdb=null}
@@ -2109,25 +2110,43 @@ function renderQueue(m){
 }
 function announce(){if(net.fs&&net.fs.doc&&net.fsOk)net.fs.doc.set({room:LOBBY_ROOM,n:net.name,ts:Date.now(),j:net.j}).catch(()=>{})}
 function netConnect(){
- turnRefresh();turnMyLoad();
+ turnRefresh();Promise.resolve(turnMyLoad()).then(turnProbe);
  if(net.on)return;
- const db=fbInit();
  net.id=rid();net.j=Date.now();net.on=true;net.pendSig=[];net.lobby={};net.admitted=false;net.fsOk=false;net.synced=false;net.pulling='';
+ net.fsTry=0;net.failShown=false;clearTimeout(net.rt);net.rt=0;net.fs=null;
+ clearInterval(net.tm);net.tm=setInterval(netTick,1000);
+ netListen();
+}
+/* 서버(Firestore) 대기열/신호 구독. 끊기거나 실패하면 netFail 이 자동으로 다시 붙인다 (예전에는 한 번 실패하면 영영 죽어서 새 친구가 안 보였음) */
+function netListen(){
+ const db=fbInit();
  if(!db){netFail('load');return}
- const fs=net.fs={doc:db.collection(FS_LOBBY).doc(net.id),lobU:null,sigU:null,tmo:0,first:false};
+ const fs=net.fs={doc:db.collection(FS_LOBBY).doc(net.id),lobU:null,sigU:null,tmo:0,first:false,loaded:false};
  fs.tmo=setTimeout(()=>{if(net.fs===fs&&!net.fsOk)netFail('timeout')},9000);
  fs.lobU=db.collection(FS_LOBBY).where('room','==',LOBBY_ROOM).onSnapshot(snap=>{
   if(net.fs!==fs)return;
-  if(!snap.metadata.fromCache){net.fsOk=true;clearTimeout(fs.tmo)}
+  const live=!snap.metadata.fromCache;
+  if(live){
+   net.fsOk=true;net.fsTry=0;clearTimeout(fs.tmo);
+   if(net.failShown){net.failShown=false;if(state==='play')toast('서버에 다시 연결됐어요',2000)}
+  }
   const now=mono(),wall=Date.now();
   snap.docChanges().forEach(ch=>{
    const id=ch.doc.id;if(id===net.id)return;
    if(ch.type==='removed'){delete net.lobby[id];return}
    const d=ch.doc.data()||{};if(typeof d.n!=='string')return;
-   const age=Math.max(0,wall-(+d.ts||0));
-   if(age>180000){if(ch.type==='added')ch.doc.ref.delete().catch(()=>{});delete net.lobby[id];return}
-   net.lobby[id]={id,n:cleanName(d.n)||'PLAYER',j:+d.j||0,seen:now-Math.min(age,STALE)};
+   const nm=cleanName(d.n)||'PLAYER',j=+d.j||0;
+   if(ch.type==='modified'||(fs.loaded&&ch.type==='added')){
+    // 접속하는 동안 새로 쓰인 문서 = 지금 살아있다는 뜻. 상대 PC 시계가 틀려도 '내가 받은 시각'으로 판단한다
+    net.lobby[id]={id,n:nm,j,seen:now,old:false};
+   }else{
+    // 처음 목록을 받을 때만 상대가 적은 시각을 참고. 시계가 틀린 사람도 최소 20초는 보이게 해서
+    // 곧 오는 생존 신호(15초마다)로 확인한다. 신호가 없으면 유령이라 사라짐
+    const age=Math.max(0,wall-(+d.ts||0));
+    net.lobby[id]={id,n:nm,j,seen:now-Math.min(age,STALE-20000),old:age>180000};
+   }
   });
+  if(live)fs.loaded=true;
   if(net.fsOk&&!fs.first){fs.first=true;announce();net.hb=mono()}
   evalQueue();
  },e=>netFail((e&&e.code)||'error'));
@@ -2138,25 +2157,45 @@ function netConnect(){
   const wall=Date.now();
   for(const d of arr){if(wall-(+d.t||0)>60000||typeof d.s!=='string'||d.s.length>60000)continue;let m;try{m=JSON.parse(d.s)}catch(e){continue}onSignal(m)}
  },e=>netFail((e&&e.code)||'error'));
- clearInterval(net.tm);net.tm=setInterval(netTick,1000);
 }
 function netFail(why){
- if(state==='queue'){$('qMsg').textContent='접속하지 못했습니다. 인터넷 연결을 확인해 주세요';$('bQSolo').style.display='block'}
- else if(state==='play')toast('연결이 불안정합니다 — 이미 함께하는 사람과는 계속 플레이할 수 있습니다');
- if(net.fs){try{net.fs.lobU&&net.fs.lobU()}catch(e){}try{net.fs.sigU&&net.fs.sigU()}catch(e){}net.fs.dead=true}
+ if(!net.on)return;
+ const fs=net.fs;net.fsOk=false;
+ console.warn('[net] 서버 연결 실패, 자동으로 다시 시도합니다:',why);
+ if(state==='queue'){$('qMsg').textContent='서버에 접속하지 못했어요. 자동으로 다시 시도하는 중… (계속 안 되면 인터넷 연결을 확인해 주세요)';$('bQSolo').style.display='block'}
+ else if(state==='play'&&!net.failShown){net.failShown=true;toast('서버 연결이 끊겼어요 — 자동으로 다시 연결하는 중이에요. 이미 함께하는 사람과는 계속 플레이할 수 있어요',4000)}
+ if(fs){clearTimeout(fs.tmo);try{fs.lobU&&fs.lobU()}catch(e){}try{fs.sigU&&fs.sigU()}catch(e){}fs.dead=true}
+ netRetryLater();
+}
+function netRetryLater(){
+ if(!net.on||net.rt)return;
+ const n=net.fsTry=(net.fsTry||0)+1,delay=Math.min(30000,1500*Math.pow(1.7,n-1));
+ net.rt=setTimeout(()=>{net.rt=0;if(!net.on)return;if(net.fs&&!net.fs.dead)return;netListen()},delay);
+}
+function netResume(){ // 탭으로 돌아왔거나 인터넷이 다시 연결됐을 때: 바로 다시 붙고 '나 여기 있어요' 신호를 보낸다
+ if(!net.on)return;
+ if(!net.fs||net.fs.dead){clearTimeout(net.rt);net.rt=0;net.fsTry=0;netListen();return}
+ if(net.fsOk){net.hb=mono();announce()}
 }
 function netDisconnect(){
- clearInterval(net.tm);
+ clearInterval(net.tm);clearTimeout(net.rt);net.rt=0;
  if(net.fs){clearTimeout(net.fs.tmo);try{net.fs.lobU&&net.fs.lobU()}catch(e){}try{net.fs.sigU&&net.fs.sigU()}catch(e){}try{net.fs.doc.delete().catch(()=>{})}catch(e){}}
  for(const p of [...peers.values()])peerClose(p,false);
- net.fs=null;net.on=false;net.lobby={};net.admitted=false;net.relayFor={};net.turnHint=0;
+ net.fs=null;net.on=false;net.lobby={};net.admitted=false;net.relayFor={};net.turnHint=0;net.clk=0;
 }
 window.addEventListener('pagehide',()=>{saveNow();try{if(net.fs)net.fs.doc.delete()}catch(e){}for(const p of peers.values()){try{if(p.dE&&p.dE.readyState==='open')p.dE.send('{"k":"bye"}')}catch(e){}}});
 
+function netClockUpdate(){
+ let ref=net.id,off=0;
+ for(const p of peers.values())if(p.open&&p.ckOff!=null&&p.id<ref){ref=p.id;off=p.ckOff}
+ net.clk=(ref===net.id||Math.abs(off)>3600000)?0:off;
+}
 function netTick(){
  const now=mono();
+ netClockUpdate();
+ if(now-(net.ckT||0)>10000){net.ckT=now;for(const p of peers.values())if(p.open)peerSend(p,{k:'ck',a:Date.now()},false)}
  if(net.fs&&net.fsOk&&now-net.hb>HB){net.hb=now;announce()}
- for(const id in net.lobby)if(now-net.lobby[id].seen>STALE)delete net.lobby[id];
+ for(const id in net.lobby){const q=net.lobby[id];if(now-q.seen>STALE){if(q.old&&net.fsOk&&fdb)fdb.collection(FS_LOBBY).doc(id).delete().catch(()=>{});delete net.lobby[id]}}
  evalQueue();
  if(!net.admitted||state!=='play')return;
  const adm=members().slice(0,MAXP);
@@ -2166,13 +2205,16 @@ function netTick(){
   if(!p&&peers.size<MAXP-1&&now>(net.retry[m.id]||0))startOffer(m.id);
  }
  for(const p of [...peers.values()]){
-  if(!p.open&&now-p.t0>(p.init&&!p.relay?8000:20000)){if(p.init&&!p.relay){net.relayFor[p.id]=1;peerDown(p,'timeout');net.retry[p.id]=0;continue}if(!net.turnHint){net.turnHint=1;const ct=p.ct||{},cs='후보 host '+(ct.host||0)+' · srflx '+(ct.srflx||0)+' · relay '+(ct.relay||0);console.warn('[연결 실패]',p.id,cs);toast(myTurnOn()?(ct.relay?'친구와 연결하지 못했어요 — 중계 서버는 연결됐지만 상대 쪽 연결이 안 됐어요 (친구도 같은 주소로 접속했는지 확인) · '+cs:'친구와 연결하지 못했어요 — 중계 서버 계정을 받지 못했어요 (앱 이름/키 확인) · '+cs):'다른 인터넷의 친구와 연결하지 못했어요 — 공개 중계 서버가 닫혀 있어요. 파일 위쪽의 METERED_APP / METERED_KEY 에 무료 계정을 넣어 주세요 · '+cs,10000)}peerDown(p,'timeout')}
-  else if(p.open&&now-p.rx>12000)peerDown(p,'silent');
+  if(!p.open&&now-p.t0>(p.init&&!p.relay?6000:20000)){if(p.init&&!p.relay){net.relayFor[p.id]=1;peerDown(p,'timeout');net.retry[p.id]=0;continue}if(!net.turnHint){net.turnHint=1;const ct=p.ct||{},cs='후보 host '+(ct.host||0)+' · srflx '+(ct.srflx||0)+' · relay '+(ct.relay||0);console.warn('[연결 실패]',p.id,cs);toast(myTurnOn()?(ct.relay?'친구와 연결하지 못했어요 — 중계 서버는 연결됐지만 상대 쪽 연결이 안 됐어요 (친구도 같은 주소로 접속했는지 확인) · '+cs:'친구와 연결하지 못했어요 — 중계 서버 계정을 받지 못했어요 (앱 이름/키 확인) · '+cs):'다른 인터넷의 친구와 연결하지 못했어요 — 공개 중계 서버가 닫혀 있어요. 파일 위쪽의 METERED_APP / METERED_KEY 에 무료 계정을 넣어 주세요 · '+cs,10000)}peerDown(p,'timeout')}
+  else if(p.open&&now-p.rx>20000)peerDown(p,'silent');
   else if(p.open&&!net.lobby[p.id]&&now-p.rx>6000&&net.fsOk&&!adm.some(v=>v.id===p.id))peerDown(p,'gone');
  }
  if(state==='play'&&now-net.pg>3000){net.pg=now;for(const p of peers.values())peerSend(p,{k:'pg',t:now},false)}
 }
 net.pg=0;
+addEventListener('online',netResume);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')netResume()});
+addEventListener('pageshow',e=>{if(e.persisted)netResume()});
 
 /* ---- WebRTC (신호는 Firestore, 전투/블록 데이터는 DataChannel) ---- */
 /* 서로 다른 인터넷(공유기/통신사)끼리는 직접 연결이 막히는 경우가 많아서 TURN(중계) 서버를 보조로 씁니다.
@@ -2180,9 +2222,7 @@ net.pg=0;
    · 1) Cloudflare 의 무료 TURN (접속할 때 임시 계정을 받아옴 — 실패하면 건너뜀)
    · 2) 공개 TURN 서버 (anyfirewall, OpenRelay)
    · 공개 서버라 속도·가용성이 보장되지는 않습니다 */
-const TURN_STATIC=[
- {urls:['turn:turn.anyfirewall.com:443?transport=tcp'],username:'webrtc',credential:'webrtc'},
- {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}];
+const TURN_STATIC=[]; // 가입 없이 쓰던 공개 TURN(anyfirewall, openrelay)은 지금 대부분 닫혀서 제거함. 내 서버(MY_ICE)만 사용
 /* ★★ 다른 아파트(다른 인터넷)에 사는 친구와 하려면 아래 두 칸을 채우세요 ★★
    위의 공개 중계 서버들은 지금 대부분 닫혀서, 같은 공유기(같은 아파트 망) 안에서만 연결되는 상태였어요.
    1) https://dashboard.metered.ca/signup 에서 무료 가입 (매달 20GB 무료) → 앱 이름 정하기 (예: myapp → myapp.metered.live)
@@ -2214,24 +2254,36 @@ function turnMyLoad(){ // 내 무료 중계 서버 계정으로 임시 접속 �
  })();
 }
 let turnDyn=[],turnAt=0;
-async function turnRefresh(){
- if(Date.now()-turnAt<3600000)return;turnAt=Date.now();
- try{
-  const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),5000);
-  const r=await fetch('https://speed.cloudflare.com/turn-creds',{signal:ac.signal,cache:'no-store'});clearTimeout(tm);
-  if(!r.ok)throw 0;const j=await r.json(),l=Array.isArray(j.iceServers)?j.iceServers:[j],out=[];
-  for(const e of l){
-   const u=(Array.isArray(e.urls)?e.urls:[e.urls]).filter(x=>typeof x==='string'&&/^turns?:/.test(x));
-   if(u.length&&typeof e.username==='string'&&typeof e.credential==='string')out.push({urls:u,username:e.username,credential:e.credential});
-  }
-  if(out.length)turnDyn=out;else turnAt=0;
- }catch(e){turnAt=Date.now()-3300000} // 실패하면 5분 뒤 다시 시도
-}
+function turnRefresh(){} // (Cloudflare 임시 계정은 브라우저 CORS 에 막혀 항상 실패해서 제거)
 const STUN_LIST=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478','stun:stun.relay.metered.ca:80']}];
+/* 중계 서버 작동 시험: 서버마다 '중계 후보(typ relay)' 가 실제로 나오는지 확인하고, 응답하는 서버만 쓴다 */
+const turnOK={done:false,list:[],n:0,p:null};
+function turnProbeOne(srv){
+ return new Promise(res=>{
+  let pc=null,done=false;const end=ok=>{if(done)return;done=true;try{pc&&pc.close()}catch(e){}res(ok)};
+  try{
+   pc=new RTCPeerConnection({iceServers:[srv],iceTransportPolicy:'relay'});pc.createDataChannel('x');
+   pc.onicecandidate=e=>{if(e.candidate&&/ typ relay /.test(e.candidate.candidate))end(true)};
+   pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete')end(false)};
+   pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(()=>end(false));
+   setTimeout(()=>end(false),5000);
+  }catch(e){end(false)}
+ });
+}
+function turnProbe(){
+ if(!window.RTCPeerConnection)return Promise.resolve();
+ if(turnOK.p)return turnOK.p;
+ return turnOK.p=(async()=>{
+  const all=turnMy.concat(TURN_STATIC),r=await Promise.all(all.map(turnProbeOne));
+  turnOK.list=all.filter((s,i)=>r[i]);turnOK.n=all.length;turnOK.done=true;
+  console.info('[turn] 중계 서버 작동 확인: '+turnOK.list.length+'/'+all.length+'곳');
+  if(!turnOK.list.length&&all.length)console.warn('[turn] 응답하는 중계 서버가 없습니다 — MY_ICE 의 계정/키를 확인하세요');
+ })();
+}
 const RTC_STUN={iceServers:STUN_LIST}; // 1단계: 직접 연결(STUN만). 안 되면 2단계로 TURN 중계
-const rtcCfg=()=>({iceServers:STUN_LIST.concat(turnMy,turnDyn,TURN_STATIC),iceCandidatePoolSize:2});
+const rtcCfg=()=>({iceServers:STUN_LIST.concat(turnOK.done&&turnOK.list.length?turnOK.list:turnMy.concat(turnDyn,TURN_STATIC)),iceCandidatePoolSize:2});
 function mkPeer(id,att,init,relay){
- relay=relay||(myTurnOn()&&turnMy.length>0);
+ relay=!!relay; // 처음엔 직접 연결(STUN 만)만 시도하고, 실패해서 요청받았을 때만 중계(TURN) 포함
  const pc=new RTCPeerConnection(relay?rtcCfg():RTC_STUN);
  const p={id,att,pc,init,relay:!!relay,open:false,t0:mono(),rx:mono(),name:'PLAYER',dS:null,dE:null,mt:0,
   x:0,y:0,z:0,yaw:0,pitch:0,rx_:0,rx:mono(),has:false,walk:0,held:1,ping:0,q:[],spd:0};
@@ -2250,8 +2302,8 @@ function mkPeer(id,att,init,relay){
 function waitIce(pc,ms){return new Promise(res=>{if(pc.iceGatheringState==='complete')return res();const t=setTimeout(done,ms);function done(){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',chk);res()}function chk(){if(pc.iceGatheringState==='complete')done()}pc.addEventListener('icegatheringstatechange',chk)})}
 async function startOffer(id){
  if(!window.RTCPeerConnection)return;
- if(myTurnOn())await turnMyLoad();
- const relay=!!net.relayFor[id]||(myTurnOn()&&turnMy.length>0);
+ const relay=!!net.relayFor[id]; // 같은 네트워크/직접 가능한 사이는 중계 없이. 직접이 안 될 때만 relayFor 가 켜짐
+ if(relay&&myTurnOn()){await turnMyLoad();await turnProbe()}
  const att=(Math.random()*1e9)|0;let p;
  try{
   p=mkPeer(id,att,true,relay);
@@ -2272,7 +2324,7 @@ async function onSignal(m){
    if(p&&p.att===m.a)return; // 중복
    if(p)peerClose(p,false);
    if(peers.size>=MAXP-1)return;
-   if(myTurnOn())await turnMyLoad();
+   if(m.r&&myTurnOn()){await turnMyLoad();await turnProbe()}
    p=mkPeer(id,m.a,false,!!m.r);
    await p.pc.setRemoteDescription({type:'offer',sdp:m.d.sdp});
    {const tx=p.pc.getTransceivers().find(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='audio');if(tx){try{tx.direction='sendrecv'}catch(e){}p.aTx=tx}}
@@ -2307,8 +2359,19 @@ function peerSend(p,m,rel){
 function netBroadcast(m,rel){for(const p of peers.values())if(p.open)peerSend(p,m,rel)}
 function peerOpen(p){
  p.open=true;p.rx=mono();net.retry[p.id]=0;
+ for(const ms of [400,1500,3500])setTimeout(()=>{if(peers.get(p.id)===p&&p.open)peerSend(p,{k:'ck',a:Date.now()},false)},ms);
+ setTimeout(()=>{if(peers.get(p.id)===p)peerPath(p)},1500);setTimeout(()=>{if(peers.get(p.id)===p)peerPath(p)},7000);
  peerSend(p,{k:'hi',n:net.name,mt:maxT},true);sendSkinTo(p);updateStat();
  if(!net.synced&&!net.pulling)pullFrom(p);
+}
+async function peerPath(p){ // 실제로 선택된 연결 경로가 직접인지 중계 서버 경유인지 확인 (~ 키 진단 창에 표시)
+ try{
+  const st=await p.pc.getStats(),cands=new Map(),pairs=[];let sel='';
+  st.forEach(r=>{if(r.type==='local-candidate'||r.type==='remote-candidate')cands.set(r.id,r);else if(r.type==='candidate-pair')pairs.push(r);else if(r.type==='transport'&&r.selectedCandidatePairId)sel=r.selectedCandidatePairId});
+  const pr=pairs.find(x=>x.id===sel)||pairs.find(x=>x.nominated&&x.state==='succeeded');if(!pr)return;
+  const a=cands.get(pr.localCandidateId),b=cands.get(pr.remoteCandidateId);
+  p.path=((a&&a.candidateType==='relay')||(b&&b.candidateType==='relay'))?'relay':'direct';
+ }catch(e){}
 }
 function pullFrom(p){net.pulling=p.id;peerSend(p,{k:'sr'},true)}
 /* 블록 변경 기록을 상대에게 흘려보내기 (버퍼 넘치지 않게 조금씩) */
@@ -2386,6 +2449,8 @@ function peerMsg(p,s){
   case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
   case 'sk':peerSkin(p,m);break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
+  case 'ck':peerSend(p,{k:'cr',a:m.a,b:Date.now()},false);break;
+  case 'cr':{const c=Date.now(),rtt=c-m.a;if(fin(m.a)&&fin(m.b)&&rtt>=0&&rtt<5000&&(p.ckRtt==null||rtt<=p.ckRtt)){p.ckRtt=rtt;p.ckOff=m.b-(m.a+rtt/2);netClockUpdate()}break}
   case 'po':if(fin(m.t))p.ping=Math.round(mono()-m.t);break;
   case 'bn':{ // 차단/해제 기록 (보낸 사람이 어드민 이상이고 대상보다 권한이 높을 때만 인정)
    const n=bkey(m.n),on=m.on?1:0;if(!n)break;
@@ -2416,9 +2481,9 @@ function netDbg(){ // 연결 진단 (~ 키로 켜면 보임): 친구를 못 찾�
  if(!showInfo)return '';
  const ids=Object.keys(net.lobby),L=[`방 이름: ${ROOM} · 서버(Firebase): ${net.fsOk?'연결됨':'연결 안 됨'} · 같은 방에 보이는 다른 사람: ${ids.length}명${ids.length?' ('+ids.map(i=>net.lobby[i].n).join(', ')+')':''}`];
  for(const p of peers.values()){const c=p.ct||{};let ice='';try{ice=p.pc.iceConnectionState}catch(e){}
-  L.push(`· ${p.name&&p.name!=='PLAYER'?p.name:p.id.slice(0,4)}: ${p.open?'연결됨':'연결 시도 중 '+Math.round((mono()-p.t0)/1000)+'초'} · ${p.relay?'중계 포함':'직접만'} · 후보 host ${c.host||0} / srflx ${c.srflx||0} / relay ${c.relay||0} · ICE ${ice}`)}
+  L.push(`· ${p.name&&p.name!=='PLAYER'?p.name:p.id.slice(0,4)}: ${p.open?'연결됨':'연결 시도 중 '+Math.round((mono()-p.t0)/1000)+'초'} · ${p.path==='relay'?'중계 서버 경유':p.path==='direct'?'직접 연결':(p.relay?'중계 포함 시도':'직접 시도')} · 후보 host ${c.host||0} / srflx ${c.srflx||0} / relay ${c.relay||0} · ICE ${ice}`)}
  if(ids.length&&!peers.size)L.push('· 로비에서는 보이는데 아직 연결을 시작하지 않았어요 (잠시 기다려 보세요)');
- L.push('중계 서버: '+(turnMy.length?'내 서버 '+turnMy.length+'곳 설정됨':'없음'));
+ L.push('중계 서버: '+(turnOK.done?(turnOK.list.length+'/'+turnOK.n+'곳 작동 확인'+(turnOK.list.length?'':' — 모두 응답 없음 (계정/키를 확인하세요)')):(turnMy.length?'작동 확인 중…':'없음')));
  return '\n'+L.join('\n');
 }
 function updateStat(){
@@ -2802,7 +2867,7 @@ function catOf(i){
  return CAT_CACHE[i]=c;
 }
 const PM={src:'',i:-1};
-const pGet=(sr,i)=>sr==='h'?hotbar[i]:inv[i],pSet=(sr,i,v)=>{if(sr==='h')hotbar[i]=v;else inv[i]=v};
+const pGet=(sr,i)=>sr==='h'?hotbar[i]:sr==='d'?DRS.c.a[i]:inv[i],pSet=(sr,i,v)=>{if(sr==='h')hotbar[i]=v;else if(sr==='d'){DRS.c.a[i]=v;DRS.c.n[i]=v?1:0}else inv[i]=v};
 function palPick(b){ // 이미 핫바에 있으면 그 칸 선택 / 아니면 선택 칸(비어 있으면) → 핫바 빈 칸 → 인벤토리 빈 칸 → 선택 칸 교체
  let i=hotbar.indexOf(b);
  if(i<0){
@@ -4612,7 +4677,7 @@ function tvParse(v){
  try{
   const o=JSON.parse(v.slice(3));if(!o||typeof o!=='object')return null;
   const vid=typeof o.v==='string'&&/^[\w-]{11}$/.test(o.v)?o.v:'',pl=typeof o.pl==='string'&&/^[\w-]{10,64}$/.test(o.pl)?o.pl:'';
-  return {on:o.on?1:0,v:vid,pl,l:o.l===0?0:1,t:fin(o.t)?o.t:0};
+  return {on:o.on?1:0,v:vid,pl,l:o.l===0?0:1,t:fin(o.t)?o.t:0,p:o.p?1:0,pt:fin(o.pt)&&o.pt>0?o.pt:0};
  }catch(e){return null}
 }
 function tvOnData(key,v){
@@ -4653,9 +4718,10 @@ function tvGroup(x,y,z){
 const tvCur=g=>g&&g.win?tvState.get(g.win):null;
 function tvWrite(g,st){
  const key=g.win||lkKey(g.anchor[0],g.anchor[1],g.anchor[2]),q=key.split('_').map(Number);
- const o={on:st.on?1:0,v:st.v||'',pl:st.pl||'',l:st.l===0?0:1,t:Math.floor(st.t||Date.now())};
+ const o={on:st.on?1:0,v:st.v||'',pl:st.pl||'',l:st.l===0?0:1,t:Math.floor(st.t||sNow()),p:st.p?1:0,pt:st.p&&fin(st.pt)?Math.round(st.pt*10)/10:0};
  fdSet(q[0],q[1],q[2],'TV|'+JSON.stringify(o));
  for(const c of g.mem){const k=lkKey(c[0],c[1],c[2]);if(k!==key&&tvState.has(k))fdSet(c[0],c[1],c[2],null)}
+ tvRecordSoon();
 }
 /* ---- 조작창: 큰 유튜브 플레이어 (소리 · 키보드 · 전체화면 모두 유튜브가 직접 처리) ---- */
 const tvP={el:null,sig:'',id:'',ct:0,at:0,ps:0};
@@ -4680,15 +4746,15 @@ function tvEl(){
    window.open('https://www.youtube.com/results?search_query='+encodeURIComponent(q),'_blank','noopener');
    return toast('새 탭에서 영상을 찾은 뒤 링크를 복사해 여기에 붙여넣으세요',3200);
   }
-  tvSyncBack();act((g,c)=>tvWrite(g,{on:1,v:r.v,pl:r.pl,l:c?c.l:1,t:Date.now()}));sfx(.08,520);
+  tvSyncBack();act((g,c)=>tvWrite(g,{on:1,v:r.v,pl:r.pl,l:c?c.l:1,t:sNow()}));sfx(.08,520);
  };
  $('tvYt').onclick=()=>{window.open('https://www.youtube.com/','_blank','noopener');toast('유튜브에서 영상을 찾아 링크를 복사한 뒤 여기에 붙여넣으세요',3200)};
  $('tvPower').onclick=()=>act((g,c)=>{
   if(c&&c.on){tvSyncBack();tvWrite(g,Object.assign({},tvCur(g)||c,{on:0}))}
-  else if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:Date.now()}));
+  else if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:sNow(),p:0,pt:0}));
   else toast('먼저 유튜브 링크를 붙여넣고 재생을 누르세요',2000);
  });
- $('tvRestart').onclick=()=>act((g,c)=>{if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:Date.now()}));else toast('재생할 영상이 없어요',1500)});
+ $('tvRestart').onclick=()=>act((g,c)=>{if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:sNow(),p:0,pt:0}));else toast('재생할 영상이 없어요',1500)});
  $('tvLoop').onclick=()=>act((g,c)=>{if(has(c))tvWrite(g,Object.assign({},c,{l:c.l?0:1}));else toast('먼저 영상을 재생하세요',1500)});
  $('tvClose').onclick=closeTv;
  $('tvUrl').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();$('tvPlay').onclick()}else if(e.key==='Escape'){e.preventDefault();closeTv()}});
@@ -4703,24 +4769,33 @@ addEventListener('message',ev=>{
  if(d.event==='onError'){const k=+d.info;toast(k===101||k===150||k===153?'이 영상은 주인이 퍼가기를 막아 두었어요. 다른 영상을 골라 주세요':'영상을 재생하지 못했어요 (오류 '+k+')',3500);return}
  if(!i||typeof i!=='object')return;
  if(fin(i.currentTime)){tvP.ct=i.currentTime;tvP.at=Date.now()}
- if(typeof i.playerState==='number')tvP.ps=i.playerState;
+ if(fin(i.duration)&&i.duration>0)tvP.dur=i.duration;
+ if(typeof i.playerState==='number'){if(tvP.ps!==i.playerState)tvP.psT=Date.now();tvP.ps=i.playerState}
  const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))tvP.id=vd.video_id;
 });
+function tvSv(st){return st.t+'|'+(st.p?1:0)+'|'+(st.p?Math.round((st.pt||0)*10)/10:0)}
+function tvStart(st){return st.t?Math.max(0,Math.min(43200,Math.floor(st.p?(st.pt||0):(sNow()-st.t)/1000))):0}
+function tvPanelPush(g,c,paused,cur){ // 조작창의 재생 위치/일시정지를 TV 상태(=월드 화면 · 다른 접속자)에 반영
+ cur=Math.max(0,cur);const nt=Math.floor(sNow()-cur*1000),pt=paused?Math.round(cur*10)/10:0;
+ tvP.sv=nt+'|'+(paused?1:0)+'|'+pt;tvP.tA=nt;tvP.ls=Date.now();tvP.dc=0;
+ tvWrite(g,{on:1,v:c.v,pl:c.pl||'',l:c.l,t:nt,p:paused?1:0,pt});
+}
 function tvSyncBack(){
- if(!tvP.el||!tvP.id||tvP.ps!==1)return;
- const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);if(!c||!c.on)return;
+ if(!tvP.el||!tvP.id)return;
+ const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);if(!c||!c.on||c.p)return;
+ if(tvP.ps===2&&tvP.psT>0){tvPanelPush(g,Object.assign({},c,{v:tvP.id}),true,tvP.ct);return}
+ if(tvP.ps!==1)return;
  const cur=tvP.ct+(Date.now()-tvP.at)/1000;
- const same=c.v===tvP.id,exp=(Date.now()-c.t)/1000;
- if(same&&Math.abs(cur-exp)<5)return;
- tvWrite(g,{on:1,v:tvP.id,pl:c.pl,l:c.l,t:Date.now()-Math.max(0,cur)*1000});
+ if(c.v===tvP.id&&Math.abs(cur-(sNow()-c.t)/1000)<2)return;
+ tvPanelPush(g,Object.assign({},c,{v:tvP.id}),false,cur);
 }
 function tvPanelClear(){if(tvP.el){tvP.el.remove();tvP.el=null}tvP.sig='';tvP.id='';tvP.ps=0;tvP.ct=0}
 function tvPanel(c){
- const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl)),sig=on?c.v+'|'+c.pl+'|'+c.t:'';
+ const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl)),sig=on?c.v+'|'+c.pl+'|'+c.l:'';
  if(sig===tvP.sig&&(on?tvP.el:!tvP.el))return;
  tvPanelClear();tvP.sig=sig;box.textContent='';
  if(!on){box.textContent=c&&(c.v||c.pl)?'전원이 꺼져 있어요':'유튜브 링크를 붙여넣고 ▶ 재생을 누르세요';return}
- const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(c.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-c.t)/1000))):0)});
+ const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(tvStart(c))});
  if(location.protocol.slice(0,4)==='http')p.set('origin',location.origin);
  let src;
  if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
@@ -4730,11 +4805,11 @@ function tvPanel(c){
  el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
  el.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:auto';
  el.onload=()=>{try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
- el.src=src+p.toString();box.appendChild(el);tvP.el=el;tvP.id=c.v||'';tvP.ct=0;tvP.at=Date.now();
+ el.src=src+p.toString();box.appendChild(el);tvP.el=el;tvP.id=c.v||'';tvP.ct=0;tvP.at=Date.now();tvP.tA=c.t;tvP.sv=tvSv(c);tvP.psT=0;tvP.born=Date.now();tvP.ls=0;tvP.dur=0;tvP.dc=0;
 }
 function tvRender(init){
  const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
- $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n창을 닫아도 전원을 끄기 전까지 계속 재생되고, 여기서 영상을 바꾸거나 되감으면 닫을 때 모두의 화면에 반영돼요'):'TV를 찾을 수 없어요';
+ $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n월드 TV 화면과 이 창은 항상 같은 시점으로 맞춰져요 (일시정지 · 되감기 · 건너뛰기도 바로 함께 적용) · 창을 닫아도 전원을 끄기 전까지 계속 재생돼요'):'TV를 찾을 수 없어요';
  if(init){
   if(c&&c.v)$('tvUrl').value='https://youtu.be/'+c.v+(c.pl?'?list='+c.pl:'');
   else if(c&&c.pl)$('tvUrl').value='https://www.youtube.com/playlist?list='+c.pl;
@@ -4771,12 +4846,12 @@ function tvLos(g){ // 화면 중앙 또는 카메라에 가장 가까운 지점 
 }
 function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
 function tvFrame(c,W,H){
- const key=c.key,st=c.st,g=c.g,sig=st.v+'|'+st.pl+'|'+st.t+'|'+st.l+'|'+g.w+'x'+g.h;
+ const key=c.key,st=c.st,g=c.g,sig=st.v+'|'+st.pl+'|'+st.l+'|'+g.w+'x'+g.h;
  let e=tvFr.get(key);
  if(e&&e.sig!==sig){e.el.remove();tvFr.delete(key);e=null}
  if(!e){
   let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
-  const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(st.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-st.t)/1000))):0)});
+  const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(tvStart(st))});
   let src;
   if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
   else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
@@ -4784,7 +4859,7 @@ function tvFrame(c,W,H){
   const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
   el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
-  e={el,sig,pw,ph,vol:-1,vt:0,vis:false,los:true,lt:0};
+  e={el,sig,pw,ph,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0};
   el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
   el.src=src+p.toString();tvLayer.appendChild(el);tvFr.set(key,e);
  }
@@ -4803,6 +4878,99 @@ function tvFrame(c,W,H){
  }
 }
 function tvClear(){for(const e of tvFr.values())e.el.remove();tvFr.clear()}
+/* ---- TV 재생 기록 (Firebase) ----
+   · 컬렉션 wolf_lobby 의 'wctv_방이름' 문서에 TV 마다 {링크, 켜짐/꺼짐, 현재 재생 위치(초 · 분:초), 영상 길이} 를 저장
+   · TV 를 바꿀 때마다 바로, 그리고 켜져 있는 동안은 30초마다(대기열 1번 접속자가) 갱신
+   · 위치는 가까이서 실제로 재생 중인 플레이어가 있으면 그 값, 없으면 모두가 공유하는 시작 시각으로 계산한 값 */
+const TVREC={tm:0,pos:new Map()};
+const tvLink=s=>s.v?('https://youtu.be/'+s.v+(s.pl?'?list='+s.pl:'')):(s.pl?'https://www.youtube.com/playlist?list='+s.pl:'');
+const tvFmt=sec=>{sec=Math.max(0,Math.floor(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return (h?h+':'+String(m).padStart(2,'0'):''+m)+':'+String(s).padStart(2,'0')};
+addEventListener('message',ev=>{ // 월드 속 TV 플레이어가 알려주는 현재 시간/길이/상태
+ if(!tvFr.size)return;
+ let e=null;for(const x of tvFr.values())if(x.el.contentWindow===ev.source){e=x;break}
+ if(!e)return;
+ let d=ev.data;if(typeof d==='string'){try{d=JSON.parse(d)}catch(_){return}}
+ const i=d&&d.info;if(!i||typeof i!=='object')return;
+ if(fin(i.currentTime)){e.ct=i.currentTime;e.at=Date.now()}
+ if(typeof i.playerState==='number'){if(e.ps!==i.playerState)e.psT=Date.now();e.ps=i.playerState}
+ if(fin(i.duration)&&i.duration>0)e.dur=i.duration;
+ const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))e.vid=vd.video_id;
+});
+function tvPosOf(key,st){
+ const now=Date.now(),e=tvFr.get(key);let ct=NaN,dur=0,cur=st.v||'';
+ if(e){if(e.dur>0)dur=e.dur;if(e.vid)cur=e.vid;if(e.ps===1&&fin(e.ct)&&now-e.at<3000)ct=e.ct+(now-e.at)/1000}
+ if(ui==='tv'&&tvP.el&&tvP.ps===1&&fin(tvP.ct)&&now-tvP.at<3000){const g=tvGroup(TVS.x,TVS.y,TVS.z);if(g&&g.win===key){ct=tvP.ct+(now-tvP.at)/1000;if(tvP.id)cur=tvP.id}}
+ if(st.on){
+  if(!fin(ct)){ct=st.p?st.pt:Math.max(0,(sNow()-st.t)/1000);if(!st.p&&dur>0&&st.l)ct%=dur}
+  const r={pos:ct,dur,cur};TVREC.pos.set(key,r);return r;
+ }
+ return TVREC.pos.get(key)||{pos:0,dur,cur}; // 꺼져 있으면 마지막으로 기록된 위치
+}
+function tvRecordNow(){
+ clearTimeout(TVREC.tm);TVREC.tm=0;
+ if(WMODE!=='multi'||!net.fsOk)return;const db=fbInit();if(!db)return;
+ const tvs=[];
+ for(const [key,st] of tvState){
+  if(!st.v&&!st.pl)continue;
+  const r=tvPosOf(key,st),pos=Math.round(r.pos*10)/10;
+  tvs.push({k:key,on:st.on?1:0,link:tvLink(st),v:st.v,pl:st.pl,cur:r.cur,l:st.l,pos,time:tvFmt(pos),dur:r.dur?Math.round(r.dur):0});
+ }
+ if(!tvs.length)return;
+ db.collection(FS_LOBBY).doc('wctv_'+ROOM).set({room:'wctv-'+ROOM,f:JSON.stringify({by:net.name,at:Date.now(),tvs}),ts:Date.now()}).catch(()=>{});
+}
+function tvRecordSoon(){clearTimeout(TVREC.tm);TVREC.tm=setTimeout(tvRecordNow,1200)}
+/* ---- TV 동기화: 월드 TV 화면 · 조작창 · 다른 접속자가 같은 시점을 보도록 계속 맞춘다 ----
+   · 기준 = TV 상태의 시작 시각(t) + 접속자 공유 시계. 누가 되감기/다시 시작을 하면 모두 바로 그 시점으로 이동(화면을 새로 불러오지 않음)
+   · 1초마다 실제 재생 위치를 기준과 비교해서 2.5초 넘게 어긋나면 이동
+   · 조작창에서 직접 되감거나 건너뛰면 그 시점을 TV 상태에 반영 → 월드 TV 와 다른 접속자도 따라옴 */
+function tvExp(st,dur){
+ if(st.p)return st.pt||0;
+ let x=(sNow()-st.t)/1000;if(!(x>0))x=0;
+ if(dur>0&&st.l)x%=dur;
+ return x;
+}
+function tvDrift(st,dur,cur){ // 내 재생 위치 - 기준 위치 (반복 영상은 한 바퀴 경계도 고려)
+ let d=cur-tvExp(st,dur);
+ if(!st.p&&dur>0&&st.l)d=(((d+dur/2)%dur)+dur)%dur-dur/2;
+ return d;
+}
+function tvSyncTick(){
+ if(state!=='play'||!tvState.size)return;
+ const now=Date.now();
+ for(const [key,e] of tvFr){ // 월드 속 TV 화면: 항상 TV 상태(기준 시각/일시정지)를 따라감
+  const st=tvState.get(key);if(!st||!st.on||!st.v||st.pl)continue;
+  const sv=tvSv(st);
+  if(e.sv!==sv){e.sv=sv;e.tA=st.t;e.ls=now;e.dc=0;tvCmd(e.el,'seekTo',[tvExp(st,e.dur),true]);tvCmd(e.el,st.p?'pauseVideo':'playVideo');continue}
+  if(st.p){if(e.ps===1&&now-e.pl>1500){e.pl=now;tvCmd(e.el,'pauseVideo')}continue}
+  if((e.ps===2||((e.ps===5||e.ps===-1)&&now-e.born>3000))&&now-e.pl>1500){e.pl=now;tvCmd(e.el,'playVideo');continue}
+  if(now-e.ls<2500||now-e.born<3000||e.ps!==1||!fin(e.ct)||now-e.at>2500)continue;
+  const d=e.dur||0;if(st.l&&!(d>0))continue;
+  if(!st.l&&d>0&&tvExp(st,d)>d-1.5)continue;
+  if(Math.abs(tvDrift(st,d,e.ct+(now-e.at)/1000))>1.5){e.ls=now;tvCmd(e.el,'seekTo',[tvExp(st,d),true])}
+ }
+ if(ui==='tv'&&tvP.el){ // 우클릭 조작창: 바깥에서 바뀌면 따라가고, 창 안에서 조작하면(되감기·일시정지) 바로 TV 상태에 반영
+  const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
+  if(c&&c.on&&c.v&&!c.pl&&c.v===tvP.id){
+   const sv=tvSv(c);
+   if(tvP.sv!==sv){tvP.sv=sv;tvP.tA=c.t;tvP.ls=now;tvP.dc=0;tvCmd(tvP.el,'seekTo',[tvExp(c,tvP.dur),true]);tvCmd(tvP.el,c.p?'pauseVideo':'playVideo')}
+   else if(tvP.psT>0){
+    const cur=tvP.ct+(now-tvP.at)/1000,calm=now-tvP.born>3000&&now-tvP.ls>1500&&now-tvP.psT>700;
+    if(c.p){
+     if(tvP.ps===1){if(now-tvP.born<3500)tvCmd(tvP.el,'pauseVideo');else if(calm)tvPanelPush(g,c,false,cur)}
+    }else if(tvP.ps===2){if(calm)tvPanelPush(g,c,true,tvP.ct)}
+    else if(tvP.ps===1&&fin(tvP.ct)&&now-tvP.at<2500&&now-tvP.ls>2500&&now-tvP.born>3000&&!(c.l&&!(tvP.dur>0))&&(c.l||!(tvP.dur>0)||tvExp(c,tvP.dur)<tvP.dur-1.5)){
+     if(Math.abs(tvDrift(c,tvP.dur||0,cur))>1.5){if(++tvP.dc>=2)tvPanelPush(g,c,false,cur)}else tvP.dc=0;
+    }
+   }
+  }
+ }
+}
+setInterval(tvSyncTick,500);
+setInterval(()=>{
+ if(state!=='play'||WMODE!=='multi'||!net.admitted)return;
+ const m=members();if(!m.length||!m[0].me)return; // 대기열 1번(가장 먼저 들어온 사람) 만 주기적으로 기록
+ for(const s of tvState.values())if(s.on&&(s.v||s.pl)){tvRecordNow();return}
+},30000);
 function tvUpdate(W,H){
  if(!tvState.size){if(tvFr.size)tvClear();return}
  const cand=[];
@@ -4819,6 +4987,107 @@ function tvUpdate(W,H){
  const live=new Set();
  for(const c of cand){live.add(c.key);tvFrame(c,W,H)}
  for(const [k,e] of [...tvFr])if(!live.has(k)){e.el.remove();tvFr.delete(k)}
+}
+
+/* ===================== 가구 상호작용: 서랍장 · 컴퓨터(메모) · 침대 · 소파 ===================== */
+/* ---- 서랍장: 27칸. 블록 위치마다 fdata 에 [아이템번호 | 개수<<10, ...] 로 저장 (접속자끼리 동기화 + Firebase) ---- */
+const DRS={x:0,y:0,z:0,key:'',sel:null,c:{a:new Array(27).fill(0),n:new Array(27).fill(0)}};
+function drLoad(v){
+ const arr=drItems(v);
+ for(let i=0;i<27;i++){const x=arr[i],b=x&1023,cnt=x>>10;DRS.c.a[i]=b;DRS.c.n[i]=b?Math.max(1,Math.min(STK[b]||1,cnt||1)):0}
+ if(PM.src==='d')PM.src='';
+}
+function drSave(){ // 서랍장 내용을 저장·공유 (모두 비었으면 데이터 삭제)
+ const o=[];for(let i=0;i<27;i++){const b=DRS.c.a[i];o.push(b?(b|(Math.max(1,DRS.c.n[i]|0)<<10)):0)}
+ fdSet(DRS.x,DRS.y,DRS.z,o);
+}
+function drChanged(){drSave();renderHotbar();saveInv()}
+function drQuick(src,i){ // 서랍장 <-> 내 가방으로 바로 옮기기 (핫바 → 인벤토리 순)
+ const from=contOf(src);if(!from.a[i])return;
+ if(src==='d'){if(!quickMove(from,i,contOf('h'))&&!quickMove(from,i,contOf('i'))){toast('내 가방에 빈 칸이 없어요',1200);return}}
+ else if(!quickMove(from,i,contOf('d'))){toast('서랍장이 가득 찼어요',1200);return}
+ PM.src='';uiSnd('put');drChanged();drRender();
+}
+function drClick(src,i,ev){
+ const k='D'+src+i,now=performance.now(),dbl=pLast.k===k&&now-pLast.t<380;pLast={k,t:dbl?0:now};
+ const c=contOf(src);
+ if(c.a[i]&&((ev&&ev.shiftKey)||dbl)){PM.src='';return drQuick(src,i)}
+ if(PM.src){
+  const a={src:PM.src,i:PM.i};PM.src='';
+  if(!(a.src===src&&a.i===i)){moveStack(contOf(a.src),a.i,c,i);drChanged()}
+  uiSnd('put');
+ }else if(c.a[i]){PM.src=src;PM.i=i;uiSnd('pick')}
+ drRender();
+}
+function drRender(){
+ const g=$('drGrid'),v=$('drInv'),h=$('drHot');if(!g||!v||!h)return;
+ g.textContent='';v.textContent='';h.textContent='';
+ DRS.c.a.forEach((b,i)=>g.appendChild(pCell(b,false,PM.src==='d'&&PM.i===i,e=>drClick('d',i,e),()=>drQuick('d',i),DRS.c.n[i])));
+ inv.forEach((b,i)=>v.appendChild(pCell(b,false,PM.src==='i'&&PM.i===i,e=>drClick('i',i,e),()=>drQuick('i',i),invN[i])));
+ hotbar.forEach((b,i)=>h.appendChild(pCell(b,i===P.sel,PM.src==='h'&&PM.i===i,e=>drClick('h',i,e),()=>drQuick('h',i),hotN[i])));
+ const c=PM.src?contOf(PM.src):null;
+ heldSet(c?c.a[PM.i]:0,c?c.n[PM.i]:0);
+}
+function openDresser(x,y,z){
+ if(state!=='play'||ui)return;
+ ui='dr';DRS.x=x;DRS.y=y;DRS.z=z;DRS.key=lkKey(x,y,z);PM.src='';
+ drLoad(fdGet(x,y,z));
+ showOv('ovDr',true);if(document.pointerLockElement)document.exitPointerLock();
+ drRender();sfx(.08,300);
+}
+function closeDr(){
+ if(ui!=='dr')return;
+ PM.src='';ui='';heldSet(0);showOv('ovDr',false);
+ renderHotbar();saveInv();lockPointer();
+}
+$('drClose').onclick=closeDr;
+
+/* ---- 컴퓨터: 메모(최대 300자). 접속한 모두에게 보이고 Firebase 에도 저장 ---- */
+const PCS={x:0,y:0,z:0};
+function openPC(x,y,z){
+ if(state!=='play'||ui)return;
+ ui='pc';PCS.x=x;PCS.y=y;PCS.z=z;
+ $('pcHead').innerHTML='<b style="font-size:20px;color:#7f7">💻 컴퓨터 메모장</b><div class="sub" style="margin:4px 0 8px;color:#6c8">접속한 모두에게 보이는 메모예요 · 최대 300자</div>';
+ const v=fdGet(x,y,z);$('pcMemo').value=typeof v==='string'?v:'';
+ showOv('ovPC',true);if(document.pointerLockElement)document.exitPointerLock();
+ setTimeout(()=>{try{$('pcMemo').focus()}catch(e){}},30);sfx(.08,520);
+}
+function closePC(nosave){ // nosave=true 면 저장하지 않고 닫기
+ if(ui!=='pc')return;
+ if(!nosave){
+  const v=$('pcMemo').value.replace(/\r/g,'').slice(0,300),old=fdGet(PCS.x,PCS.y,PCS.z);
+  if(v!==(old||''))fdSet(PCS.x,PCS.y,PCS.z,v||null);
+ }
+ ui='';showOv('ovPC',false);try{$('pcMemo').blur()}catch(e){}
+ lockPointer();
+}
+$('pcSave').onclick=()=>closePC(false);
+$('pcClose').onclick=()=>closePC(true);
+$('pcMemo').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();closePC(true)}else if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();closePC(false)}});
+$('pcMemo').addEventListener('keyup',e=>e.stopPropagation());
+
+/* ---- 침대: 밤(19시~5시)에 누르면 아침이 됨. 접속자 모두의 시간이 같이 바뀜 ---- */
+let sleepBusy=false;
+function sleepIn(){
+ if(state!=='play'||ui||sleepBusy)return;
+ if(TLOCK!==null)return toast('시간이 고정되어 있어서 잘 수 없어요',1800);
+ const hh=curHour();
+ if(!(hh>=19||hh<5))return toast('밤에만 잘 수 있어요 (저녁 7시 ~ 새벽 5시)',1800);
+ sleepBusy=true;const f=$('fade');if(f)f.style.opacity=1;
+ setTimeout(()=>{
+  applyTime(6,false);netBroadcast({k:'tm',sl:1},true);
+  chatAdd('',net.name+' 님이 잠들어 아침이 되었습니다','sys');
+  if(f)f.style.opacity=0;toast('좋은 아침이에요!',1800);sleepBusy=false;
+ },900);
+}
+
+/* ---- 소파: 누르면 앉고, 이동 키를 누르면 일어남 ---- */
+function sitOn(h){
+ if(state!=='play'||ui)return;
+ if(P.sit){standUp();return}
+ const fi=FURN[h.b];if(!fi||fi.t!=='sofa')return;
+ P.sit={x:h.x,y:h.y,z:h.z};P.x=h.x+.5;P.z=h.z+.5;P.y=h.y+.5;P.vx=P.vy=P.vz=0;P.sneak=false;
+ cam.yaw=Math.atan2(-DX[fi.f],-DZ[fi.f]); // 소파 앞면 방향을 보게
 }
 
 /* ===================== 메인 루프 ===================== */
