@@ -4726,7 +4726,7 @@ function tvPanel(c){
  if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
  else{src='https://www.youtube.com/embed/videoseries?';p.set('list',c.pl)}
  if(c.pl&&c.l)p.set('loop','1');
- const el=document.createElement('iframe');
+ const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
  el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
  el.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:auto';
  el.onload=()=>{try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
@@ -4781,7 +4781,7 @@ function tvFrame(c,W,H){
   if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
   else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
   if(st.pl&&st.l)p.set('loop','1');
-  const el=document.createElement('iframe');
+  const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
   el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
   e={el,sig,pw,ph,vol:-1,vt:0,vis:false,los:true,lt:0};
