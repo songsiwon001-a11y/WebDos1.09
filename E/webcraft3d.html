@@ -4699,7 +4699,9 @@ function tvEl(){
 addEventListener('message',ev=>{
  if(!tvP.el||ev.source!==tvP.el.contentWindow)return;
  let d=ev.data;if(typeof d==='string'){try{d=JSON.parse(d)}catch(e){return}}
- const i=d&&d.info;if(!i||typeof i!=='object')return;
+ if(!d)return;const i=d.info;if(d.event!=='onError'&&(!i||typeof i!=='object'))return;
+ if(d.event==='onError'){const k=+d.info;toast(k===101||k===150||k===153?'이 영상은 주인이 퍼가기를 막아 두었어요. 다른 영상을 골라 주세요':'영상을 재생하지 못했어요 (오류 '+k+')',3500);return}
+ if(!i||typeof i!=='object')return;
  if(fin(i.currentTime)){tvP.ct=i.currentTime;tvP.at=Date.now()}
  if(typeof i.playerState==='number')tvP.ps=i.playerState;
  const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))tvP.id=vd.video_id;
@@ -4721,8 +4723,8 @@ function tvPanel(c){
  const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(c.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-c.t)/1000))):0)});
  if(location.protocol.slice(0,4)==='http')p.set('origin',location.origin);
  let src;
- if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
- else{src='https://www.youtube.com/embed/videoseries?';p.set('list',c.pl)}
+ if(c.v){src='https://www.youtube-nocookie.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
+ else{src='https://www.youtube-nocookie.com/embed/videoseries?';p.set('list',c.pl)}
  if(c.pl&&c.l)p.set('loop','1');
  const el=document.createElement('iframe');
  el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
@@ -4750,22 +4752,22 @@ function openTv(x,y,z){
 }
 function closeTv(){if(ui!=='tv')return;tvSyncBack();tvPanelClear();ui='';showOv('ovTv',false);$('tvUrl').blur();lockPointer()}
 /* ---- 화면 그리기 ---- */
-function tvMatrix(p,pw,ph){ // iframe 사각형 -> 화면 위 네 점 (호모그래피)
- const x0=p[0][0],y0=p[0][1],x1=p[1][0],y1=p[1][1],x2=p[2][0],y2=p[2][1],x3=p[3][0],y3=p[3][1];
- const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3;
- let a,b,c,d,e,f,g=0,hq=0;
- if(Math.abs(dx3)<1e-9&&Math.abs(dy3)<1e-9){a=x1-x0;b=x3-x0;c=x0;d=y1-y0;e=y3-y0;f=y0}
- else{
-  const den=dx1*dy2-dx2*dy1;if(Math.abs(den)<1e-9)return null;
-  g=(dx3*dy2-dx2*dy3)/den;hq=(dx1*dy3-dx3*dy1)/den;
-  a=x1-x0+g*x1;b=x3-x0+hq*x3;c=x0;d=y1-y0+g*y1;e=y3-y0+hq*y3;f=y0;
- }
- return 'matrix3d('+[a/pw,d/pw,0,g/pw,b/ph,e/ph,0,hq/ph,0,0,1,0,c,f,0,1].join(',')+')';
+function tvMatrix(g,pw,ph,W,H){ // iframe 픽셀 -> 화면: 월드 좌표를 거쳐 VP 로 직접 투영 (화면 일부가 카메라 뒤여도 정확히 잘림)
+ const c0=g.cs[0],c1=g.cs[1],c3=g.cs[3];
+ const cv=(x,y,z)=>{const cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;return [W*(.5*cx+.5*cw),H*(.5*cw-.5*cy),cw]};
+ const ux=cv((c1[0]-c0[0])/pw,(c1[1]-c0[1])/pw,(c1[2]-c0[2])/pw),uy=cv((c3[0]-c0[0])/ph,(c3[1]-c0[1])/ph,(c3[2]-c0[2])/ph),o=cv(c0[0]-rc.x,c0[1]-rc.y,c0[2]-rc.z);
+ return 'matrix3d('+[ux[0],ux[1],0,ux[2],uy[0],uy[1],0,uy[2],0,0,1,0,o[0],o[1],0,o[2]].join(',')+')';
 }
-function tvLos(g){ // 카메라에서 화면 중앙이 벽에 가려지지 않았는지
- const cx=g.center[0],cy=g.center[1],cz=g.center[2],dx=rc.x-cx,dy=rc.y-cy,dz=rc.z-cz,L=Math.hypot(dx,dy,dz),n=Math.max(1,Math.ceil(L/.35));
- for(let i=1;i<n;i++){const t=i/n,b=getBlock(Math.floor(cx+dx*t),Math.floor(cy+dy*t),Math.floor(cz+dz*t));if(b&&OPQ[b])return false}
+function tvLos1(cx,cy,cz){ // 카메라에서 (cx,cy,cz) 까지 벽에 가려지지 않았는지
+ const dx=rc.x-cx,dy=rc.y-cy,dz=rc.z-cz,L=Math.hypot(dx,dy,dz),n=Math.max(1,Math.ceil(L/.35));
+ for(let i=1;i<n;i++){const t=i/n,b=getBlock(Math.floor(cx+dx*t),Math.floor(cy+dy*t),Math.floor(cz+dz*t));if(b&&OPQ[b]&&!isTv(b))return false} // TV 블록 칸은 벽으로 치지 않음
  return true;
+}
+function tvLos(g){ // 화면 중앙 또는 카메라에 가장 가까운 지점 중 하나라도 보이면 보임
+ if(tvLos1(g.center[0],g.center[1],g.center[2]))return true;
+ const c0=g.cs[0],c1=g.cs[1],c3=g.cs[3],u=[c1[0]-c0[0],c1[1]-c0[1],c1[2]-c0[2]],v=[c3[0]-c0[0],c3[1]-c0[1],c3[2]-c0[2]],r=[rc.x-c0[0],rc.y-c0[1],rc.z-c0[2]];
+ const tu=clamp((r[0]*u[0]+r[1]*u[1]+r[2]*u[2])/(u[0]*u[0]+u[1]*u[1]+u[2]*u[2]),0,1),tv=clamp(r[1]/v[1],0,1);
+ return tvLos1(c0[0]+u[0]*tu+v[0]*tv,c0[1]+u[1]*tu+v[1]*tv,c0[2]+u[2]*tu+v[2]*tv);
 }
 function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
 function tvFrame(c,W,H){
@@ -4776,8 +4778,8 @@ function tvFrame(c,W,H){
   let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
   const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(st.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-st.t)/1000))):0)});
   let src;
-  if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
-  else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
+  if(st.v){src='https://www.youtube-nocookie.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
+  else{src='https://www.youtube-nocookie.com/embed/videoseries?';p.set('list',st.pl)}
   if(st.pl&&st.l)p.set('loop','1');
   const el=document.createElement('iframe');
   el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
@@ -4790,13 +4792,8 @@ function tvFrame(c,W,H){
  if(now-e.lt>120){e.lt=now;e.los=tvLos(g)}
  const n=g.nrm;
  let show=e.los&&((rc.x-g.center[0])*n[0]+(rc.z-g.center[2])*n[2])>.05;
- const pts=[];
- if(show)for(const q of g.cs){
-  const x=q[0]-rc.x,y=q[1]-rc.y,z=q[2]-rc.z,cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
-  if(cw<=.05){show=false;break}
-  pts.push([(cx/cw*.5+.5)*W,(1-(cy/cw*.5+.5))*H]);
- }
- const m=show?tvMatrix(pts,e.pw,e.ph):null;
+ if(show){let any=false;for(const q of g.cs){if(VP[3]*(q[0]-rc.x)+VP[7]*(q[1]-rc.y)+VP[11]*(q[2]-rc.z)>.05){any=true;break}}show=any}
+ const m=show?tvMatrix(g,e.pw,e.ph,W,H):null;
  if(m){el.style.transform=m;if(!e.vis){el.style.visibility='visible';e.vis=true}}
  else if(e.vis){el.style.visibility='hidden';e.vis=false}
  if(now-e.vt>250){ // 거리에 따른 음량: 25칸 밖 0 → 가까울수록 커짐
