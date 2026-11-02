@@ -159,11 +159,12 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <div class="ov" id="ovSkin">
  <div class="card" style="width:min(520px,96vw)">
   <h1 style="font-size:30px">스킨</h1>
-  <div class="sub">마인크래프트 스킨 PNG(64×64 또는 구형 64×32)를 그대로 쓸 수 있어요.<br>파일을 고르거나 이 창에 끌어다 놓으세요.</div>
+  <div class="sub">직접 그려서 만들거나, 이미지 파일(PNG · JPG · WEBP · GIF · BMP 등)을 불러올 수 있어요.<br>마인크래프트 스킨(64×64, 구형 64×32, 고화질 128/256…)은 그대로 쓰입니다. 파일을 고르거나 이 창에 끌어다 놓으세요.</div>
   <canvas id="skinPrev" width="216" height="192" style="width:216px;height:192px;image-rendering:pixelated;background:rgba(255,255,255,.06);border:2px solid #555;margin:4px auto 8px;display:block"></canvas>
   <div class="sub" id="skinInfo"></div>
-  <input id="skinFile" type="file" accept="image/png,image/*" style="display:none">
-  <div class="b" id="skinPick">스킨 파일 선택 (PNG)</div>
+  <input id="skinFile" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.avif" style="display:none">
+  <div class="b" id="skinEdit">🖌️ 직접 그리기 (스킨 편집기)</div>
+  <div class="b" id="skinPick">이미지 파일로 스킨 불러오기 (PNG · JPG · WEBP …)</div>
   <div class="b dim" id="skinArm">팔 모양: 자동 감지</div>
   <div class="b dim" id="skinReset">기본 스킨(스티브)으로 되돌리기</div>
   <div class="b dim" id="skinClose">닫기</div>
@@ -3407,7 +3408,7 @@ function mirrorLimb(D,sx,sy,dx,dy){ // 구형 스킨: 오른쪽 팔/다리를 �
 }
 function normSkin(img){ // 어떤 스킨 이미지든 64x64 캔버스로. 크기가 맞지 않으면 null
  const w=img.width,h=img.height;
- if(!(w>=32&&w<=512&&(h===w||h*2===w)))return null;
+ if(!(w>=32&&w<=2048&&(h===w||h*2===w)))return null;
  const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');g.imageSmoothingEnabled=false;
  const legacy=h*2===w;
  g.drawImage(img,0,0,w,h,0,0,64,legacy?32:64);
@@ -3427,14 +3428,13 @@ function skinInit(){
  if(u&&u.startsWith('data:image/png;base64,')){const img=new Image();img.onload=()=>{const c=normSkin(img);if(c){SKIN.custom=true;setSkinCanvas(c)}};img.src=u}
 }
 function skinFromFile(f){
- if(!f)return;if(f.size>800000)return toast('파일이 너무 큽니다',2500);
- const r=new FileReader();
- r.onload=()=>{const img=new Image();
-  img.onload=()=>{const c=normSkin(img);if(!c)return toast('스킨 크기가 맞지 않아요 (64×64 또는 64×32 PNG)',3500);
-   SKIN.custom=true;setSkinCanvas(c);saveSkin();
-   toast(SKIN.url.length>38000?'적용했지만 용량이 커서 다른 사람에게는 안 보일 수 있습니다':'스킨을 적용했습니다',2200)};
-  img.onerror=()=>toast('이미지를 읽을 수 없습니다',2500);img.src=String(r.result)};
- r.readAsDataURL(f);
+ if(!f)return;if(f.size>12e6)return toast('파일이 너무 큽니다 (12MB 이하)',2500);
+ SKED.readImage(f).then(img=>{
+  const r=SKED.imgToSkin(img);
+  if(!r){SKED.open({stamp:img});return toast('스킨 모양(정사각형 64×64 · 가로 2:1)이 아니라서 편집기에서 그림으로 붙일 수 있게 열었어요',4200)}
+  SKIN.custom=true;setSkinCanvas(r.c);saveSkin();skinPreview();
+  toast(r.opaque?'적용했어요 (투명이 없는 이미지라 겉옷 층은 비웠어요)':SKIN.url.length>38000?'적용했지만 용량이 커서 다른 사람에게는 안 보일 수 있습니다':'스킨을 적용했습니다',2600)
+ }).catch(()=>toast('이미지를 읽을 수 없습니다 (PNG, JPG, WEBP, GIF, BMP 등)',2800));
 }
 function skinPreview(){
  const cv2=$('skinPrev');if(!cv2||!SKIN.c)return;const g=cv2.getContext('2d');g.imageSmoothingEnabled=false;g.clearRect(0,0,216,192);
@@ -3471,6 +3471,374 @@ function peerSkin(p,m){
  };
  img.src=m.d;
 }
+/* ===================== 스킨 편집기 (직접 그리기) =====================
+   · 64x64 스킨 펼친 그림 위에 연필/지우개/채우기/스포이드/선/사각형/원/글자/그림 붙이기
+   · PNG · JPG · WEBP · GIF · BMP 등 브라우저가 읽는 이미지는 모두 불러올 수 있음
+     (스킨 모양이면 스킨으로, 아니면 그림으로 붙이기. 투명이 없는 JPG 는 겉옷 층을 비워서 가려지지 않게 함) */
+const SKED=(function(){
+ // 부위: [이름, 몸 u,v, 겉옷 u,v, 폭, 높이, 깊이]  (스킨 한 칸 = 1픽셀)
+ const PARTS=aw=>[['머리',0,0,32,0,8,8,8],['몸통',16,16,16,32,8,12,4],['오른팔',40,16,40,32,aw,12,4],['왼팔',32,48,48,48,aw,12,4],['오른다리',0,16,0,32,4,12,4],['왼다리',16,48,0,48,4,12,4]];
+ function buildFaces(slim){
+  const aw=slim?3:4,faces=[],id=new Int16Array(4096);
+  for(const [nm,bu,bv,ou,ov,pw,ph,pd] of PARTS(aw)){
+   for(let L=0;L<2;L++){
+    const u0=L?ou:bu,v0=L?ov:bv;
+    const fs=[['앞',u0+pd,v0+pd,pw,ph],['뒤',u0+2*pd+pw,v0+pd,pw,ph],['옆',u0,v0+pd,pd,ph],['옆',u0+pd+pw,v0+pd,pd,ph],['위',u0+pd,v0,pw,pd],['아래',u0+pd+pw,v0,pw,pd]];
+    for(const [lb,x,y,w,h] of fs){faces.push({lb,x,y,w,h,L,part:nm});const n=faces.length;for(let j=0;j<h;j++)for(let i=0;i<w;i++)id[(y+j)*64+x+i]=n}
+   }
+  }
+  return {aw,faces,id};
+ }
+ const VIEWS={'전체':[0,0,64,64],'머리':[0,0,64,16],'몸통':[16,16,24,32],'오른팔':[40,16,16,32],'왼팔':[32,48,32,16],'오른다리':[0,16,16,32],'왼다리':[0,48,32,16]};
+ const PAL=['#000000','#ffffff','#7f7f7f','#c8c8c8','#e8262a','#ff7f27','#ffd800','#3fbf3f','#1e8f4e','#3ea8ac','#2f55d4','#6a3fb5','#ff7ab8','#8b5a2b','#5b3a1e','#f2c9a0'];
+ const TOOLS=[['pen','✏️','연필'],['erase','🧽','지우개'],['fill','🪣','채우기'],['pick','💧','스포이드'],['line','📏','선'],['rect','⬜','사각형'],['ellipse','⭕','원'],['text','🔤','글자'],['img','🖼️','그림 붙이기']];
+ const st={tool:'pen',color:'#e8262a',size:1,fill:false,mirror:false,lock:true,slim:false,view:'전체',textSize:10,bold:true,imgW:16,text:'글자',recent:[]};
+ let ED=null,cv=null,root=null;
+ const $e=id=>document.getElementById(id);
+ const rgb=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+ const hex=(r,g,b)=>'#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+ const col=()=>{const c=rgb(st.color);return [c[0],c[1],c[2],255]};
+
+ /* ---- 이미지 파일 읽기 (png/jpg/webp/gif/bmp/svg/avif … 브라우저가 지원하는 것 전부) ---- */
+ function readImage(f){
+  return new Promise((res,rej)=>{
+   if(!f)return rej(new Error('no file'));
+   const url=URL.createObjectURL(f),img=new Image();
+   img.onload=()=>{URL.revokeObjectURL(url);if(!(img.naturalWidth||img.width))return rej(new Error('size'));res(img)};
+   img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('read'))};
+   img.src=url;
+  });
+ }
+ // 스킨 모양(정사각형 / 가로 2:1, 32~2048)이면 64x64 스킨으로 바꿔 돌려줌. 아니면 null
+ function imgToSkin(img){
+  const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+  if(!(w>=32&&w<=2048&&(h===w||h*2===w)))return null;
+  const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d',{willReadFrequently:true});x.imageSmoothingEnabled=false;
+  const legacy=h*2===w;
+  x.drawImage(img,0,0,w,h,0,0,64,legacy?32:64);
+  let D=x.getImageData(0,0,64,64),opaque=true;
+  const rows=legacy?32:64;
+  for(let i=0;i<rows*64;i++)if(D.data[i*4+3]<255){opaque=false;break}
+  if(legacy){mirrorLimb(D,0,16,16,48);mirrorLimb(D,40,16,32,48)}
+  if(opaque){ // JPG 처럼 투명이 없는 그림: 겉옷 층 / 안 쓰는 칸을 비워야 몸이 가려지지 않음
+   const F=buildFaces(false),d=D.data;
+   for(let k=0;k<4096;k++){const fid=F.id[k];if(!fid||F.faces[fid-1].L){d[k*4]=d[k*4+1]=d[k*4+2]=d[k*4+3]=0}}
+  }
+  x.putImageData(D,0,0);
+  return {c,opaque,slim:!opaque&&detectSlim(c)};
+ }
+
+ /* ---- 그리기 도구 ---- */
+ function px(x,y,c){
+  if(x<0||y<0||x>=64||y>=64)return;
+  const fid=ED.F.id[y*64+x];if(!fid)return;
+  if(ED.lock&&fid!==ED.lock)return; // 시작한 면 밖으로는 번지지 않음
+  if(c[3]===0&&!ED.F.faces[fid-1].L)c=[200,200,200,255]; // 몸 칸은 투명 대신 연회색 (구멍 방지)
+  const d=ED.D.data,o=(y*64+x)*4;d[o]=c[0];d[o+1]=c[1];d[o+2]=c[2];d[o+3]=c[3];
+ }
+ function put(x,y,c){
+  px(x,y,c);
+  if(st.mirror&&x>=0&&y>=0&&x<64&&y<64){const fid=ED.F.id[y*64+x];if(fid){const f=ED.F.faces[fid-1];px(f.x+f.w-1-(x-f.x),y,c)}}
+ }
+ function brush(x,y,c){const k=st.size,o=-((k-1)>>1);for(let j=0;j<k;j++)for(let i=0;i<k;i++)put(x+o+i,y+o+j,c)}
+ const cl=v=>Math.max(-70,Math.min(140,v));
+ function line(x0,y0,x1,y1,c){
+  x0=cl(x0);y0=cl(y0);x1=cl(x1);y1=cl(y1);
+  const dx=Math.abs(x1-x0),dy=-Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;let er=dx+dy;
+  for(;;){brush(x0,y0,c);if(x0===x1&&y0===y1)break;const e2=2*er;if(e2>=dy){er+=dy;x0+=sx}if(e2<=dx){er+=dx;y0+=sy}}
+ }
+ function rect(x0,y0,x1,y1,c){
+  x0=cl(x0);y0=cl(y0);x1=cl(x1);y1=cl(y1);
+  const a=Math.min(x0,x1),b=Math.min(y0,y1),w=Math.abs(x1-x0)+1,h=Math.abs(y1-y0)+1,k=st.size;
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++)if(st.fill||i<k||j<k||w-1-i<k||h-1-j<k)put(a+i,b+j,c);
+ }
+ function ell(x0,y0,x1,y1,c){
+  x0=cl(x0);y0=cl(y0);x1=cl(x1);y1=cl(y1);
+  const a=Math.min(x0,x1),b=Math.min(y0,y1),w=Math.abs(x1-x0)+1,h=Math.abs(y1-y0)+1,rx=w/2,ry=h/2,k=st.size;
+  const inn=(dx,dy,ax,ay)=>ax>0&&ay>0&&(dx*dx)/(ax*ax)+(dy*dy)/(ay*ay)<=1;
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++){const dx=i+.5-rx,dy=j+.5-ry;if(!inn(dx,dy,rx,ry))continue;if(st.fill||!inn(dx,dy,rx-k,ry-k))put(a+i,b+j,c)}
+ }
+ function flood(x,y,c){
+  if(x<0||y<0||x>=64||y>=64)return;
+  const F=ED.F,id0=F.id[y*64+x];if(!id0)return;
+  const d=ED.D.data,o0=(y*64+x)*4,tr=d[o0],tg=d[o0+1],tb=d[o0+2],ta=d[o0+3],f=F.faces[id0-1];
+  if(tr===c[0]&&tg===c[1]&&tb===c[2]&&ta===c[3])return;
+  const stack=[[x,y]],seen=new Uint8Array(4096);
+  while(stack.length){
+   const [cx,cy]=stack.pop();
+   if(cx<f.x||cy<f.y||cx>=f.x+f.w||cy>=f.y+f.h)continue;
+   const k=cy*64+cx;if(seen[k])continue;seen[k]=1;
+   const o=k*4;if(d[o]!==tr||d[o+1]!==tg||d[o+2]!==tb||d[o+3]!==ta)continue;
+   px(cx,cy,c);stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
+  }
+ }
+ function textStamp(){
+  const key=st.text+'|'+st.textSize+'|'+st.bold;if(ED.tk===key)return ED.tm;
+  const font=(st.bold?'bold ':'')+st.textSize+'px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+  const c=document.createElement('canvas'),x=c.getContext('2d',{willReadFrequently:true});
+  x.font=font;const w=Math.min(128,Math.max(1,Math.ceil(x.measureText(st.text).width)+2)),h=Math.ceil(st.textSize*1.35)+2;
+  c.width=w;c.height=h;x.font=font;x.textBaseline='top';x.fillStyle='#000';x.fillText(st.text,1,1);
+  ED.tk=key;return ED.tm={w,h,a:x.getImageData(0,0,w,h).data};
+ }
+ function imgStamp(){
+  const im=ED.stamp;if(!im)return null;if(ED.sk===st.imgW&&ED.sm)return ED.sm;
+  const iw=im.naturalWidth||im.width,ih=im.naturalHeight||im.height,w=st.imgW,h=Math.max(1,Math.round(w*ih/iw));
+  const k=document.createElement('canvas');k.width=w;k.height=h;const x=k.getContext('2d',{willReadFrequently:true});
+  x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(im,0,0,w,h);
+  ED.sk=st.imgW;return ED.sm={w,h,d:x.getImageData(0,0,w,h).data};
+ }
+ function shape(x,y){
+  const t=st.tool,c=col(),dg=ED.drag;
+  if(t==='line')line(dg.x0,dg.y0,x,y,c);
+  else if(t==='rect')rect(dg.x0,dg.y0,x,y,c);
+  else if(t==='ellipse')ell(dg.x0,dg.y0,x,y,c);
+  else if(t==='text'){const m=textStamp(),ox=x-(m.w>>1),oy=y-(m.h>>1);for(let j=0;j<m.h;j++)for(let i=0;i<m.w;i++)if(m.a[(j*m.w+i)*4+3]>=110)put(ox+i,oy+j,c)}
+  else if(t==='img'){const m=imgStamp();if(!m)return;const ox=x-(m.w>>1),oy=y-(m.h>>1);for(let j=0;j<m.h;j++)for(let i=0;i<m.w;i++){const o=(j*m.w+i)*4;if(m.d[o+3]>=110)put(ox+i,oy+j,[m.d[o],m.d[o+1],m.d[o+2],255])}}
+ }
+ function pickAt(x,y){
+  if(x<0||y<0||x>=64||y>=64)return;const o=(y*64+x)*4,d=ED.D.data;
+  if(d[o+3]===0)return toast('투명한 칸이에요',900);
+  setColor(hex(d[o],d[o+1],d[o+2]));
+ }
+
+ /* ---- 되돌리기 ---- */
+ const snapData=()=>new Uint8ClampedArray(ED.D.data);
+ function pushUndo(){ED.undo.push(snapData());if(ED.undo.length>60)ED.undo.shift();ED.redo.length=0}
+ function undo(){if(!ED||!ED.undo.length)return;ED.redo.push(snapData());ED.D.data.set(ED.undo.pop());draw();figs()}
+ function redo(){if(!ED||!ED.redo.length)return;ED.undo.push(snapData());ED.D.data.set(ED.redo.pop());draw();figs()}
+ function endEdit(){
+  const last=ED.undo[ED.undo.length-1],d=ED.D.data;let same=!!last;
+  if(last)for(let i=0;i<d.length;i++)if(d[i]!==last[i]){same=false;break}
+  if(same)ED.undo.pop();else if(st.tool!=='erase')addRecent(st.color);
+  draw();figs();
+ }
+
+ /* ---- 화면 ---- */
+ function viewRect(){
+  const v=VIEWS[st.view]||VIEWS['전체'],s=Math.min(cv.width/v[2],cv.height/v[3]);
+  return {v,s,ox:(cv.width-v[2]*s)/2,oy:(cv.height-v[3]*s)/2};
+ }
+ function pos(e){
+  const r=cv.getBoundingClientRect(),V=viewRect();
+  const cx=(e.clientX-r.left)*cv.width/r.width,cy=(e.clientY-r.top)*cv.height/r.height;
+  return [Math.floor((cx-V.ox)/V.s+V.v[0]),Math.floor((cy-V.oy)/V.s+V.v[1])];
+ }
+ function draw(){
+  if(!ED||!cv)return;
+  ED.g.putImageData(ED.D,0,0);
+  const G=cv.getContext('2d'),V=viewRect(),s=V.s,[vx,vy,vw,vh]=V.v;
+  G.imageSmoothingEnabled=false;G.fillStyle='#222';G.fillRect(0,0,cv.width,cv.height);
+  for(let j=0;j<vh;j++)for(let i=0;i<vw;i++){G.fillStyle=((i+j)&1)?'#585858':'#787878';G.fillRect(V.ox+i*s,V.oy+j*s,s,s)}
+  G.drawImage(ED.c,vx,vy,vw,vh,V.ox,V.oy,vw*s,vh*s);
+  G.fillStyle='rgba(10,10,14,.74)';
+  for(let j=0;j<vh;j++)for(let i=0;i<vw;i++)if(!ED.F.id[(vy+j)*64+vx+i])G.fillRect(V.ox+i*s,V.oy+j*s,s,s);
+  if(s>=7){
+   G.strokeStyle='rgba(0,0,0,.28)';G.lineWidth=1;G.beginPath();
+   for(let i=0;i<=vw;i++){const X=Math.round(V.ox+i*s)+.5;G.moveTo(X,V.oy);G.lineTo(X,V.oy+vh*s)}
+   for(let j=0;j<=vh;j++){const Y=Math.round(V.oy+j*s)+.5;G.moveTo(V.ox,Y);G.lineTo(V.ox+vw*s,Y)}
+   G.stroke();
+  }
+  G.font='bold '+Math.max(10,Math.min(14,(s*1.5)|0))+'px sans-serif';G.textAlign='left';G.textBaseline='top';G.lineJoin='round';
+  for(const f of ED.F.faces){
+   if(f.x+f.w<=vx||f.x>=vx+vw||f.y+f.h<=vy||f.y>=vy+vh)continue;
+   const X=V.ox+(f.x-vx)*s,Y=V.oy+(f.y-vy)*s,W=f.w*s,H=f.h*s;
+   G.strokeStyle=f.L?'rgba(255,200,90,.95)':'rgba(120,200,255,.95)';G.lineWidth=2;G.strokeRect(X+1,Y+1,W-2,H-2);
+   if(W>=30&&H>=18){G.lineWidth=3;G.strokeStyle='rgba(0,0,0,.8)';G.strokeText(f.lb,X+4,Y+3);G.fillStyle='#fff';G.fillText(f.lb,X+4,Y+3)}
+  }
+  if(ED.hover&&!['text','img'].includes(st.tool)){
+   const [hx,hy]=ED.hover,k=(st.tool==='pen'||st.tool==='erase')?st.size:1,o=-((k-1)>>1);
+   G.strokeStyle='#fff';G.lineWidth=2;G.strokeRect(V.ox+(hx+o-vx)*s+1,V.oy+(hy+o-vy)*s+1,k*s-2,k*s-2);
+   G.strokeStyle='#000';G.lineWidth=1;G.strokeRect(V.ox+(hx+o-vx)*s+3,V.oy+(hy+o-vy)*s+3,k*s-6,k*s-6);
+  }
+ }
+ function figs(){
+  const c=$e('skFig');if(!c||!ED)return;
+  const g=c.getContext('2d');g.imageSmoothingEnabled=false;g.clearRect(0,0,c.width,c.height);
+  const S=5,aw=ED.F.aw,src=ED.c,p=(sx,sy,w,h,x,y)=>g.drawImage(src,sx,sy,w,h,x*S,y*S,w*S,h*S);
+  const front=o=>{
+   p(8,8,8,8,o+4,0);p(20,20,8,12,o+4,8);p(44,20,aw,12,o+4-aw,8);p(36,52,aw,12,o+12,8);p(4,20,4,12,o+4,20);p(20,52,4,12,o+8,20);
+   p(40,8,8,8,o+4,0);p(20,36,8,12,o+4,8);p(44,36,aw,12,o+4-aw,8);p(52,52,aw,12,o+12,8);p(4,36,4,12,o+4,20);p(4,52,4,12,o+8,20);
+  };
+  const back=o=>{
+   p(24,8,8,8,o+4,0);p(32,20,8,12,o+4,8);p(48+aw,20,aw,12,o+12,8);p(40+aw,52,aw,12,o+4-aw,8);p(12,20,4,12,o+8,20);p(28,52,4,12,o+4,20);
+   p(56,8,8,8,o+4,0);p(32,36,8,12,o+4,8);p(48+aw,36,aw,12,o+12,8);p(56+aw,52,aw,12,o+4-aw,8);p(12,36,4,12,o+8,20);p(12,52,4,12,o+4,20);
+  };
+  front(0);back(20);
+ }
+
+ /* ---- 색 / 옵션 ---- */
+ function setColor(h){st.color=h;const e=$e('skCol');if(e)e.value=h}
+ function addRecent(h){
+  const i=st.recent.indexOf(h);if(i>=0)st.recent.splice(i,1);st.recent.unshift(h);if(st.recent.length>8)st.recent.pop();
+  const r=$e('skRecent');if(!r)return;r.textContent='';
+  for(const c of st.recent){const d=document.createElement('div');d.className='skSw';d.style.background=c;d.dataset.c=c;r.appendChild(d)}
+ }
+ function sync(){
+  if(!root)return;
+  root.querySelectorAll('[data-t]').forEach(e=>e.classList.toggle('on',e.dataset.t===st.tool));
+  root.querySelectorAll('[data-v]').forEach(e=>e.classList.toggle('on',e.dataset.v===st.view));
+  const t=st.tool,show=(id,on)=>{$e(id).style.display=on?'flex':'none'};
+  show('skRowSize',['pen','erase','line','rect','ellipse'].includes(t));
+  show('skRowFill',t==='rect'||t==='ellipse');
+  show('skRowText',t==='text');show('skRowImg',t==='img');
+  $e('skSlim').textContent='팔 모양: '+(st.slim?'얇게 (알렉스)':'굵게 (스티브)');
+  $e('skMir').checked=st.mirror;$e('skLock').checked=st.lock;$e('skFill').checked=st.fill;
+  $e('skSize').value=st.size;$e('skSizeV').textContent=st.size;
+  $e('skImgW').value=st.imgW;$e('skImgV').textContent=st.imgW;
+  $e('skCol').value=st.color;
+ }
+
+ /* ---- 적용 / 저장 ---- */
+ function finalCanvas(){
+  const out=new ImageData(new Uint8ClampedArray(ED.D.data),64,64),d=out.data;
+  for(let k=0;k<4096;k++){
+   const o=k*4,fid=ED.F.id[k];
+   if(!fid){d[o]=d[o+1]=d[o+2]=d[o+3]=0;continue}
+   if(!ED.F.faces[fid-1].L){if(d[o+3]<255){d[o]=d[o+1]=d[o+2]=200;d[o+3]=255}}
+   else if(d[o+3]>0&&d[o+3]<255)d[o+3]=255;
+  }
+  const c=document.createElement('canvas');c.width=c.height=64;c.getContext('2d').putImageData(out,0,0);return c;
+ }
+ function close(){ED=null;showOv('ovSkinEd',false);showOv('ovSkin',true);skinPreview()}
+ function apply(){
+  if(!ED)return;
+  const c=finalCanvas();
+  SKIN.custom=true;SKIN.mode=st.slim?'slim':'wide';setSkinCanvas(c);saveSkin();
+  toast(SKIN.url.length>38000?'적용했지만 용량이 커서 다른 사람에게는 안 보일 수 있습니다':'스킨을 적용했습니다',2200);
+  close();
+ }
+ function savePng(){
+  if(!ED)return;
+  finalCanvas().toBlob(b=>{if(!b)return;const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='skin.png';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000)},'image/png');
+ }
+ function useStamp(img){ED.stamp=img;ED.sm=null;ED.sk=0;st.tool='img';st.imgW=Math.min(64,Math.max(4,st.imgW));sync()}
+ function loadSkinFile(f){
+  readImage(f).then(img=>{
+   if(!ED)return;const r=imgToSkin(img);
+   if(!r){useStamp(img);return toast('스킨 모양이 아니라서 그림으로 붙일 수 있게 했어요 (도안을 누르거나 끌어서 붙이세요)',3500)}
+   pushUndo();ED.D.data.set(r.c.getContext('2d').getImageData(0,0,64,64).data);
+   if(!r.opaque){st.slim=r.slim;ED.F=buildFaces(st.slim)}
+   sync();draw();figs();
+   toast(r.opaque?'투명이 없는 이미지라 겉옷(바깥 층)은 비웠어요':'스킨을 불러왔어요',2500);
+  }).catch(()=>toast('이미지를 읽을 수 없습니다 (PNG, JPG, WEBP, GIF, BMP 등)',2800));
+ }
+ function loadStampFile(f){
+  readImage(f).then(img=>{if(!ED)return;useStamp(img);toast('붙일 위치를 누르거나 끌어서 놓으세요',2200)})
+   .catch(()=>toast('이미지를 읽을 수 없습니다 (PNG, JPG, WEBP, GIF, BMP 등)',2800));
+ }
+
+ /* ---- 화면 만들기 ---- */
+ function build(){
+  const sty=document.createElement('style');
+  sty.textContent='#ovSkinEd .skCard{width:min(1000px,98vw);max-height:96vh;padding:12px 14px;text-align:left}#ovSkinEd h1{font-size:22px;text-align:center;margin-bottom:6px}.skWrap{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;align-items:flex-start}.skL{flex:1 1 340px;max-width:540px;min-width:0}.skR{flex:1 1 300px;max-width:430px;min-width:0}#skCv{display:block;width:100%;aspect-ratio:1/1;border:2px solid #666;background:#222;image-rendering:pixelated;touch-action:none;cursor:crosshair}.skRow{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;align-items:center}.skT,.skB{padding:6px 9px;border:2px solid #666;background:#333;color:#fff;font:inherit;font-size:13px;cursor:pointer;pointer-events:auto;white-space:nowrap}.skT.on,.skB.on{border-color:#fff;background:#3a7a22}.skB.go{background:#3a7a22;border-color:#9d9}.skB.no{background:#6a2a2a;border-color:#c88}.skSw{width:20px;height:20px;border:2px solid #000;cursor:pointer;pointer-events:auto}#ovSkinEd input[type=text],#ovSkinEd select{background:#111;color:#fff;border:1px solid #888;padding:4px 6px;font:inherit;font-size:13px;user-select:text;-webkit-user-select:text;pointer-events:auto}#ovSkinEd input[type=color]{width:44px;height:30px;padding:0;border:2px solid #aaa;background:none;pointer-events:auto}#ovSkinEd label{font-size:13px;color:#ddd;display:flex;gap:4px;align-items:center;pointer-events:auto}.skFig{display:block;margin:0 auto;image-rendering:pixelated;background:rgba(255,255,255,.06);border:2px solid #555}.skHelp{font-size:12px;color:#aaa;line-height:1.5;margin-top:6px}@media (max-width:760px){#ovSkinEd .skCard{padding:8px 8px 14px}#ovSkinEd h1{font-size:18px;margin-bottom:2px}.skL{position:sticky;top:-8px;z-index:3;background:#191919;padding:2px 0 4px;flex:1 1 100%;max-width:none}#skCv{width:min(100%,48vh);margin:0 auto}.skL .skHelp{display:none}.skR{flex:1 1 100%;max-width:none}.skT,.skB{padding:7px 8px}}';
+  document.head.appendChild(sty);
+  root=document.createElement('div');root.className='ov';root.id='ovSkinEd';
+  const parts=Object.keys(VIEWS).map(k=>'<div class="skT" data-v="'+k+'">'+k+'</div>').join('');
+  const tools=TOOLS.map(([k,ic,nm])=>'<div class="skT" data-t="'+k+'">'+ic+' '+nm+'</div>').join('');
+  const pal=PAL.map(c=>'<div class="skSw" data-c="'+c+'" style="background:'+c+'"></div>').join('');
+  root.innerHTML='<div class="card skCard"><h1>🖌️ 스킨 편집기</h1><div class="skWrap">'
+   +'<div class="skL"><div class="skRow">'+parts+'</div><canvas id="skCv" width="512" height="512"></canvas>'
+   +'<div class="skHelp">파란 테두리 = 몸 · 주황 테두리 = 겉옷(위에 덧입는 층, 지우면 투명) · 어두운 칸은 안 쓰는 부분<br>위 버튼으로 부위를 확대하면 그리기 쉬워요. 지우개는 몸 칸에선 연회색으로 칠해져요.</div></div>'
+   +'<div class="skR"><canvas id="skFig" class="skFig" width="180" height="160"></canvas>'
+   +'<div class="skRow">'+tools+'</div>'
+   +'<div class="skRow"><input type="color" id="skCol" value="#e8262a"><div id="skRecent" style="display:flex;gap:3px;flex-wrap:wrap"></div></div>'
+   +'<div class="skRow" style="gap:3px">'+pal+'</div>'
+   +'<div class="skRow" id="skRowSize"><label>굵기 <input type="range" id="skSize" min="1" max="4" value="1"><b id="skSizeV">1</b></label></div>'
+   +'<div class="skRow" id="skRowFill"><label><input type="checkbox" id="skFill"> 속 채우기</label></div>'
+   +'<div class="skRow" id="skRowText"><input type="text" id="skTxt" maxlength="12" value="글자" style="width:110px"><select id="skTxtSz"><option>6</option><option>8</option><option selected>10</option><option>12</option><option>14</option><option>16</option><option>20</option><option>24</option></select><label><input type="checkbox" id="skBold" checked> 굵게</label><span style="font-size:12px;color:#aaa">누르고 끌어서 위치 조절</span></div>'
+   +'<div class="skRow" id="skRowImg"><div class="skB" id="skPickImg">그림 고르기</div><label>너비 <input type="range" id="skImgW" min="4" max="64" value="16"><b id="skImgV">16</b>px</label></div>'
+   +'<div class="skRow"><label><input type="checkbox" id="skMir"> 좌우 대칭 (면 안에서)</label><label><input type="checkbox" id="skLock" checked> 시작한 면 안에서만 그리기</label></div>'
+   +'<div class="skRow"><div class="skB" id="skUndo">↶ 되돌리기</div><div class="skB" id="skRedo">↷ 다시</div><div class="skB" id="skSlim">팔 모양</div></div>'
+   +'<div class="skRow"><div class="skB" id="skOpen">📂 스킨 파일 열기</div><div class="skB" id="skSteve">스티브로 초기화</div><div class="skB" id="skBlank">바탕 칠하기</div></div>'
+   +'<div class="skHelp">불러오기: PNG · JPG · WEBP · GIF · BMP 등 (스킨 모양이 아닌 그림은 \'그림 붙이기\')</div>'
+   +'<div class="skRow" style="margin-top:10px"><div class="skB go" id="skApply" style="flex:1">✅ 적용</div><div class="skB" id="skSave">💾 PNG 저장</div><div class="skB no" id="skCancel">취소</div></div></div>'
+   +'</div>'
+   +'<input type="file" id="skFileSkin" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.avif" style="display:none">'
+   +'<input type="file" id="skFileImg" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.avif" style="display:none"></div>';
+  document.body.appendChild(root);
+  cv=$e('skCv');
+  root.addEventListener('click',e=>{
+   const t=e.target.closest('[data-t]');
+   if(t){st.tool=t.dataset.t;if(st.tool==='img'&&ED&&!ED.stamp)$e('skFileImg').click();sync();return}
+   const v=e.target.closest('[data-v]');if(v){st.view=v.dataset.v;sync();draw();return}
+   const c=e.target.closest('[data-c]');if(c){setColor(c.dataset.c);if(st.tool==='erase'||st.tool==='pick')st.tool='pen';sync()}
+  });
+  $e('skCol').addEventListener('input',e=>{st.color=e.target.value;if(st.tool==='erase'||st.tool==='pick'){st.tool='pen';sync()}});
+  $e('skSize').addEventListener('input',e=>{st.size=+e.target.value;$e('skSizeV').textContent=st.size});
+  $e('skFill').addEventListener('change',e=>{st.fill=e.target.checked});
+  $e('skMir').addEventListener('change',e=>{st.mirror=e.target.checked});
+  $e('skLock').addEventListener('change',e=>{st.lock=e.target.checked});
+  $e('skTxt').addEventListener('input',e=>{st.text=e.target.value||' '});
+  $e('skTxtSz').addEventListener('change',e=>{st.textSize=+e.target.value});
+  $e('skBold').addEventListener('change',e=>{st.bold=e.target.checked});
+  $e('skImgW').addEventListener('input',e=>{st.imgW=+e.target.value;$e('skImgV').textContent=st.imgW});
+  $e('skPickImg').onclick=()=>$e('skFileImg').click();
+  $e('skUndo').onclick=undo;$e('skRedo').onclick=redo;
+  $e('skSlim').onclick=()=>{if(!ED)return;st.slim=!st.slim;ED.F=buildFaces(st.slim);sync();draw();figs()};
+  $e('skOpen').onclick=()=>$e('skFileSkin').click();
+  $e('skFileSkin').addEventListener('change',e=>{loadSkinFile(e.target.files&&e.target.files[0]);e.target.value=''});
+  $e('skFileImg').addEventListener('change',e=>{loadStampFile(e.target.files&&e.target.files[0]);e.target.value=''});
+  $e('skSteve').onclick=()=>{if(!ED)return;pushUndo();ED.D.data.set(STEVE.c.getContext('2d').getImageData(0,0,64,64).data);st.slim=false;ED.F=buildFaces(false);sync();draw();figs()};
+  $e('skBlank').onclick=()=>{ // 몸 전체(겉옷 제외)를 지금 고른 색으로 칠하고 겉옷은 비움
+   if(!ED)return;pushUndo();const d=ED.D.data,c=col();
+   for(let k=0;k<4096;k++){const fid=ED.F.id[k],o=k*4;if(!fid){d[o]=d[o+1]=d[o+2]=d[o+3]=0;continue}
+    if(ED.F.faces[fid-1].L)d[o]=d[o+1]=d[o+2]=d[o+3]=0;else{d[o]=c[0];d[o+1]=c[1];d[o+2]=c[2];d[o+3]=255}}
+   draw();figs();
+  };
+  $e('skApply').onclick=apply;$e('skSave').onclick=savePng;$e('skCancel').onclick=close;
+  $e('ovSkinEd').addEventListener('dragover',e=>e.preventDefault());
+  $e('ovSkinEd').addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(f&&ED)loadStampFile(f)});
+  cv.addEventListener('contextmenu',e=>e.preventDefault());
+  cv.addEventListener('pointerdown',e=>{
+   if(!ED||(e.pointerType==='mouse'&&e.button!==0))return;
+   e.preventDefault();try{cv.setPointerCapture(e.pointerId)}catch(_){}
+   const [x,y]=pos(e),t=st.tool;ED.hover=[x,y];
+   if(t==='pick'){pickAt(x,y);draw();return}
+   if(t==='img'&&!ED.stamp){$e('skFileImg').click();return}
+   pushUndo();
+   ED.lock=(st.lock&&x>=0&&y>=0&&x<64&&y<64&&ED.F.id[y*64+x])||0;
+   if(t==='fill'){flood(x,y,col());ED.lock=0;endEdit();return}
+   ED.drag={x0:x,y0:y,lx:x,ly:y};ED.base=snapData();
+   if(t==='pen')brush(x,y,col());else if(t==='erase')brush(x,y,[0,0,0,0]);else shape(x,y);
+   draw();
+  });
+  cv.addEventListener('pointermove',e=>{
+   if(!ED)return;const [x,y]=pos(e);ED.hover=[x,y];const dg=ED.drag;
+   if(dg&&(x!==dg.lx||y!==dg.ly)){
+    if(st.tool==='pen')line(dg.lx,dg.ly,x,y,col());
+    else if(st.tool==='erase')line(dg.lx,dg.ly,x,y,[0,0,0,0]);
+    else{ED.D.data.set(ED.base);shape(x,y)}
+    dg.lx=x;dg.ly=y;
+   }
+   draw();
+  });
+  const up=()=>{if(!ED||!ED.drag)return;ED.drag=null;ED.lock=0;endEdit()};
+  cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  cv.addEventListener('pointerleave',()=>{if(ED&&!ED.drag){ED.hover=null;draw()}});
+  addEventListener('keydown',e=>{
+   if(!ED)return;e.stopPropagation();
+   const k=String(e.key).toLowerCase();
+   if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();e.shiftKey?redo():undo()}
+   else if((e.ctrlKey||e.metaKey)&&k==='y'){e.preventDefault();redo()}
+  },true);
+  addEventListener('keyup',e=>{if(ED)e.stopPropagation()},true);
+  for(const c of ['#e8262a'])addRecent(c);
+ }
+ function open(o){
+  if(!root)build();
+  o=o||{};
+  const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d',{willReadFrequently:true});
+  if(SKIN.c)g.drawImage(SKIN.c,0,0);
+  st.slim=!!SKIN.slim;st.view='전체';
+  ED={c,g,D:g.getImageData(0,0,64,64),undo:[],redo:[],drag:null,hover:null,lock:0,stamp:null,sm:null,sk:0,tk:'',tm:null,F:buildFaces(st.slim)};
+  showOv('ovSkin',false);showOv('ovSkinEd',true);
+  if(o.stamp)useStamp(o.stamp);
+  sync();draw();figs();
+ }
+ return {open,readImage,imgToSkin};
+})();
+$('skinEdit').onclick=()=>SKED.open();
+
 /* ---- 스킨 입힌 플레이어 모델 (마인크래프트와 같은 비율: 32픽셀 = 1.8칸) ---- */
 const SKB={v:new Float32Array(72*4*SF),i:new Uint32Array(72*6),nf:0,cap:72};
 let skinMesh=null;
