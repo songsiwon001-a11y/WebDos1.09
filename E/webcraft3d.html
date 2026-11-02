@@ -541,6 +541,86 @@ const SUPER_T=xt([18,18,20],4,null,(x,y)=>{
  if(x===1||y===1||x===14||y===14)return [235,40,44];
  return (((x>>2)+(y>>2))&1)?[205,18,24]:[16,16,18]});
 def('슈퍼블록',SUPER_T,SUPER_T,SUPER_T,{cmdonly:1});
+
+/* ---- 슈퍼블록 소유/허용 기록: 블록 위치마다 'SB|소유자|허용1,허용2' 를 가구 데이터(fdata)로 저장·동기화 ----
+   · 설치한 사람이 소유자. 소유자 · joon0824 · 허용된 사람만 부술 수 있음 (기록이 없는 옛 슈퍼블록은 이쭈영/joon0824)
+   · 소유자(또는 joon0824)가 우클릭하면 허용 목록을 편집. 붙어 있는(상하좌우앞뒤) 슈퍼블록은 모두 같은 설정으로 동기화 */
+const sbClean=n=>bkey(n).replace(/[,|]/g,'');
+function sbParseV(v){if(typeof v!=='string'||v.slice(0,3)!=='SB|')return null;const q=v.slice(3).split('|'),o=sbClean(q[0]||'');if(!o)return null;return {o,a:(q[1]||'').split(',').map(sbClean).filter(Boolean).slice(0,24)}}
+const sbRec=(x,y,z)=>sbParseV(fdGet(x,y,z));
+const sbPack=(o,a)=>{let t='SB|'+sbClean(o)+'|',l=[];for(const n of a){if(!n||l.includes(n))continue;if((t+l.concat(n).join(',')).length>290)break;l.push(n)}return t+l.join(',')};
+function canEditSuper(name,x,y,z){
+ const n=sbClean(name);if(n===OWNER)return true;
+ const r=sbRec(x,y,z);if(!r)return superOk(n);
+ return r.o===n||r.a.includes(n);
+}
+const canOwnSuper=(name,x,y,z)=>{const n=sbClean(name);if(n===OWNER)return true;const r=sbRec(x,y,z);return r?r.o===n:superOk(n)};
+function sbIsSuper(x,y,z){const b=getBlock(x,y,z);return !!(b&&DEF[b]&&DEF[b].cmdonly)}
+function sbGroup(x,y,z){ // 붙어 있는 슈퍼블록 전체 (최대 3000개)
+ const out=[],seen=new Set([lkKey(x,y,z)]),st=[[x,y,z]];
+ while(st.length&&out.length<3000){
+  const [a,b,c]=st.pop();if(!sbIsSuper(a,b,c))continue;out.push([a,b,c]);
+  for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){const k=lkKey(a+dx,b+dy,c+dz);if(!seen.has(k)){seen.add(k);st.push([a+dx,b+dy,c+dz])}}
+ }
+ return out;
+}
+function sbApplyGroup(x,y,z,o,a){const v=sbPack(o,a);let n=0;for(const [a2,b2,c2] of sbGroup(x,y,z))if(fdGet(a2,b2,c2)!==v){fdSet(a2,b2,c2,v);n++}return n}
+function sbAdjRec(x,y,z){for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){if(sbIsSuper(x+dx,y+dy,z+dz)){const r=sbRec(x+dx,y+dy,z+dz);if(r)return {r,x:x+dx,y:y+dy,z:z+dz}}}return null}
+function sbOnPlace(x,y,z){ // 새로 설치한 슈퍼블록: 붙은 그룹이 있으면 그 설정을 이어받고, 없으면 내가 소유자
+ const adj=sbAdjRec(x,y,z);
+ if(adj){fdSet(x,y,z,sbPack(adj.r.o,adj.r.a));return}
+ fdSet(x,y,z,sbPack(net.name,[]));
+}
+function sbMayWrite(sender,x,y,z,nv){ // 다른 접속자가 보낸 슈퍼블록 기록 변경이 허용되는지
+ const old=sbRec(x,y,z),n=sbClean(sender);if(n===OWNER)return true;
+ if(old){if(nv==null)return canEditSuper(sender,x,y,z);return old.o===n}
+ const nr=sbParseV(nv);return !!nr&&(superOk(n)||nr.o===n||nr.a.includes(n));
+}
+const SBS={x:0,y:0,z:0};
+function sbEl(){
+ let el=$('ovSb');if(el)return el;
+ el=document.createElement('div');el.className='ov';el.id='ovSb';
+ el.innerHTML='<div class="card" style="width:min(400px,94vw)"><h1 style="font-size:24px">슈퍼블록 설정</h1><div class="sub" id="sbInfo"></div><div id="sbList" style="text-align:left;margin:6px 0"></div>'
+  +'<input class="t" id="sbName" maxlength="12" placeholder="수정을 허용할 닉네임" autocomplete="off" style="margin-bottom:6px"><div class="b" id="sbAdd">허용 추가</div><div id="sbOnline" style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0"></div><div class="b dim" id="sbClose">닫기 (Esc)</div></div>';
+ document.body.appendChild(el);
+ $('sbAdd').onclick=()=>sbAddName($('sbName').value);
+ $('sbName').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();sbAddName($('sbName').value)}else if(e.key==='Escape'){e.preventDefault();closeSuper()}});
+ $('sbName').addEventListener('keyup',e=>e.stopPropagation());
+ $('sbClose').onclick=closeSuper;
+ return el;
+}
+function sbRender(){
+ const r=sbRec(SBS.x,SBS.y,SBS.z),o=r?r.o:'(기록 없음)',a=r?r.a:[];
+ $('sbInfo').style.whiteSpace='pre-line';
+ $('sbInfo').textContent='소유자: '+o+(bkey(o)===OWNER?'':'  (joon0824 는 항상 가능)')+'\n붙어 있는 슈퍼블록 '+sbGroup(SBS.x,SBS.y,SBS.z).length+'개에 같은 설정이 적용돼요\n허용된 사람만 부술 수 있어요';
+ const L=$('sbList');L.textContent='';
+ if(!a.length){const d=document.createElement('div');d.className='small';d.textContent='허용된 사람이 없습니다';L.appendChild(d)}
+ for(const n of a){const d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;padding:3px 6px;border-bottom:1px solid #333';d.appendChild(document.createTextNode(n));const x=document.createElement('span');x.textContent='✖ 해제';x.style.cssText='cursor:pointer;color:#f88;pointer-events:auto';x.onclick=()=>sbSetList(a.filter(q=>q!==n));d.appendChild(x);L.appendChild(d)}
+ const on=$('sbOnline');on.textContent='';
+ for(const p of peers.values())if(p.open){const n=sbClean(p.name);if(!n||n===OWNER||n===o||a.includes(n))continue;const c=document.createElement('div');c.className='ptab';c.textContent='+ '+p.name;c.onclick=()=>sbAddName(p.name);on.appendChild(c)}
+}
+function sbSetList(a){
+ const r=sbRec(SBS.x,SBS.y,SBS.z);if(!r)return;
+ if(!canOwnSuper(net.name,SBS.x,SBS.y,SBS.z))return toast('소유자만 바꿀 수 있습니다',1500);
+ sbApplyGroup(SBS.x,SBS.y,SBS.z,r.o,a);sbRender();sfx(.06,500);
+}
+function sbAddName(v){
+ const n=sbClean(v);if(!n)return;const r=sbRec(SBS.x,SBS.y,SBS.z);if(!r)return;
+ if(n===OWNER||n===r.o)return toast('이미 수정할 수 있는 사람입니다',1400);
+ if(r.a.includes(n))return toast('이미 허용된 사람입니다',1400);
+ if(r.a.length>=20)return toast('최대 20명까지 허용할 수 있습니다',1600);
+ sbSetList(r.a.concat(n));$('sbName').value='';
+}
+function openSuper(x,y,z){
+ if(state!=='play'||ui)return;
+ if(!sbRec(x,y,z)){ // 옛 슈퍼블록(기록 없음): 소유자 권한자가 열면 자기 소유로 등록
+  if(!superOk(net.name))return toast('이 슈퍼블록은 소유자 기록이 없습니다',1800);
+  sbApplyGroup(x,y,z,net.name,[]);
+ }
+ if(!canOwnSuper(net.name,x,y,z)){const r=sbRec(x,y,z);return toast('슈퍼블록 — 소유자: '+(r?r.o:'?')+(r&&r.a.length?' · 허용: '+r.a.join(', '):''),2600)}
+ sbEl();ui='sb';SBS.x=x;SBS.y=y;SBS.z=z;showOv('ovSb',true);if(document.pointerLockElement)document.exitPointerLock();sbRender();
+}
+function closeSuper(){if(ui!=='sb')return;ui='';showOv('ovSb',false);$('sbName').blur();lockPointer()}
 const cmdEditAt=(x,y,z)=>{if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&DEF[v[0]]&&DEF[v[0]].cmdonly)};
 
 /* ---- 인챈트 시스템: 청금석 · 책 · 인챈트북 · 인챈트 테이블 · 모루 · 도구 · 방어구 (번호는 뒤에만 추가) ---- */
@@ -1197,12 +1277,24 @@ const store={db:null,
  get(k){return new Promise(res=>{if(!store.db)return res(null);try{const q=store.db.transaction('w').objectStore('w').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
  put(k,v){try{if(store.db)store.db.transaction('w','readwrite').objectStore('w').put(v,k)}catch(e){}}};
 let SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM,WMODE='';
-/* ---- 도어락 비밀번호 기록: 위치 -> {c:'1234'|null, t:시각}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase 에 저장 ---- */
+/* ---- 도어락 기록: 위치 -> {c:비밀번호, t:시각, o:설치자}. P2P/IndexedDB/Firebase 동기화 ---- */
 const locks=new Map();let lockDirty=false;const LK={dirty:false,loaded:false,busy:false};
 const lkKey=(x,y,z)=>x+'_'+y+'_'+z;
 const lockGet=(x,y,z)=>{const r=locks.get(lkKey(x,y,z));return r&&r.c?r:null};
-function lockApply(key,c,t){if(!fin(t))return false;const r=locks.get(key);if(r&&r.t>=t)return false;locks.set(key,{c,t});lockDirty=true;LK.dirty=true;return true}
-function lockSetLocal(x,y,z,c){const t=nextT();lockApply(lkKey(x,y,z),c,t);netBroadcast({k:'lk',x,y,z,c,t},true)}
+function lockApply(key,c,t,o){
+ if(!fin(t))return false;
+ const old=locks.get(key);if(old&&old.t>=t)return false;
+ const installer=cleanName(o||old&&old.o||'').toLowerCase();
+ locks.set(key,{c,t,o:installer});lockDirty=true;LK.dirty=true;return true;
+}
+function lockSetLocal(x,y,z,c){
+ const key=lkKey(x,y,z),old=locks.get(key),t=nextT(),o=(old&&old.o)||(!old&&c?bkey(net.name):'');
+ lockApply(key,c,t,o);netBroadcast({k:'lk',x,y,z,c,t,o},true);
+}
+function lockClaimLocal(x,y,z){
+ const key=lkKey(x,y,z),t=nextT(),o=bkey(net.name);
+ lockApply(key,null,t,o);netBroadcast({k:'lk',x,y,z,c:null,t,o},true);
+}
 function lockClear(x,y,z){const r=locks.get(lkKey(x,y,z));if(r&&r.c)lockSetLocal(x,y,z,null)}
 const DL_R=50; // 비밀번호가 설정된 도어락 주변 보호 반경(칸)
 function lockZoneAt(x,y,z){
@@ -1212,8 +1304,23 @@ function lockZoneAt(x,y,z){
  }
  return false;
 }
-const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t]);
-function lkMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5))}
+// 50칸 보호 구역을 우회할 수 있는 사람은 월드 소유자와 해당 도어락 설치자뿐이다.
+function lockCanBypass(name,x,y,z){
+ const who=bkey(name);if(who===OWNER)return true;
+ let protectedBy=false;
+ for(const [k,r] of locks){
+  if(!r.c)continue;const q=k.split('_'),lx=+q[0],ly=+q[1],lz=+q[2];
+  if(Math.abs(x-lx)>DL_R||Math.abs(y-ly)>DL_R||Math.abs(z-lz)>DL_R||!dlEditAt(lx,ly,lz))continue;
+  protectedBy=true;if(!r.o||r.o!==who)return false;
+ }
+ return protectedBy;
+}
+const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t,v.o||'']);
+function lkMerge(arr){
+ if(!Array.isArray(arr))return;
+ for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))
+  lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5),typeof e[3]==='string'?e[3]:'');
+}
 /* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase(도어락 문서에 함께) 저장 ---- */
 const jbState=new Map(),jbAud=new Map(),jbDone=new Set(),auBuf=new Map(),auRx=new Map(),auLast=new Map(),seenNames=new Set();
 let FD_KEY='fd_'+ROOM;const fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
@@ -1705,8 +1812,8 @@ function portalTick(dt){
 function breakBlock(){
  const h=ray(6);if(!h||h.y<1)return;
  if(h.b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 부술 수 있습니다',1500);
- if(DEF[h.b].cmdonly&&!superBreakOk(net.name))return toast('슈퍼블록은 허용된 사람만 부술 수 있습니다',1500);
- if(myRole()<1&&lockZoneAt(h.x,h.y,h.z))return toast('🔒 도어락 보호 구역(반경 '+DL_R+'칸) — 어드민 이상만 부술 수 있습니다',1800);
+ if(DEF[h.b].cmdonly&&!canEditSuper(net.name,h.x,h.y,h.z)){const r=sbRec(h.x,h.y,h.z);return toast('슈퍼블록 — 소유자 '+(r?r.o:'없음')+' 님이 허용한 사람만 부술 수 있습니다',1800)}
+ if(lockZoneAt(h.x,h.y,h.z)&&!lockCanBypass(net.name,h.x,h.y,h.z))return toast('🔒 도어락 보호 구역(반경 '+DL_R+'칸) — joon0824 또는 해당 도어락 설치자만 우회할 수 있습니다',2200);
  const fi=FURN[h.b];
  if(fi&&fi.t==='dresser'){ // 물건이 든 서랍장은 한 번 더 부숴야 함
   const it=fdGet(h.x,h.y,h.z);
@@ -1716,7 +1823,7 @@ function breakBlock(){
   }
  }
  if(SVMODE&&!mineTick(h))return;
- localEdit(h.x,h.y,h.z,0);
+ localEdit(h.x,h.y,h.z,0);if(DEF[h.b].cmdonly)fdClear(h.x,h.y,h.z);
  if(SVMODE&&h.b!==B_BED&&h.b!==B_WATER&&!DEF[h.b].cmdonly&&!DEF[h.b].item&&!DEF[h.b].nodrop&&!MN.nd){
   dropOut(W_DROPMAP[h.b]||dropItemOf(h.b),h.x+.5,h.y+.4,h.z+.5);if(h.b===14&&Math.random()<.2)dropOut(W_FLINT,h.x+.5,h.y+.4,h.z+.5);
   if(h.b===7&&Math.random()<.12)dropOut(FOOD_APPLE,h.x+.5,h.y+.4,h.z+.5);
@@ -1747,6 +1854,7 @@ function toggleDoor(x,y,z){
  }
 function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 true
  const h=ray(6);if(!h)return false;
+ if(DEF[h.b].cmdonly&&!P.sneak){openSuper(h.x,h.y,h.z);return true}
  if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
  if(DLINFO[h.b]!==undefined){openLock(h.x,h.y,h.z);return true}
  if(SVMODE&&(h.b===W_TBL||h.b===W_FRN)){openSurv(h.b===W_TBL?'table':'furn');return true}
@@ -1763,7 +1871,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  }
  return false;
 }
-const usableAt=()=>{const h=ray(6);return !!(h&&(h.b===JUKE||(SVMODE&&(h.b===W_TBL||h.b===W_FRN))||DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
+const usableAt=()=>{const h=ray(6);return !!(h&&((DEF[h.b].cmdonly&&!P.sneak)||h.b===JUKE||(SVMODE&&(h.b===W_TBL||h.b===W_FRN))||DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
 function bodyBlocks(x,y,z){
  if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return true;
  for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return true;
@@ -1788,6 +1896,7 @@ function placeBlockRaw(rep){const h=ray(6);const ib=hotbar[P.sel];if(ib&&DEF[ib]
   if(!SOLID[getBlock(x,y-1,z)])return toast('문은 단단한 블록 위에만 설치할 수 있습니다',1400);
   const base=DINFO[b].base,f=dirOfYaw();localEdit(x,y,z,base+f);localEdit(x,y+1,z,base+8+f);blkSnd('place',b);return;
  }
+ if(DEF[b].cmdonly){const ad=sbAdjRec(x,y,z);if(ad&&!canEditSuper(net.name,ad.x,ad.y,ad.z))return toast('남의 슈퍼블록에 붙여서 설치할 수 없습니다 (소유자: '+ad.r.o+')',2000)}
  b=variantFor(b,h);
  if(SUP[b]&&!supportedAt(b,x,y,z))return toast(SUP[b]===2?'벽에 붙일 수 있는 블록이 아닙니다 (지지할 블록이 필요해요)':'바닥의 단단한 블록 위에만 설치할 수 있습니다',1400);
  if(SOLID[b]){ // 내 몸과 겹치면 불가
@@ -1795,7 +1904,8 @@ function placeBlockRaw(rep){const h=ray(6);const ib=hotbar[P.sel];if(ib&&DEF[ib]
   for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return;
  }
  localEdit(x,y,z,b);blkSnd('place',b);
- if(DLSET.has(b)){lockClear(x,y,z);setTimeout(()=>openLock(x,y,z,true),0)} // 설치하자마자 비밀번호 설정 창
+ if(DEF[b].cmdonly)sbOnPlace(x,y,z);
+ if(DLSET.has(b)){lockClear(x,y,z);lockClaimLocal(x,y,z);setTimeout(()=>openLock(x,y,z,true),0)} // 설치자 기록 후 비밀번호 설정
 }
 function placeBlock(rep){
  if(!SVMODE)return placeBlockRaw(rep);
@@ -2289,24 +2399,25 @@ function peerMsg(p,s){
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
    // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
    if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
-   for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,s:1},true)}
+   for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,o:r.o||'',s:1},true)}
    dropsTo(p);
    for(const [fk,r] of fdata){const q=fk.split('_').map(Number);peerSend(p,{k:'fd',x:q[0],y:q[1],z:q[2],v:r.v,t:r.t},true)}
    if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
-   if(superOk(net.name))for(const n of superBreakers)peerSend(p,{k:'sb',n,on:1,s:1},true);
+   
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
-  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if(!superOk(p.name)&&((DEF[m.b]&&DEF[m.b].cmdonly)||(cmdEditAt(m.x,m.y,m.z)&&!superBreakOk(p.name))))break;if(m.b===0&&lvOf(p.name)<1&&Number.isInteger(m.x)&&Number.isInteger(m.y)&&Number.isInteger(m.z)&&lockZoneAt(m.x,m.y,m.z))break;{supLive=true;const _ob=getBlock(m.x,m.y,m.z),_ok=applyEdit(m.x,m.y,m.z,m.b,m.t);supLive=false;if(_ok&&state==='play')remoteBlkSnd(m.x,m.y,m.z,_ob,m.b)}break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if((DEF[m.b]&&DEF[m.b].cmdonly&&!superOk(p.name))||(cmdEditAt(m.x,m.y,m.z)&&!canEditSuper(p.name,m.x,m.y,m.z)))break;if(m.b===0&&Number.isInteger(m.x)&&Number.isInteger(m.y)&&Number.isInteger(m.z)&&lockZoneAt(m.x,m.y,m.z)&&!lockCanBypass(p.name,m.x,m.y,m.z))break;{supLive=true;const _ob=getBlock(m.x,m.y,m.z),_ok=applyEdit(m.x,m.y,m.z,m.b,m.t);supLive=false;if(_ok&&state==='play')remoteBlkSnd(m.x,m.y,m.z,_ob,m.b)}break;
   case 'lk':{ // 도어락 비밀번호 기록 (s=1 은 입장 동기화, 그 외는 슈퍼어드민 이상만)
    if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
    if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
    {const cc=(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,old=lockGet(m.x,m.y,m.z);if(!m.s&&old&&cc!==old.c&&lvOf(p.name)<2)break}
-   lockApply(lkKey(m.x,m.y,m.z),(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,Math.min(m.t,Date.now()+864e5));
+   lockApply(lkKey(m.x,m.y,m.z),(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,Math.min(m.t,Date.now()+864e5),typeof m.o==='string'?m.o:'');
   }break;
   case 'fd':{ // 서랍장/컴퓨터 데이터
    if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
    if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
+   {const nv=fdClean(m.v);if((typeof nv==='string'&&nv.slice(0,3)==='SB|')||sbRec(m.x,m.y,m.z)){if(!sbMayWrite(p.name,m.x,m.y,m.z,nv))break}}
    fdApply(lkKey(m.x,m.y,m.z),fdClean(m.v),Math.min(m.t,Date.now()+864e5));
   }break;
   case 'di':dropFrom(m);break;
@@ -2324,22 +2435,19 @@ function peerMsg(p,s){
     if(m.s){if(!TTOUCH)applyTime(m.h,!!m.lk)}
     else if(lvOf(p.name)>=1){applyTime(m.h,!!m.lk);chatAdd('',p.name+' 님이 시간을 '+Math.floor(m.h)+'시로 변경했습니다'+(m.lk?' (고정)':''),'sys')}
    }break;
-  case 'rl':{ // 권한 변경: 보낸 사람의 권한으로 가능한 변경만 받아들임
+  case 'rl':break;
+  case 'rl_':{ // 권한 변경: 보낸 사람의 권한으로 가능한 변경만 받아들임
    const n=cleanName(m.n).toLowerCase(),lv=m.lv;
    if(!n||n===OWNER||typeof lv!=='number'||lv<0||lv>3||lv%1)break;
    if(canSetRole(lvOf(p.name),lvOf(n),lv)){setRole(n,lv);if(!m.s&&n===String(net.name).toLowerCase())chatAdd('',lv?RNAME[lv]+' 권한이 부여되었습니다':'관리자 권한이 해제되었습니다','sys')}
-  }break;
-  case 'sb':{ // 슈퍼블록 부수기 허용/해제 (보낸 사람이 슈퍼블록 권한자일 때만)
-   if(!superOk(p.name))break;
-   const n=bkey(m.n);if(!n||superOk(n))break;
-   if(m.on){superBreakers.add(n)}else{superBreakers.delete(n)}
-   saveSuperBreakers();
-   if(!m.s&&n===bkey(net.name))chatAdd('',m.on?'슈퍼블록을 부술 수 있는 권한이 부여되었습니다':'슈퍼블록을 부술 수 있는 권한이 해제되었습니다','sys');
   }break;
   case 'say':if(lvOf(p.name)>=1){const t=sayClean(m.t);if(t&&(!m.to||String(m.to).toLowerCase()===String(net.name).toLowerCase()))showNotice(t,p.name,!!m.to)}break;
   case 'aq':if(typeof m.i==='string'&&m.i.length<=40)auServe(p,m.i);break;
   case 'ax':if(typeof m.i==='string')auNo(p,m.i);break;
   case 'ac':auChunk(p,m);break;
+  case 'tpq':TPIN.id=p.id;TPIN.t=mono();break;
+  case 'tpa':if(TPREQ.to===p.id&&mono()-TPREQ.t<60000&&fin(m.x)&&fin(m.y)&&fin(m.z)){TPREQ.to='';teleport(m.x,m.y+.05,m.z);chatAdd('',p.name+' 님이 허용했습니다 — 이동했습니다','sys')}break;
+  case 'tpd':if(TPREQ.to===p.id){TPREQ.to='';chatAdd('',p.name+' 님이 TP를 거부했습니다','sys')}break;
   case 'tp':if(lvOf(p.name)>=2&&fin(m.x)&&fin(m.y)&&fin(m.z)){teleport(m.x,m.y,m.z);chatAdd('',p.name+' 님이 나를 소환했습니다','sys')}break;
   case 'sk':peerSkin(p,m);break;
   case 'pg':peerSend(p,{k:'po',t:m.t},false);break;
@@ -2436,13 +2544,13 @@ let chatOpen=false;
 // 권한은 현재 클라이언트 닉네임 기반입니다. 실제 보안 권한은 인증 서버가 필요합니다.
 const OWNER='joon0824',RNAME=['플레이어','어드민','슈퍼어드민','소유자']; // 권한 1=어드민 2=슈퍼어드민 3=소유자
 const roles=new Map(); // 소유자(joon0824) 외에 권한을 받은 닉네임(소문자) -> 1~3
-try{const r=JSON.parse(localStorage.getItem('wc_roles_'+ROOM)||'[]');if(Array.isArray(r))for(const e of r)if(Array.isArray(e)&&typeof e[0]==='string'&&e[1]>=1&&e[1]<=3)roles.set(e[0],e[1]|0)}catch(e){}
+
 const saveRoles=()=>{try{localStorage.setItem('wc_roles_'+ROOM,JSON.stringify([...roles]))}catch(e){}};
-const lvOf=n=>{n=cleanName(n).toLowerCase();return n===OWNER?3:(roles.get(n)||0)};
+const lvOf=n=>{n=cleanName(n).toLowerCase();return n===OWNER?3:0}; // joon0824 외에는 어드민/슈퍼어드민/소유자 없음
 const myRole=()=>lvOf(net.name);
 const isOwner=()=>myRole()>=3;
 const canSetRole=(sl,cur,lv)=>sl>=3||(sl>=2&&lv<2&&cur<2); // 소유자: 전부 / 슈퍼어드민: 어드민 부여·해제만
-function setRole(n,lv){n=cleanName(n).toLowerCase();if(!n||n===OWNER)return false;if(lv>0)roles.set(n,lv);else roles.delete(n);saveRoles();return true}
+function setRole(n,lv){return false;n=cleanName(n).toLowerCase();if(!n||n===OWNER)return false;if(lv>0)roles.set(n,lv);else roles.delete(n);saveRoles();return true}
 /* ---- 영구 차단(/ban): 닉네임 기준 · 이 브라우저에 저장 · 접속자끼리 P2P 로 동기화 (서버 없음) ----
    banRec: 닉(소문자) -> [차단여부 1/0, 시각]. 시각이 더 늦은 기록이 이김 (밴/언밴이 엇갈려도 일관됨) */
 const banRec=new Map();
@@ -2477,11 +2585,39 @@ function findBlock(s){ // 번호 또는 이름(띄어쓰기 무시, 일부만 �
 function teleport(x,y,z){x=clamp(x,1,WORLD-2);z=clamp(z,1,WORLD-2);y=clamp(y,1,WH+40);ensureAround(x>>4,z>>4,1);P.sit=null;P.x=x;P.y=y;P.z=z;P.vx=P.vy=P.vz=0;cam.x=P.x;cam.y=P.y+EYE;cam.z=P.z}
 const TPRESET={'일출':6,sunrise:6,'아침':8,morning:8,day:8,'낮':8,'정오':12,noon:12,'일몰':18,sunset:18,'저녁':19,'밤':21,night:21,'자정':0,midnight:0,'새벽':4};
 function parseHour(s){s=String(s||'').toLowerCase();if(Object.prototype.hasOwnProperty.call(TPRESET,s))return TPRESET[s];const v=parseFloat(s.replace('시',''));return isFinite(v)&&v>=0&&v<=24?v:NaN}
+const TPREQ={to:'',t:0},TPIN={id:'',t:0};
 const CMDS={},CLIST=[],SV_BLOCKED=new Set(['give','fill','setblock','슈퍼블록','슈퍼블록가능','슈퍼블록불가','fly','찾기']);
+
+/* ---- TP 요청: 화면 가운데 허용/거부 버튼 ---- */
+function tpEl(){
+ let el=$('ovTp');if(el)return el;
+ el=document.createElement('div');el.className='ov';el.id='ovTp';el.style.background='rgba(0,0,0,.35)';
+ el.innerHTML='<div class="card" style="width:min(340px,92vw)"><h1 style="font-size:24px">TP 요청</h1><div class="sub" id="tpMsg" style="font-size:15px"></div><div style="display:flex;gap:8px"><div class="b" id="tpYes" style="flex:1">허용 (Y)</div><div class="b dim" id="tpNo" style="flex:1;background:#7a2a2a;border-color:#d99">거부 (N)</div></div></div>';
+ document.body.appendChild(el);
+ $('tpYes').onclick=()=>tpAnswer(true);$('tpNo').onclick=()=>tpAnswer(false);
+ return el;
+}
+function tpAnswer(ok){
+ if(ui!=='tpq')return;
+ const p=peers.get(TPIN.id);TPIN.id='';ui='';showOv('ovTp',false);
+ if(p&&p.open){
+  if(ok){peerSend(p,{k:'tpa',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2)},true);chatAdd('',p.name+' 님의 TP 요청을 허용했습니다','sys')}
+  else{peerSend(p,{k:'tpd'},true);chatAdd('',p.name+' 님의 TP 요청을 거부했습니다','sys')}
+ }
+ lockPointer();
+}
+function tpTick(){
+ if(!TPIN.id)return;
+ if(mono()-TPIN.t>60000||!peers.get(TPIN.id)){TPIN.id='';if(ui==='tpq'){ui='';showOv('ovTp',false);lockPointer()}return}
+ if(ui||P.dead||state!=='play')return;
+ const p=peers.get(TPIN.id);tpEl();$('tpMsg').textContent=p.name+' 님이 당신에게 TP 하려고 합니다';
+ ui='tpq';showOv('ovTp',true);if(document.pointerLockElement)document.exitPointerLock();
+}
 function cmd(names,lv,use,desc,run){const o={names,lv,use,desc,run};CLIST.push(o);for(const n of names)CMDS[n]=o}
 function runCommand(raw){
  const a=raw.slice(1).trim().split(/\s+/),name=(a.shift()||'').toLowerCase(),c=CMDS[name];
  if(!c||!Object.prototype.hasOwnProperty.call(CMDS,name))return sys('알 수 없는 명령어입니다: /'+name+'  (/help 로 목록 확인)');
+ if(c!==CMDS.tp&&myRole()<3)return sys('이 명령어는 joon0824 만 사용할 수 있습니다 (/tp 제외)');
  if(myRole()<c.lv)return sys('권한이 없습니다. '+RNAME[c.lv]+' 이상만 사용할 수 있습니다.');
  if(SVMODE&&myRole()<3&&c.names.some(n=>SV_BLOCKED.has(n)))return sys('서바이벌 서버에서는 사용할 수 없는 명령어입니다 (소유자 전용)');
  try{c.run(a)}catch(e){sys('명령을 실행하지 못했습니다')}
@@ -2581,11 +2717,18 @@ cmd(['time','시간'],1,'/time [set|add|lock|unlock] ...','시간 변경 (예: /
  applyTime(h,lock);netBroadcast({k:'tm',h:curHour(),lk:lock?1:0},true);
  sys('시간을 '+Math.floor(curHour())+'시로 변경했습니다'+(lock?' (고정)':''));
 });
-cmd(['tp','텔레포트'],1,'/tp <닉> | <x> <z> | <x> <y> <z>','순간이동 (~ 는 현재 위치 기준)',a=>{
- if(a.length===1){const p=peerByName(a[0]);if(!p||!p.has)return sys('그런 접속자가 없거나 위치를 모릅니다: '+a[0]);teleport(p.rx_,p.ry+.05,p.rz);return sys(p.name+' 님에게 이동했습니다')}
+cmd(['tp','텔레포트'],0,'/tp <닉> | (joon0824 전용) <x> <z> | <x> <y> <z>','다른 플레이어에게 순간이동 (상대가 가운데 버튼으로 허용해야 함). 좌표 이동은 joon0824 전용',a=>{
+ const own=myRole()>=3;
+ if(a.length===1){
+  const p=peerByName(a[0]);if(!p)return sys('그런 접속자가 없습니다: '+a[0]);
+  if(own){if(!p.has)return sys('위치를 모릅니다');teleport(p.rx_,p.ry+.05,p.rz);return sys(p.name+' 님에게 이동했습니다')}
+  peerSend(p,{k:'tpq'},true);TPREQ.to=p.id;TPREQ.t=mono();
+  return sys(p.name+' 님에게 TP 요청을 보냈습니다 — 상대가 허용 버튼을 누르길 기다리는 중 (60초)');
+ }
+ if(!own)return sys('좌표 TP는 joon0824 만 사용할 수 있습니다. 플레이어에게 가려면 /tp 닉네임');
  if(a.length===2){const x=num(a[0],P.x),z=num(a[1],P.z);if(isNaN(x)||isNaN(z))return sys('사용법: /tp x z');const xi=Math.floor(clamp(x,1,WORLD-2)),zi=Math.floor(clamp(z,1,WORLD-2));placeAtSurface(xi,zi);return sys('지표면으로 이동했습니다: '+xi+' / '+zi)}
  if(a.length===3){const x=num(a[0],P.x),y=num(a[1],P.y),z=num(a[2],P.z);if(isNaN(x)||isNaN(y)||isNaN(z))return sys('사용법: /tp x y z');teleport(x,y,z);return sys('이동했습니다: '+x.toFixed(1)+' / '+y.toFixed(1)+' / '+z.toFixed(1))}
- sys('사용법: /tp <닉> | /tp <x> <z> | /tp <x> <y> <z>');
+ sys('사용법: /tp <닉>');
 });
 cmd(['spawn','스폰'],1,'/spawn','월드 중앙(스폰)으로 이동',()=>{placeAtSurface(5000,5000);sys('스폰으로 이동했습니다')});
 cmd(['fly','비행'],1,'/fly','비행 모드 켜기/끄기',()=>{if(SVMODE&&myRole()<3)return sys('서바이벌에서는 날 수 없습니다');P.fly=!P.fly;P.vy=0;sys(P.fly?'비행 모드 ON':'비행 모드 OFF')});
@@ -2596,24 +2739,6 @@ cmd(['give','지급'],1,'/give <블록> [슬롯 1~9]','블록을 핫바에 넣�
  const b=findBlock(a.join(''));if(b<=0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
  
  if(DEF[b].cmdonly&&!superOk(net.name))return sys('슈퍼블록은 이쭈영, joon0824 님만 얻을 수 있습니다');hotbar[slot]=b;hotN[slot]=STK[b]||1;renderHotbar();sys((slot+1)+'번 칸에 '+DEF[b].name+' 지급');
-});
-cmd(['슈퍼블록가능','superbreak'],0,'/슈퍼블록가능 <닉>','슈퍼블록을 부술 수 있는 사람 추가 (이쭈영, joon0824 전용)',a=>{
- if(!superOk(net.name))return sys('슈퍼블록은 이쭈영, joon0824 님만 허용할 수 있습니다');
- const n=bkey(a[0]);if(!n)return sys('사용법: /슈퍼블록가능 닉네임');
- if(superOk(n))return sys(n+' 님은 이미 슈퍼블록을 다룰 수 있습니다');
- if(superBreakers.has(n))return sys(n+' 님은 이미 슈퍼블록을 부술 수 있습니다');
- superBreakers.add(n);saveSuperBreakers();netBroadcast({k:'sb',n,on:1},true);
- sys(n+' 님이 이제 슈퍼블록을 부술 수 있습니다  (해제: /슈퍼블록불가 '+n+')');
-});
-cmd(['슈퍼블록불가','superbreakoff'],0,'/슈퍼블록불가 <닉>','슈퍼블록 부수기 허용 해제 (이쭈영, joon0824 전용)',a=>{
- if(!superOk(net.name))return sys('슈퍼블록은 이쭈영, joon0824 님만 해제할 수 있습니다');
- const n=bkey(a[0]);if(!n)return sys('사용법: /슈퍼블록불가 닉네임');
- if(!superBreakers.has(n))return sys(n+' 님은 허용 목록에 없습니다');
- superBreakers.delete(n);saveSuperBreakers();netBroadcast({k:'sb',n,on:0},true);
- sys(n+' 님의 슈퍼블록 부수기 권한을 해제했습니다');
-});
-cmd(['슈퍼블록목록','superbreaklist'],0,'/슈퍼블록목록','슈퍼블록을 부술 수 있는 사람 목록',()=>{
- sys('슈퍼블록 가능: '+SUPERS.join(', ')+(superBreakers.size?' / 부수기만 허용: '+[...superBreakers].join(', '):''));
 });
 cmd(['슈퍼블록','superblock'],0,'/슈퍼블록','슈퍼블록 얻기 (이쭈영, joon0824 전용)',()=>{
  if(!superOk(net.name))return sys('슈퍼블록은 이쭈영, joon0824 님만 사용할 수 있습니다');
@@ -2626,7 +2751,7 @@ cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하�
  if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
  if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH)return sys('월드 밖입니다 (y 는 1~'+(WH-1)+')');
  if(!superOk(net.name)&&((b&&DEF[b].cmdonly)||(getChunk(x>>4,z>>4)&&DEF[getBlock(x,y,z)]&&DEF[getBlock(x,y,z)].cmdonly)))return sys('슈퍼블록은 이쭈영, joon0824 님만 다룰 수 있습니다');
- if(myRole()<1&&lockZoneAt(x,y,z)&&(b===0||(getBlock(x,y,z)&&getBlock(x,y,z)!==B_WATER)))return sys('🔒 도어락 보호 구역입니다 — 어드민 이상만 바꿀 수 있습니다');
+ if(lockZoneAt(x,y,z)&&!lockCanBypass(net.name,x,y,z)&&(b===0||(getBlock(x,y,z)&&getBlock(x,y,z)!==B_WATER)))return sys('🔒 도어락 보호 구역입니다 — joon0824 또는 해당 도어락 설치자만 우회할 수 있습니다');
  localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
 });
 cmd(['say','공지'],1,'/say <메시지>  또는  /say <닉네임> <메시지>','화면 가운데에 크게 공지 (닉네임을 쓰면 그 사람에게만 보임)',a=>{
@@ -2655,7 +2780,7 @@ cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블�
  const t=nextT(),list=[];
  for(let y=y1;y<=y2;y++)for(let z=z1;z<=z2;z++)for(let x=x1;x<=x2;x++){
   if(!superOk(net.name)){const q=getChunk(x>>4,z>>4)?getBlock(x,y,z):0;if(q&&DEF[q].cmdonly)continue}
-  if(myRole()<1&&lockZoneAt(x,y,z)){const o=getChunk(x>>4,z>>4)?getBlock(x,y,z):1;if(o&&o!==B_WATER)continue}
+  if(lockZoneAt(x,y,z)&&!lockCanBypass(net.name,x,y,z)){const o=getChunk(x>>4,z>>4)?getBlock(x,y,z):1;if(o&&o!==B_WATER)continue}
   if(getChunk(x>>4,z>>4)&&getBlock(x,y,z)===b)continue;
   if(applyEdit(x,y,z,b,t)){markRegion(x,z);list.push([x,y,z,b,t])}
  }
@@ -2663,7 +2788,6 @@ cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블�
  sys(list.length+'칸을 '+(b?DEF[b].name:'공기')+'(으)로 바꿨습니다');
 });
 cmd(['tphere','소환'],2,'/tphere <닉>','접속자를 내 위치로 소환',a=>{const p=peerByName(a[0]);if(!p)return sys('그런 접속자가 없습니다');peerSend(p,{k:'tp',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2)},true);sys(p.name+' 님을 소환했습니다')});
-cmd(['roles','권한목록'],2,'/roles','권한을 받은 사람 목록',()=>{const l=['소유자: '+OWNER];for(const [n,lv] of roles)l.push(n+' = '+RNAME[lv]);sys(l.join(' / '))});
 function grant(a,lv){
  const n=cleanName(a[0]||'').toLowerCase();if(!n)return sys('사용법: /'+(lv?RNAME[lv]:'강등')+' 대상자닉네임');
  if(n===OWNER)return sys('기본 소유자('+OWNER+')의 권한은 바꿀 수 없습니다');
@@ -2671,8 +2795,6 @@ function grant(a,lv){
  setRole(n,lv);netBroadcast({k:'rl',n,lv},true);
  sys(lv?n+' 님에게 '+RNAME[lv]+' 권한을 부여했습니다':n+' 님의 관리자 권한을 해제했습니다');
 }
-cmd(['어드민','admin','op'],2,'/어드민 <닉>','어드민 권한 부여',a=>grant(a,1));
-cmd(['강등','deop','demote'],2,'/강등 <닉>','관리자 권한 해제',a=>grant(a,0));
 cmd(['ban','밴','차단'],1,'/ban <닉>','닉네임 영구 차단 (접속 중이면 바로 추방, 다시 못 들어옴)',a=>{
  const n=bkey(a[0]);if(!n)return sys('사용법: /ban 닉네임');
  if(n===bkey(net.name))return sys('자기 자신은 차단할 수 없습니다');
@@ -2694,8 +2816,6 @@ cmd(['banlist','밴목록','차단목록'],1,'/banlist','차단된 닉네임 목
  sys(l.length?'차단된 닉네임 '+l.length+'개: '+l.join(', '):'차단된 닉네임이 없습니다');
 });
 /* ---- 소유자 ---- */
-cmd(['슈퍼어드민','superadmin'],3,'/슈퍼어드민 <닉>','슈퍼어드민 권한 부여',a=>grant(a,2));
-cmd(['소유자','owner'],3,'/소유자 <닉>','소유자 권한 부여',a=>grant(a,3));
 function updateAdminMenu(){const show=isOwner();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
 function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits(),locks:lkDump()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('월드를 파일로 저장했습니다')}
 function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('올바른 월드 파일이 아닙니다');if(d.edits.length>2000000)throw Error('월드 파일이 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}if(Array.isArray(d.locks))for(const e of d.locks)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.max(nextT(),+e[2]||0));saveNow();toast('월드를 불러왔습니다 (블록 '+count+'개)');}catch(err){toast('불러오기 실패: '+(err.message||'올바른 월드 파일이 아닙니다'))}};reader.readAsText(file)}
@@ -3295,6 +3415,8 @@ document.addEventListener('keydown',e=>{
  if(state!=='play'){return}
  if(e.code==='Tab'){e.preventDefault();if(!ui)showTab(true);return}
  if(chatOpen)return;
+ if(ui==='tpq'){if(e.code==='KeyY'||e.code==='Enter'){e.preventDefault();tpAnswer(true)}else if(e.code==='KeyN'||e.code==='Escape'){e.preventDefault();tpAnswer(false)}return}
+ if(ui==='sb'){if(e.code==='Escape'){e.preventDefault();closeSuper()}return}
  if(e.code==='Backquote'){toggleInfo();e.preventDefault();return}
  if(ui==='lock'){lockKey(e);return}
  if(ui==='dr'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeDr()}return}
@@ -4707,7 +4829,7 @@ function frame(t){
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
   cam.yaw=Math.atan2(-(5000-cam.x),-(5000-cam.z)); // 항상 스폰 중심을 바라본다
  }
- if(state==='play'){portalTick(dt);if(SVMODE)survTick(dt);updateVoice(dt);animalTick(dt);waterFlow(dt);supTick();dropTick(dt);jbTick()}
+ if(state==='play'){tpTick();portalTick(dt);if(SVMODE)survTick(dt);updateVoice(dt);animalTick(dt);waterFlow(dt);supTick();dropTick(dt);jbTick()}
  updateRenderCam();
  updateChunks(rc.x,rc.z,state==='play'?7:12);
  // ---- 렌더 ----
