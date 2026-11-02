@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>WebCraft</title>
+<title>WebCraft - 정식 버전 1.1</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/neodgm/neodgm-webfont@latest/neodgm/style.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
 <style>
@@ -34,6 +34,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Co
 #toast{position:fixed;left:50%;top:14%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border:1px solid #888;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;text-align:center;max-width:90vw}
 #tab{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:rgba(0,0,0,.65);border:1px solid #777;padding:10px 16px;min-width:260px;display:none;font-size:14px;line-height:1.7}
 .ov{z-index:5;position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.55);text-align:center}
+#versionBadge{position:absolute;left:12px;bottom:10px;color:#9d9;font-size:12px;line-height:1.4;text-shadow:1px 1px 2px #000;pointer-events:none;z-index:7}
 .card{background:rgba(25,25,25,.94);border:2px solid #777;padding:22px 26px;width:min(460px,92vw);max-height:92vh;overflow:auto}
 h1{font-size:44px;letter-spacing:4px;color:#7ddc4a;text-shadow:3px 3px 0 #2a4a14;margin-bottom:4px}
 .sub{font-size:13px;color:#bbb;margin-bottom:16px;line-height:1.5}
@@ -58,10 +59,6 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 @media (max-width:760px),(max-height:520px){.slot{width:34px;height:34px;border-width:2px}#hot{bottom:6px;padding:3px;gap:2px}#armHud{bottom:48px}#bname{bottom:84px}#chat{bottom:88px;font-size:12px}.tb{width:50px;height:50px;font-size:11px}#info{font-size:11px}}
 #joy{position:absolute;left:24px;bottom:70px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);pointer-events:auto}
 #joyk{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.4)}
-#lkDisp{font-size:34px;letter-spacing:6px;margin:6px 0 14px}
-#lkPad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-#lkPad div{padding:14px 0;background:#333;border:2px solid #777;font-size:22px;cursor:pointer;pointer-events:auto}
-#lkPad div:active{background:#666}
 #fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .8s;z-index:6}
 #pcHead{color:#6f6;font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:8px}
 #pcMemo{width:100%;height:150px;background:#031a0c;color:#7f7;border:1px solid #3a6;font:inherit;font-size:14px;padding:6px;user-select:text;-webkit-user-select:text;resize:none;touch-action:auto;display:block}
@@ -89,6 +86,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <div id="tab"></div>
 
 <div class="ov" id="ovTitle" style="display:flex">
+ <div id="versionBadge">정식 버전 1.1</div>
  <div class="card">
   <div class="logoWrap"><h1>WebCraft</h1><div id="splash"></div></div>
   <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
@@ -152,16 +150,6 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
  <div style="display:flex;gap:8px;justify-content:center;margin-top:6px">
   <div class="b dim" id="mapZoomOut" style="width:64px;margin:0;padding:6px">－</div>
   <div class="b dim" id="mapZoomIn" style="width:64px;margin:0;padding:6px">＋</div>
- </div>
-</div>
-<div class="ov" id="ovLock">
- <div class="card" style="width:min(320px,92vw)">
-  <h1 style="font-size:26px">도어락</h1>
-  <div class="sub" id="lkMsg"></div>
-  <div id="lkDisp"></div>
-  <div id="lkPad"></div>
-  <div class="b dim" id="lkSet" style="display:none"></div>
-  <div class="b dim" id="lkClose">닫기 (Esc)</div>
  </div>
 </div>
 <div class="ov" id="ovSkin">
@@ -427,18 +415,9 @@ function mkDoor(name,c,metal){
 }
 mkDoor('참나무 문',[178,140,84]);mkDoor('자작나무 문',[216,203,155]);mkDoor('짙은참나무 문',[88,60,32]);mkDoor('철문',[205,205,210],true);
 
-/* ---- 도어락 (벽에 붙는 키패드): 슈퍼어드민 이상만 설치/부수기/비밀번호 설정, 맞는 번호 → 2칸 안 철문에 신호 ---- */
-const DLB=[],DLINFO=[],DLIDS=[];
-const DL_T=xt([44,46,52],6,null,(x,y)=>{
- if(x<3||x>12||y<2||y>13)return null;
- if(x===3||x===12||y===2||y===13)return [100,102,114];
- if(y===3&&x>=5&&x<=10)return [60,235,100];
- if((x===5||x===7||x===9)&&(y===5||y===7||y===9||y===11))return [205,205,212];
- return null;
-});
-const DLP=[[.1875,.125,0,.8125,.875,.125],[.875,.125,.1875,1,.875,.8125],[.1875,.125,.875,.8125,.875,1],[0,.125,.1875,.125,.875,.8125]];
-{const ids=[];for(let f=0;f<4;f++){const id=defx('도어락'+(f?'('+'동남서'[f-1]+')':''),DL_T,DL_T,DL_T,{solid:false,shape:[DLP[f]],hide:f>0?1:0,dlock:1});ids.push(id);DLIDS.push(id)}
- for(const id of ids){DLINFO[id]=ids[0];BASEOF[id]=ids[0]}DLB[ids[0]]=ids}
+/* ---- 구버전 블록 번호 호환: 해당 번호는 공기로 변환 ---- */
+const LEGACY_DL_IDS=new Set();
+{const blank=xt([0,0,0,0],0,()=>null,()=>null);for(let i=0;i<4;i++){const id=defx('제거된 블록',blank,blank,blank,{solid:false,trans:true,hide:1,nopal:1});LEGACY_DL_IDS.add(id)}}
 
 /* ---- 가구: 침대 · 컴퓨터 · 소파 · 서랍장 ----
    · 방향 f: 0 북(-z) 1 동(+x) 2 남(+z) 3 서(-x). 변형 블록은 hide 로 목록에서 숨김
@@ -844,18 +823,16 @@ const NB=DEF.length-1,B_WATER=10,B_BED=13;
 /* ---- 중첩(스택) 규칙: 원작처럼 도구·방어구·인챈트된 것·침대·부싯돌과 라이터는 1개, 나머지는 64개까지 ---- */
 const STK=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){const d=DEF[i];STK[i]=(d.kind||d.tool||d.armor!==undefined||d.ench||d.book||(FURN[i]&&FURN[i].t==='bed')||i===W_FNS)?1:64}
-const DLSET=new Set(DLIDS);
 const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide&&!DEF[i].cmdonly&&!DEF[i].nopal)PALETTE.push(i);
 const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
 
-/* ---- 지지가 필요한 블록: 횃불·카펫(바닥 위), 사다리·도어락(벽에 붙음), 문(바닥 위 / 윗칸은 아랫칸 위) ----
-   · 지지 블록이 없어지면 아이템으로 떨어지고, 물이 닿으면 쓸려 나가 아이템이 된다 (횃불·카펫·사다리·도어락) */
+/* ---- 지지가 필요한 블록: 횃불·카펫(바닥 위), 사다리(벽에 붙음), 문(바닥 위 / 윗칸은 아랫칸 위) ----
+   · 지지 블록이 없어지면 아이템으로 떨어지고, 물이 닿으면 쓸려 나가 아이템이 된다 */
 const SUP=new Uint8Array(NB+1),SUPF=new Uint8Array(NB+1),WASH=new Uint8Array(NB+1); // SUP 1 바닥 2 벽 3 문 윗칸
 const SDX=[0,1,0,-1],SDZ=[-1,0,1,0],supQ=[];let supLive=false,supI=0;
 for(let i=1;i<=NB;i++){const d=DEF[i];if(d.name==='횃불'||/ 카펫$/.test(d.name)){SUP[i]=1;WASH[i]=1}if(DINFO[i])SUP[i]=DINFO[i].h?3:1}
 LADB.forEach(ids=>{if(ids)ids.forEach((id,f)=>{SUP[id]=2;SUPF[id]=f;WASH[id]=1})});
-DLB.forEach(ids=>{if(ids)ids.forEach((id,f)=>{SUP[id]=2;SUPF[id]=f;WASH[id]=1})});
 function supChunkOk(b,x,z){const k=SUP[b];if(!getChunk(x>>4,z>>4))return false;if(k===2){const f=SUPF[b];return !!getChunk((x+SDX[f])>>4,(z+SDZ[f])>>4)}return true}
 function supportedAt(b,x,y,z){
  const k=SUP[b];if(!k)return true;
@@ -882,13 +859,11 @@ function supTick(){
 function dropItemOf(b){const di=DINFO[b];return di?di.base:(BASEOF[b]!==undefined?BASEOF[b]:b)}
 function supPop(x,y,z,b){ // 지지를 잃은 블록: 없애고 아이템으로 떨군다
  localEdit(x,y,z,0);
- if(DLINFO[b]!==undefined)lockClear(x,y,z);
  const di=DINFO[b];if(di&&di.h)return; // 문 윗칸은 따로 떨구지 않음 (아랫칸이 문 아이템을 떨군다)
  spawnDrop(dropItemOf(b),x+.5,y+.35,z+.5,{id:'s'+x+'_'+y+'_'+z+'_'+b,vy:2.5});
 }
 function washAway(x,y,z,b){ // 물에 쓸려 나감 (모든 접속자가 같은 규칙으로 계산하므로 방송하지 않는다)
  applyEdit(x,y,z,0,nextT());
- if(DLINFO[b]!==undefined)lockClear(x,y,z);
  spawnDrop(dropItemOf(b),x+.5,y+.35,z+.5,{id:'w'+x+'_'+y+'_'+z+'_'+b,vy:1.5});
 }
 
@@ -1188,7 +1163,7 @@ function genChunk(cx,cz){
   }
  }
  const ed=edits.get(ckey(cx,cz)); // ems: 이 청크의 발광 블록 위치(idx) 모음
- if(ed)for(const [idx,v] of ed){d[idx]=v[0];if(EMIT[v[0]])ems.add(idx);const y=idx>>8;if(v[0]&&y>maxY)maxY=y}
+ if(ed)for(const [idx,v] of ed){const vb=LEGACY_DL_IDS.has(v[0])?0:v[0];d[idx]=vb;if(EMIT[vb])ems.add(idx);const y=idx>>8;if(v[0]&&y>maxY)maxY=y}
  return {cx,cz,d,maxY:Math.min(WH-1,maxY+1),dirty:true,m:null,ems};
 }
 function getChunk(cx,cz){return chunks.get(ckey(cx,cz))}
@@ -1196,7 +1171,7 @@ function getBlock(x,y,z){
  if(y<0)return B_BED;if(y>=WH)return 0;
  if(x<0||z<0||x>=WORLD||z>=WORLD)return B_BED;
  const c=chunks.get(ckey(x>>4,z>>4));if(!c)return B_BED;
- return c.d[(y*CH+(z&15))*CH+(x&15)];
+ const b=c.d[(y*CH+(z&15))*CH+(x&15)];return LEGACY_DL_IDS.has(b)?0:b;
 }
 function markDirty(cx,cz){const c=getChunk(cx,cz);if(c)c.dirty=true}
 function setLoaded(x,y,z,b){
@@ -1213,6 +1188,7 @@ function setLoaded(x,y,z,b){
 /* 편집 적용 (마지막에 쓴 사람이 이기는 LWW). 변경되면 true */
 function applyEdit(x,y,z,b,t){
  if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z)||!Number.isInteger(b)||!fin(t))return false;
+ if(LEGACY_DL_IDS.has(b))b=0;
  if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH||b<0||b>NB||(b&&DEF[b].item))return false;
  const k=ckey(x>>4,z>>4),idx=(y*CH+(z&15))*CH+(x&15);
  let m=edits.get(k);if(!m){m=new Map();edits.set(k,m)}
@@ -1276,52 +1252,10 @@ const store={db:null,
  open(){return new Promise(res=>{try{const r=indexedDB.open('webcreat',1);r.onupgradeneeded=()=>r.result.createObjectStore('w');r.onsuccess=()=>{store.db=r.result;res(true)};r.onerror=()=>res(false)}catch(e){res(false)}})},
  get(k){return new Promise(res=>{if(!store.db)return res(null);try{const q=store.db.transaction('w').objectStore('w').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
  put(k,v){try{if(store.db)store.db.transaction('w','readwrite').objectStore('w').put(v,k)}catch(e){}}};
-let SAVE_KEY='edits_'+ROOM,LOCK_KEY='locks_'+ROOM,WMODE='';
-/* ---- 도어락 기록: 위치 -> {c:비밀번호, t:시각, o:설치자}. P2P/IndexedDB/Firebase 동기화 ---- */
-const locks=new Map();let lockDirty=false;const LK={dirty:false,loaded:false,busy:false};
+let SAVE_KEY='edits_'+ROOM,WMODE='';
 const lkKey=(x,y,z)=>x+'_'+y+'_'+z;
-const lockGet=(x,y,z)=>{const r=locks.get(lkKey(x,y,z));return r&&r.c?r:null};
-function lockApply(key,c,t,o){
- if(!fin(t))return false;
- const old=locks.get(key);if(old&&old.t>=t)return false;
- const installer=cleanName(o||old&&old.o||'').toLowerCase();
- locks.set(key,{c,t,o:installer});lockDirty=true;LK.dirty=true;return true;
-}
-function lockSetLocal(x,y,z,c){
- const key=lkKey(x,y,z),old=locks.get(key),t=nextT(),o=(old&&old.o)||(!old&&c?bkey(net.name):'');
- lockApply(key,c,t,o);netBroadcast({k:'lk',x,y,z,c,t,o},true);
-}
-function lockClaimLocal(x,y,z){
- const key=lkKey(x,y,z),t=nextT(),o=bkey(net.name);
- lockApply(key,null,t,o);netBroadcast({k:'lk',x,y,z,c:null,t,o},true);
-}
-function lockClear(x,y,z){const r=locks.get(lkKey(x,y,z));if(r&&r.c)lockSetLocal(x,y,z,null)}
-const DL_R=50; // 비밀번호가 설정된 도어락 주변 보호 반경(칸)
-function lockZoneAt(x,y,z){
- for(const [k,r] of locks){
-  if(!r.c)continue;const q=k.split('_'),lx=+q[0],ly=+q[1],lz=+q[2];
-  if(Math.abs(x-lx)<=DL_R&&Math.abs(y-ly)<=DL_R&&Math.abs(z-lz)<=DL_R&&dlEditAt(lx,ly,lz))return true;
- }
- return false;
-}
-// 50칸 보호 구역을 우회할 수 있는 사람은 월드 소유자와 해당 도어락 설치자뿐이다.
-function lockCanBypass(name,x,y,z){
- const who=bkey(name);if(who===OWNER)return true;
- let protectedBy=false;
- for(const [k,r] of locks){
-  if(!r.c)continue;const q=k.split('_'),lx=+q[0],ly=+q[1],lz=+q[2];
-  if(Math.abs(x-lx)>DL_R||Math.abs(y-ly)>DL_R||Math.abs(z-lz)>DL_R||!dlEditAt(lx,ly,lz))continue;
-  protectedBy=true;if(!r.o||r.o!==who)return false;
- }
- return protectedBy;
-}
-const lkDump=()=>[...locks].map(([k,v])=>[k,v.c,v.t,v.o||'']);
-function lkMerge(arr){
- if(!Array.isArray(arr))return;
- for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))
-  lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.min(+e[2],Date.now()+864e5),typeof e[3]==='string'?e[3]:'');
-}
-/* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase(도어락 문서에 함께) 저장 ---- */
+const FDSYNC={dirty:false,loaded:false,busy:false};
+/* ---- 가구 데이터 (서랍장 속 물건 / 컴퓨터 메모): 위치 -> {v,t}. 접속자끼리 P2P 로 동기화 + 내 브라우저 + Firebase 저장 ---- */
 const jbState=new Map(),jbAud=new Map(),jbDone=new Set(),auBuf=new Map(),auRx=new Map(),auLast=new Map(),seenNames=new Set();
 let FD_KEY='fd_'+ROOM;const fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0};
 const fdGet=(x,y,z)=>{const r=fdata.get(lkKey(x,y,z));return r&&r.v!=null?r.v:null};
@@ -1333,7 +1267,7 @@ function fdClean(v){
 }
 function fdApply(key,v,t){
  if(!fin(t))return false;const r=fdata.get(key);if(r&&r.t>=t)return false;
- fdata.set(key,{v,t});fdDirty=true;LK.dirty=true;jbOnData(key,v);
+ fdata.set(key,{v,t});fdDirty=true;FDSYNC.dirty=true;jbOnData(key,v);
  if(ui==='dr'&&DRS.key===key){drLoad(v);drRender()}
  return true;
 }
@@ -1342,10 +1276,10 @@ function fdClear(x,y,z){const r=fdata.get(lkKey(x,y,z));if(r&&r.v!=null)fdSet(x,
 const fdDump=()=>[...fdata].map(([k,r])=>[k,r.v,r.t]);
 function fdMerge(arr){if(!Array.isArray(arr))return;for(const e of arr)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0])&&fin(+e[2]))fdApply(e[0],fdClean(e[1]),Math.min(+e[2],Date.now()+864e5))}
 async function loadSaved(){
- if(!store.db)await store.open();const a=await store.get(SAVE_KEY);const lkSaved=await store.get(LOCK_KEY);if(Array.isArray(lkSaved))lkMerge(lkSaved);
+ if(!store.db)await store.open();const a=await store.get(SAVE_KEY);
  const fdSaved=await store.get(FD_KEY);if(Array.isArray(fdSaved))fdMerge(fdSaved);
  if(a&&a.length)for(let i=0;i+4<a.length;i+=5)applyEdit(a[i],a[i+1],a[i+2],a[i+3],a[i+4]);
- saveDirty=false;lockDirty=false;fdDirty=false;
+ saveDirty=false;fdDirty=false;
 }
 /* 싱글/멀티는 서로 다른 월드: 저장 키가 다르고, 싱글은 온라인(Firebase) 저장과 접속자 동기화를 전혀 쓰지 않는다 */
 async function setWorldMode(m){
@@ -1354,17 +1288,16 @@ async function setWorldMode(m){
  wlev.clear();wq.length=0;wqs.clear();wqh=0;supQ.length=0;supI=0;
  for(const c of [...chunks.values()])freeChunk(c);
  edits.clear();editCount=0;maxT=0;lastT=0;saveDirty=false;
- locks.clear();lockDirty=false;LK.dirty=false;LK.loaded=false;
+ FDSYNC.dirty=false;FDSYNC.loaded=false;FDSYNC.busy=false;
  fdata.clear();fdDirty=false;
  CS.dirty.clear();CS.sizes.clear();CS.big.clear();CS.blocked=false;CS.loaded=false;
  drops.clear();dropSeen.clear();mapBase=null;listCx=-999;
- const sf=m==='solo'?'_solo':'';SAVE_KEY='edits_'+ROOM+sf;LOCK_KEY='locks_'+ROOM+sf;FD_KEY='fd_'+ROOM+sf;
+ const sf=m==='solo'?'_solo':'';SAVE_KEY='edits_'+ROOM+sf;FD_KEY='fd_'+ROOM+sf;
  await loadSaved();
- if(m==='multi'){csLoad();lkSync()}
+ if(m==='multi'){csLoad();fdSync()}
 }
 function saveNow(){
  if(!WMODE)return;
- if(lockDirty){lockDirty=false;store.put(LOCK_KEY,lkDump())}
  if(fdDirty){fdDirty=false;store.put(FD_KEY,fdDump())}
  if(!saveDirty)return;saveDirty=false;const e=allEdits(),a=new Float64Array(e.length*5);
  e.forEach((v,i)=>a.set(v,i*5));store.put(SAVE_KEY,a);
@@ -1618,7 +1551,7 @@ function buildVP(w,h){
 }
 
 /* ===================== 낮/밤 (Date.now 기준이라 접속자 모두 같은 시각) ===================== */
-const DAY_LEN=600;let DAY_OFF=0,TLOCK=null,TTOUCH=false; // TLOCK: 시간 고정(시각) / TTOUCH: 관리자가 시간을 바꾼 적 있음
+const DAY_LEN=600;let DAY_OFF=0,TLOCK=null,TTOUCH=false; // TLOCK: 시간 고정(시각) / TTOUCH: 시간이 수동 변경된 적 있음
 const curHour=()=>TLOCK!==null?TLOCK:((((Date.now()/1000+DAY_OFF)/DAY_LEN)%1)*24+6)%24; // 0=자정, 6=일출, 12=정오, 18=일몰
 function applyTime(h,lock){ // 모든 접속자가 같은 시각이 되도록 DAY_OFF 를 맞춘다
  h=((h%24)+24)%24;const ph=((h-6+24)%24)/24,now=Date.now()/1000;
@@ -1813,7 +1746,6 @@ function breakBlock(){
  const h=ray(6);if(!h||h.y<1)return;
  if(h.b===B_BED&&myRole()<1)return toast('기반암은 어드민 이상만 부술 수 있습니다',1500);
  if(DEF[h.b].cmdonly&&!canEditSuper(net.name,h.x,h.y,h.z)){const r=sbRec(h.x,h.y,h.z);return toast('슈퍼블록 — 소유자 '+(r?r.o:'없음')+' 님이 허용한 사람만 부술 수 있습니다',1800)}
- if(lockZoneAt(h.x,h.y,h.z)&&!lockCanBypass(net.name,h.x,h.y,h.z))return toast('🔒 도어락 보호 구역(반경 '+DL_R+'칸) — joon0824 또는 해당 도어락 설치자만 우회할 수 있습니다',2200);
  const fi=FURN[h.b];
  if(fi&&fi.t==='dresser'){ // 물건이 든 서랍장은 한 번 더 부숴야 함
   const it=fdGet(h.x,h.y,h.z);
@@ -1832,7 +1764,6 @@ function breakBlock(){
   if(fi.t==='bed'){const sg=fi.part?-1:1,qx=h.x+DX[fi.f]*sg,qz=h.z+DZ[fi.f]*sg,qi=FURN[getBlock(qx,h.y,qz)];if(qi&&qi.t==='bed'&&qi.base===fi.base&&qi.f===fi.f&&qi.part!==fi.part)localEdit(qx,h.y,qz,0)}
   else if(fi.t==='dresser'||fi.t==='pc')fdClear(h.x,h.y,h.z);
  }
- if(DLSET.has(h.b))lockClear(h.x,h.y,h.z);
  if(h.b===JUKE)fdClear(h.x,h.y,h.z);
  const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
  blkSnd('break',h.b);
@@ -1843,7 +1774,6 @@ function variantFor(b,h){ // 설치할 때 방향/위아래 변형 고르기
  if(STAIRS[b])return STAIRS[b][dirOfYaw()];
  if(SLABTOP[b]!==undefined&&h.ny<0)return SLABTOP[b];
  if(LADB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return LADB[b][f]}
- if(DLB[b]){const f=h.nx>0?3:h.nx<0?1:h.nz>0?0:h.nz<0?2:dirOfYaw();return DLB[b][f]}
  return b;
 }
 function toggleDoor(x,y,z){
@@ -1856,7 +1786,6 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  const h=ray(6);if(!h)return false;
  if(DEF[h.b].cmdonly&&!P.sneak){openSuper(h.x,h.y,h.z);return true}
  if(DINFO[h.b]){if(DEF[h.b].iron){toast('철문은 레드스톤 신호로만 열립니다',1500);return true}toggleDoor(h.x,h.y,h.z);return true}
- if(DLINFO[h.b]!==undefined){openLock(h.x,h.y,h.z);return true}
  if(SVMODE&&(h.b===W_TBL||h.b===W_FRN)){openSurv(h.b===W_TBL?'table':'furn');return true}
  if(h.b===JUKE){openJuke(h.x,h.y,h.z);return true}
  const fi=FURN[h.b];
@@ -1871,7 +1800,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  }
  return false;
 }
-const usableAt=()=>{const h=ray(6);return !!(h&&((DEF[h.b].cmdonly&&!P.sneak)||h.b===JUKE||(SVMODE&&(h.b===W_TBL||h.b===W_FRN))||DINFO[h.b]||DLINFO[h.b]!==undefined||FURN[h.b]))};
+const usableAt=()=>{const h=ray(6);return !!(h&&((DEF[h.b].cmdonly&&!P.sneak)||h.b===JUKE||(SVMODE&&(h.b===W_TBL||h.b===W_FRN))||DINFO[h.b]||FURN[h.b]))};
 function bodyBlocks(x,y,z){
  if(x+1>P.x-HW&&x<P.x+HW&&z+1>P.z-HW&&z<P.z+HW&&y+1>P.y&&y<P.y+PH)return true;
  for(const p of peers.values())if(p.open&&p.has&&x+1>p.rx_-HW&&x<p.rx_+HW&&z+1>p.rz-HW&&z<p.rz+HW&&y+1>p.ry&&y<p.ry+PH)return true;
@@ -1905,7 +1834,6 @@ function placeBlockRaw(rep){const h=ray(6);const ib=hotbar[P.sel];if(ib&&DEF[ib]
  }
  localEdit(x,y,z,b);blkSnd('place',b);
  if(DEF[b].cmdonly)sbOnPlace(x,y,z);
- if(DLSET.has(b)){lockClear(x,y,z);lockClaimLocal(x,y,z);setTimeout(()=>openLock(x,y,z,true),0)} // 설치자 기록 후 비밀번호 설정
 }
 function placeBlock(rep){
  if(!SVMODE)return placeBlockRaw(rep);
@@ -1962,7 +1890,7 @@ function matOf(b){ // 블록 이름으로 재질 알아내기
  else if(/모래$/.test(n))m='sand';
  else if(/자갈/.test(n))m='gravel';
  else if(/^눈|눈 블록/.test(n))m='snow';
- else if(/(철|금|구리|다이아몬드|에메랄드|네더라이트) 블록$|철창|모루|도어락|철문|컴퓨터|슈퍼블록/.test(n)||d.iron)m='metal';
+ else if(/(철|금|구리|다이아몬드|에메랄드|네더라이트) 블록$|철창|모루|철문|컴퓨터|슈퍼블록/.test(n)||d.iron)m='metal';
  else if(d.trans||/유리|얼음|발광석|램프|네온|바다 랜턴|등불 블록|버섯등|개구리등/.test(n))m='glass';
  else if(/슬라임/.test(n))m='slime';
  else if(/양털|카펫|침대|소파|스펀지/.test(n)||(typeof FURN!=='undefined'&&FURN[b]&&FURN[b].t==='sofa'))m='cloth';
@@ -2131,21 +2059,21 @@ async function csFlush(){
  CS.busy=false;updateStat();
 }
 setInterval(()=>{if(WMODE!=='multi')return;if(!CS.loaded)csLoad();else csFlush()},15000);
-async function lkSync(){ // 도어락 비밀번호 기록을 Firebase 문서 1개에 합쳐서 저장/불러오기
- if(LK.busy)return;const db=fbInit();if(!db)return;LK.busy=true;
- const wasDirty=LK.dirty;LK.dirty=false;
+async function fdSync(){ // 서랍장/컴퓨터 데이터 Firebase 동기화
+ if(FDSYNC.busy)return;const db=fbInit();if(!db)return;FDSYNC.busy=true;
+ const wasDirty=FDSYNC.dirty;FDSYNC.dirty=false;
  try{
   const ref=db.collection(FS_LOBBY).doc('wclock_'+ROOM);
   await db.runTransaction(async tx=>{
-   const s=await tx.get(ref);
-   if(s.exists){const d=s.data()||{};if(typeof d.l==='string'){try{lkMerge(JSON.parse(d.l))}catch(e){}}if(typeof d.f==='string'){try{fdMerge(JSON.parse(d.f))}catch(e){}}}
-   if(wasDirty||LK.dirty||(!s.exists&&(locks.size||fdata.size)))tx.set(ref,{room:'wclock-'+ROOM,l:JSON.stringify(lkDump()),f:JSON.stringify(fdDump()),ts:Date.now()});
+   const snap=await tx.get(ref);
+   if(snap.exists){const d=snap.data()||{};if(typeof d.f==='string'){try{fdMerge(JSON.parse(d.f))}catch(e){}}}
+   if(wasDirty||FDSYNC.dirty||(!snap.exists&&fdata.size))tx.set(ref,{room:'wclock-'+ROOM,f:JSON.stringify(fdDump()),ts:Date.now()});
   });
-  LK.loaded=true;
- }catch(e){if(wasDirty)LK.dirty=true}
- LK.busy=false;
+  FDSYNC.loaded=true;
+ }catch(e){if(wasDirty)FDSYNC.dirty=true}
+ FDSYNC.busy=false;
 }
-setInterval(()=>{if(WMODE!=='multi')return;if(LK.dirty||!LK.loaded)lkSync()},15000);
+setInterval(()=>{if(WMODE!=='multi')return;if(FDSYNC.dirty||!FDSYNC.loaded)fdSync()},15000);
 function sendSig(to,obj){if(!fdb||!net.fs)return;fdb.collection(FS_SIG).add({to,s:JSON.stringify(Object.assign({f:net.id},obj)),t:Date.now(),c:++net.sc}).catch(e=>{if(e&&e.code==='resource-exhausted')toast('접속자가 너무 많아 새 친구가 들어오기 어려울 수 있습니다')})}
 function members(){ // 대기열 순서: 먼저 들어온 순 (j, id)
  const now=mono(),arr=[{id:net.id,n:net.name,j:net.j,me:true}];
@@ -2380,7 +2308,6 @@ function streamEdits(p,list){
  },30);
 }
 function bedEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&v[0]===B_BED)}
-function dlEditAt(x,y,z){if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z))return false;const m=edits.get(ckey(x>>4,z>>4)),v=m&&m.get((y*CH+(z&15))*CH+(x&15));return !!(v&&DLSET.has(v[0]))}
 function peerMsg(p,s){
  if(typeof s!=='string'||s.length>40000)return;
  let m;try{m=JSON.parse(s)}catch(e){return}
@@ -2399,7 +2326,6 @@ function peerMsg(p,s){
    if(!p.hiDone){p.hiDone=true;chatAdd('',p.name+' 님이 들어왔습니다','sys')}
    // 새로 들어온 사람에게: 바뀐 시간 / 내가 알고 있는 권한 목록(슈퍼어드민 이상일 때) 전달
    if(TTOUCH)peerSend(p,{k:'tm',h:curHour(),lk:TLOCK!==null?1:0,s:1},true);
-   for(const [lkk,r] of locks){const q=lkk.split('_').map(Number);peerSend(p,{k:'lk',x:q[0],y:q[1],z:q[2],c:r.c,t:r.t,o:r.o||'',s:1},true)}
    dropsTo(p);
    for(const [fk,r] of fdata){const q=fk.split('_').map(Number);peerSend(p,{k:'fd',x:q[0],y:q[1],z:q[2],v:r.v,t:r.t},true)}
    if(myRole()>=2)for(const [n,lv] of roles)peerSend(p,{k:'rl',n,lv,s:1},true);
@@ -2407,13 +2333,7 @@ function peerMsg(p,s){
    // 내가 오프라인 동안 만든 변경이 있으면 이 사람에게 (그가 모르는 것만) 보내준다
    if(net.offline.length){const l=net.offline.filter(e=>e[4]>p.mt);if(l.length)streamEdits(p,l)}
    updateStat();break;
-  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if((DEF[m.b]&&DEF[m.b].cmdonly&&!superOk(p.name))||(cmdEditAt(m.x,m.y,m.z)&&!canEditSuper(p.name,m.x,m.y,m.z)))break;if(m.b===0&&Number.isInteger(m.x)&&Number.isInteger(m.y)&&Number.isInteger(m.z)&&lockZoneAt(m.x,m.y,m.z)&&!lockCanBypass(p.name,m.x,m.y,m.z))break;{supLive=true;const _ob=getBlock(m.x,m.y,m.z),_ok=applyEdit(m.x,m.y,m.z,m.b,m.t);supLive=false;if(_ok&&state==='play')remoteBlkSnd(m.x,m.y,m.z,_ob,m.b)}break;
-  case 'lk':{ // 도어락 비밀번호 기록 (s=1 은 입장 동기화, 그 외는 슈퍼어드민 이상만)
-   if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
-   if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
-   {const cc=(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,old=lockGet(m.x,m.y,m.z);if(!m.s&&old&&cc!==old.c&&lvOf(p.name)<2)break}
-   lockApply(lkKey(m.x,m.y,m.z),(typeof m.c==='string'&&/^\d{4}$/.test(m.c))?m.c:null,Math.min(m.t,Date.now()+864e5),typeof m.o==='string'?m.o:'');
-  }break;
+  case 'bk':if((m.b===B_BED||bedEditAt(m.x,m.y,m.z))&&lvOf(p.name)<1)break;if((DEF[m.b]&&DEF[m.b].cmdonly&&!superOk(p.name))||(cmdEditAt(m.x,m.y,m.z)&&!canEditSuper(p.name,m.x,m.y,m.z)))break;{supLive=true;const _ob=getBlock(m.x,m.y,m.z),_ok=applyEdit(m.x,m.y,m.z,m.b,m.t);supLive=false;if(_ok&&state==='play')remoteBlkSnd(m.x,m.y,m.z,_ob,m.b)}break;
   case 'fd':{ // 서랍장/컴퓨터 데이터
    if(!Number.isInteger(m.x)||!Number.isInteger(m.y)||!Number.isInteger(m.z)||!fin(m.t))break;
    if(m.x<0||m.z<0||m.x>=WORLD||m.z>=WORLD||m.y<0||m.y>=WH)break;
@@ -2425,7 +2345,7 @@ function peerMsg(p,s){
   case 'sr':streamEdits(p,allEdits());break;
   case 'sy':if(Array.isArray(m.e)){for(const e of m.e)if(Array.isArray(e))applyEdit(e[0],e[1],e[2],e[3],e[4]);if(m.d&&net.pulling===p.id){net.synced=true;net.pulling='';updateStat()}}break;
   case 'ct':{const t=cleanText(m.t);if(t)chatAdd(p.name,t,'')}break;
-  case 'tm': // 시간 변경 (어드민 이상만 / s=1 은 입장 동기화: 아직 시간을 받은 적 없을 때만)
+  case 'tm': // 시간 변경 (누구나 가능 / s=1 은 입장 동기화)
    if(m.sl){ // 침대에서 잠 (누구나 가능: 밤일 때 아침으로)
     const hh=curHour();
     if(TLOCK===null&&(hh>=19||hh<5)){applyTime(6,false);chatAdd('',p.name+' 님이 잠들어 아침이 되었습니다','sys')}
@@ -2433,7 +2353,7 @@ function peerMsg(p,s){
    }
    if(fin(m.h)&&m.h>=0&&m.h<=24){
     if(m.s){if(!TTOUCH)applyTime(m.h,!!m.lk)}
-    else if(lvOf(p.name)>=1){applyTime(m.h,!!m.lk);chatAdd('',p.name+' 님이 시간을 '+Math.floor(m.h)+'시로 변경했습니다'+(m.lk?' (고정)':''),'sys')}
+    else{applyTime(m.h,!!m.lk);chatAdd('',p.name+' 님이 시간을 '+Math.floor(m.h)+'시로 변경했습니다'+(m.lk?' (고정)':''),'sys')}
    }break;
   case 'rl':break;
   case 'rl_':{ // 권한 변경: 보낸 사람의 권한으로 가능한 변경만 받아들임
@@ -2706,7 +2626,7 @@ cmd(['찾기','find','locate'],1,'/찾기 <블록 이름|번호>','가장 가까
  const [sx,sy,sz]=standSpot(r.x,r.y,r.z);teleport(sx,sy,sz);
  sys(DEF[b].name+' 발견! '+r.x+' / '+r.y+' / '+r.z+' (약 '+Math.round(r.dist)+'칸) 으로 이동했습니다');
 });
-cmd(['time','시간'],1,'/time [set|add|lock|unlock] ...','시간 변경 (예: /time set 밤, /time set 12, /time add 3, /time lock)',a=>{
+cmd(['time','시간'],0,'/time [set|add|lock|unlock] ...','시간 변경 (예: /time set 밤, /time set 12, /time add 3, /time lock)',a=>{
  const sub=(a[0]||'').toLowerCase();let h=curHour(),lock=TLOCK!==null;
  if(!sub||sub==='query')return sys('현재 시각 '+Math.floor(h)+'시 '+Math.floor((h%1)*60)+'분'+(lock?' (고정됨)':'')+' — /time set <0~24|일출|아침|정오|일몰|밤|자정>, add <시간>, lock, unlock');
  if(sub==='set'||sub==='설정'){const v=parseHour(a[1]);if(isNaN(v))return sys('사용법: /time set <0~24 또는 일출|아침|정오|일몰|밤|자정>');h=v}
@@ -2751,7 +2671,6 @@ cmd(['setblock','블록설치'],1,'/setblock <x> <y> <z> <블록>','블록 하�
  if(b<0)return sys('알 수 없는 블록입니다. /blocks 로 확인하세요');
  if(x<0||z<0||x>=WORLD||z>=WORLD||y<1||y>=WH)return sys('월드 밖입니다 (y 는 1~'+(WH-1)+')');
  if(!superOk(net.name)&&((b&&DEF[b].cmdonly)||(getChunk(x>>4,z>>4)&&DEF[getBlock(x,y,z)]&&DEF[getBlock(x,y,z)].cmdonly)))return sys('슈퍼블록은 이쭈영, joon0824 님만 다룰 수 있습니다');
- if(lockZoneAt(x,y,z)&&!lockCanBypass(net.name,x,y,z)&&(b===0||(getBlock(x,y,z)&&getBlock(x,y,z)!==B_WATER)))return sys('🔒 도어락 보호 구역입니다 — joon0824 또는 해당 도어락 설치자만 우회할 수 있습니다');
  localEdit(x,y,z,b);sys(x+' '+y+' '+z+' → '+(b?DEF[b].name:'공기'));
 });
 cmd(['say','공지'],1,'/say <메시지>  또는  /say <닉네임> <메시지>','화면 가운데에 크게 공지 (닉네임을 쓰면 그 사람에게만 보임)',a=>{
@@ -2780,7 +2699,6 @@ cmd(['fill','채우기'],2,'/fill <x1 y1 z1 x2 y2 z2> <블록>','영역을 블�
  const t=nextT(),list=[];
  for(let y=y1;y<=y2;y++)for(let z=z1;z<=z2;z++)for(let x=x1;x<=x2;x++){
   if(!superOk(net.name)){const q=getChunk(x>>4,z>>4)?getBlock(x,y,z):0;if(q&&DEF[q].cmdonly)continue}
-  if(lockZoneAt(x,y,z)&&!lockCanBypass(net.name,x,y,z)){const o=getChunk(x>>4,z>>4)?getBlock(x,y,z):1;if(o&&o!==B_WATER)continue}
   if(getChunk(x>>4,z>>4)&&getBlock(x,y,z)===b)continue;
   if(applyEdit(x,y,z,b,t)){markRegion(x,z);list.push([x,y,z,b,t])}
  }
@@ -2817,8 +2735,8 @@ cmd(['banlist','밴목록','차단목록'],1,'/banlist','차단된 닉네임 목
 });
 /* ---- 소유자 ---- */
 function updateAdminMenu(){const show=isOwner();$('bExport').style.display=show?'block':'none';$('bImport').style.display=show?'block':'none'}
-function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits(),locks:lkDump()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('월드를 파일로 저장했습니다')}
-function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('올바른 월드 파일이 아닙니다');if(d.edits.length>2000000)throw Error('월드 파일이 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}if(Array.isArray(d.locks))for(const e of d.locks)if(Array.isArray(e)&&typeof e[0]==='string'&&/^\d+_\d+_\d+$/.test(e[0]))lockApply(e[0],(typeof e[1]==='string'&&/^\d{4}$/.test(e[1]))?e[1]:null,Math.max(nextT(),+e[2]||0));saveNow();toast('월드를 불러왔습니다 (블록 '+count+'개)');}catch(err){toast('불러오기 실패: '+(err.message||'올바른 월드 파일이 아닙니다'))}};reader.readAsText(file)}
+function exportWebcraft(){if(!isOwner())return toast('소유자만 사용할 수 있습니다');const payload={format:'webcraft',version:1,room:ROOM,world:{width:WORLD,height:WH},exportedAt:new Date().toISOString(),edits:allEdits()};const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(ROOM==='main'?'world':ROOM)+'.webcraft';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('월드를 파일로 저장했습니다')}
+function importWebcraft(file){if(!isOwner())return toast('소유자만 사용할 수 있습니다');if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result));if(d.format!=='webcraft'||d.version!==1||!Array.isArray(d.edits))throw Error('올바른 월드 파일이 아닙니다');if(d.edits.length>2000000)throw Error('월드 파일이 너무 큽니다');let count=0;for(const e of d.edits){if(!Array.isArray(e)||e.length<5)continue;const [x,y,z,b,t]=e;if(![x,y,z,b,t].every(Number.isFinite)||![x,y,z,b].every(Number.isInteger)||x<0||x>=WORLD||z<0||z>=WORLD||y<1||y>=WH||b<0||b>NB)continue;if(applyEdit(x,y,z,b,Math.max(nextT(),t))){count++;markRegion(x,z)}}saveNow();toast('월드를 불러왔습니다 (블록 '+count+'개)');}catch(err){toast('불러오기 실패: '+(err.message||'올바른 월드 파일이 아닙니다'))}};reader.readAsText(file)}
 function chatAdd(who,txt,cls){
  const log=$('chatLog'),d=document.createElement('div');d.className=cls||'';
  if(who){const b=document.createElement('b');b.textContent=who+': ';d.appendChild(b)}
@@ -2858,7 +2776,7 @@ function catOf(i){
  if(CAT_CACHE[i])return CAT_CACHE[i];
  const d=DEF[i],n=d.name;let c='build';
  if(d.item)c='item';
- else if(FURN[i]||DLSET.has(i))c='furn';
+ else if(FURN[i])c='furn';
  else if(d.emit)c='light';
  else if(d.trans)c='glass';
  else if(/(반블록|계단)/.test(n))c='stair';
@@ -2980,161 +2898,6 @@ function togglePal(on){
  ui=on?'pal':'';if(on){PM.src='';buildPalette()}else{PM.src='';heldSet(0)}showOv('pal',on);
  if(on){if(document.pointerLockElement)document.exitPointerLock()}else lockPointer();
 }
-/* ---- 도어락 키패드 ---- */
-const LKS={x:0,y:0,z:0,buf:'',setMode:false,verified:false,fails:0,until:0}; // verified: 기존 비밀번호 확인 완료
-function lockRender(msg,bad){
- const rec=lockGet(LKS.x,LKS.y,LKS.z),adm=!rec||myRole()>=2;
- $('lkDisp').textContent=[0,1,2,3].map(i=>i<LKS.buf.length?'●':'○').join(' ');
- let t=msg;
- if(!t)t=LKS.setMode?(rec&&!LKS.verified?'기존 비밀번호 4자리를 먼저 입력하세요':'새 비밀번호 4자리를 입력하세요'):rec?'비밀번호 4자리를 입력하세요':(adm?'아직 비밀번호가 없습니다 — 아래 [비밀번호 설정]을 누르세요':'비밀번호가 설정되지 않은 도어락입니다');
- const m=$('lkMsg');m.textContent=t;m.style.color=bad?'#f88':(LKS.setMode?'#fd6':'#bbb');
- const s=$('lkSet');s.style.display=adm?'block':'none';s.textContent=LKS.setMode?'비밀번호 설정 취소':(rec?'비밀번호 변경':'비밀번호 설정');
-}
-function openLock(x,y,z,setMode){
- if(state!=='play'||ui)return;
- ui='lock';LKS.x=x;LKS.y=y;LKS.z=z;LKS.buf='';LKS.verified=false;LKS.setMode=!!setMode&&(!lockGet(x,y,z)||myRole()>=2);
- showOv('ovLock',true);if(document.pointerLockElement)document.exitPointerLock();lockRender();
-}
-function closeLock(){if(ui!=='lock')return;ui='';showOv('ovLock',false);lockPointer()}
-function lockPress(k){
- if(ui!=='lock')return;
- if(mono()<LKS.until)return lockRender('잠시 후 다시 시도하세요 ('+Math.ceil((LKS.until-mono())/1000)+'초)',true);
- if(k==='⌫')LKS.buf=LKS.buf.slice(0,-1);else if(k==='C')LKS.buf='';else if(LKS.buf.length<4)LKS.buf+=k;
- lockRender();
- if(LKS.buf.length===4)setTimeout(lockSubmit,120);
-}
-function lockSubmit(){
- if(ui!=='lock'||LKS.buf.length!==4)return;
- const code=LKS.buf;LKS.buf='';
- if(LKS.setMode){
-  const cur=lockGet(LKS.x,LKS.y,LKS.z);
-  if(cur&&myRole()<2)return;
-  if(cur&&!LKS.verified){ // 기존 비밀번호를 한 번 입력해야 변경 가능
-   if(code===cur.c){LKS.verified=true;LKS.fails=0;sfx(.1,520);return lockRender('✔ 확인되었습니다 — 새 비밀번호 4자리를 입력하세요')}
-   sfx(.15,120);LKS.fails++;
-   if(LKS.fails>=3){LKS.fails=0;LKS.until=mono()+5000;return lockRender('3번 틀렸습니다 — 5초 후 다시 시도하세요',true)}
-   return lockRender('기존 비밀번호가 틀렸습니다',true);
-  }
-  lockSetLocal(LKS.x,LKS.y,LKS.z,code);LKS.setMode=false;LKS.verified=false;sfx(.1,520);
-  toast('✔ 도어락 비밀번호를 설정했습니다',2200);closeLock();return;
- }
- const rec=lockGet(LKS.x,LKS.y,LKS.z);
- if(!rec)return lockRender('비밀번호가 설정되지 않은 도어락입니다',true);
- if(code===rec.c){LKS.fails=0;sfx(.12,620);closeLock();signalDoors(LKS.x,LKS.y,LKS.z);return}
- sfx(.15,120);LKS.fails++;
- if(LKS.fails>=3){LKS.fails=0;LKS.until=mono()+5000;lockRender('3번 틀렸습니다 — 5초 후 다시 시도하세요',true)}
- else lockRender('비밀번호가 틀렸습니다',true);
-}
-function lockKey(e){
- e.preventDefault();if(e.repeat)return;
- if(e.code==='Escape'){closeLock();return}
- if(e.code==='Backspace'){lockPress('⌫');return}
- if(/^(Digit|Numpad)\d$/.test(e.code))lockPress(e.code.slice(-1));
-}
-(function(){const g=$('lkPad');['1','2','3','4','5','6','7','8','9','⌫','0','C'].forEach(k=>{const d=document.createElement('div');d.textContent=k;d.addEventListener('pointerdown',e=>{e.preventDefault();lockPress(k)});g.appendChild(d)})})();
-$('lkSet').addEventListener('pointerdown',e=>{e.preventDefault();if(lockGet(LKS.x,LKS.y,LKS.z)&&myRole()<2)return;LKS.setMode=!LKS.setMode;LKS.verified=false;LKS.buf='';lockRender()});
-$('lkClose').addEventListener('pointerdown',e=>{e.preventDefault();closeLock()});
-/* 도어락 신호: 도어락 주변 2칸(정육면체) 안의 철문을 한꺼번에 열거나 닫는다 (하나라도 닫혀 있으면 모두 열기) */
-function signalDoors(x,y,z){
- const pairs=new Map();
- for(let dy=-2;dy<=2;dy++)for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){
-  const xx=x+dx,yy=y+dy,zz=z+dz,di=DINFO[getBlock(xx,yy,zz)];
-  if(!di||!DEF[di.base].iron)continue;
-  const ly=di.h?yy-1:yy;pairs.set(xx+','+ly+','+zz,[xx,ly,zz]);
- }
- const cells=[];
- for(const [a,b,c] of pairs.values())for(const yy of [b,b+1]){const di=DINFO[getBlock(a,yy,c)];if(di&&DEF[di.base].iron)cells.push([a,yy,c,di])}
- if(!cells.length)return toast('✔ 인증됨 — 근처 2칸 안에 철문이 없습니다',2200);
- const open=cells.some(q=>!q[3].o); // 하나라도 닫혀 있으면 모두 열기, 전부 열려 있으면 모두 닫기
- let n=0;
- for(const [a,yy,c,di] of cells){if(!!di.o===open)continue;localEdit(a,yy,c,di.base+di.h*8+(open?1:0)*4+di.f);n++}
- sfx(.12,200);toast(open?'🔓 철문이 열렸습니다':'🔒 철문이 닫혔습니다',1800);
-}
-/* ---- 가구 상호작용 ---- */
-function sleepIn(){ // 침대: 밤(19시~5시)에만 잘 수 있고, 자면 아침이 됨
- if(state!=='play'||ui)return;
- const hr=curHour();
- if(TLOCK!==null)return toast('시간이 고정되어 있어 잘 수 없습니다',1800);
- if(SVMODE){for(const a of animals.values())if(ATYPES[a.type].hostile&&Math.hypot(a.x-P.x,a.z-P.z)<24)return toast('근처에 몬스터가 있어 잘 수 없습니다',2000)}
- if(!(hr>=19||hr<5))return toast('아직 졸리지 않습니다 — 밤(19시~5시)에만 잘 수 있습니다',2200);
- ui='sleep';$('fade').style.opacity=1;
- setTimeout(()=>{
-  applyTime(6,false);netBroadcast({k:'tm',h:6,lk:0,sl:1},true);$('fade').style.opacity=0;
-  setTimeout(()=>{if(ui==='sleep')ui='';toast('좋은 아침입니다! ☀',1800)},800);
- },1300);
-}
-function sitOn(h){ // 소파: 앉기 (이동 키를 누르면 일어남)
- if(state!=='play'||ui||P.sit)return;
- const fi=FURN[h.b];if(!fi)return;
- if(Math.hypot(h.x+.5-P.x,h.z+.5-P.z)>4.5)return toast('너무 멉니다',1000);
- P.sit={x:h.x,y:h.y,z:h.z};P.fly=false;P.vx=P.vy=P.vz=0;
- P.x=h.x+.5+DX[fi.f]*.15;P.z=h.z+.5+DZ[fi.f]*.15;P.y=h.y+.5;
- toast('앉았습니다 — 이동 키(WASD/점프)로 일어서기',1800);
-}
-const PCS={x:0,y:0,z:0,old:''};
-function pcInfo(){
- const h=curHour(),hh=Math.floor(h),mm=Math.floor((h%1)*60),n=[...peers.values()].filter(p=>p.open).length+1;
- $('pcHead').textContent='WEBCRAFT 컴퓨터\n> 월드 '+ROOM+' · 시각 '+String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')+' · 접속자 '+n+'명\n> 내 위치 '+P.x.toFixed(0)+' / '+P.y.toFixed(0)+' / '+P.z.toFixed(0)+'\n> 메모장 — 이 컴퓨터에 저장되고 접속자와 공유됩니다 (300자)';
-}
-function openPC(x,y,z){
- if(state!=='play'||ui)return;
- ui='pc';PCS.x=x;PCS.y=y;PCS.z=z;
- const v=fdGet(x,y,z),m=typeof v==='string'?v:'';PCS.old=m;$('pcMemo').value=m;
- showOv('ovPC',true);if(document.pointerLockElement)document.exitPointerLock();pcInfo();
- setTimeout(()=>{try{$('pcMemo').focus()}catch(e){}},50);
-}
-function closePC(save){
- if(ui!=='pc')return;
- if(save){const t=fdClean($('pcMemo').value)||'';if(t!==PCS.old){fdSet(PCS.x,PCS.y,PCS.z,t||null);toast('💾 메모를 저장했습니다',1500)}}
- ui='';showOv('ovPC',false);$('pcMemo').blur();lockPointer();
-}
-$('pcMemo').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();closePC(true)}});
-$('pcMemo').addEventListener('keyup',e=>e.stopPropagation());
-$('pcSave').onclick=()=>closePC(true);$('pcClose').onclick=()=>closePC(false);
-const _dr=mkSlots(27);
-const DRS={x:0,y:0,z:0,key:'',items:_dr.arr,n:_dr.cnt,sel:null};
-const drC=s=>s==='d'?{a:DRS.items,n:DRS.n}:contOf(s==='i'?'i':'h');
-function drLoad(v){const a=drItems(v);for(let i=0;i<27;i++){const x=a[i],b=x&1023;DRS.items[i]=b;DRS.n[i]=b?clamp((x>>10)||1,1,STK[b]||1):0}}
-const drPack=()=>DRS.items.map((b,i)=>b?(b|(DRS.n[i]<<10)):0);
-function drCell(b,n,sel,on){
- const d=document.createElement('div');d.className='dcell'+(sel?' sel':'');
- if(b&&!sel){const c=iconCanvas(b,32);c.title=DEF[b].name;d.appendChild(c);cntBadge(d,n)}
- d.addEventListener('pointerdown',e=>{e.preventDefault();on(e)});return d;
-}
-function drRender(){
- const g=$('drGrid'),iv=$('drInv'),hb=$('drHot');g.textContent='';iv.textContent='';hb.textContent='';
- const S=DRS.sel,on=(s,i)=>!!(S&&S.src===s&&S.i===i);
- DRS.items.forEach((b,i)=>g.appendChild(drCell(b,DRS.n[i],on('d',i),e=>drClick('d',i,e))));
- inv.forEach((b,i)=>iv.appendChild(drCell(b,invN[i],on('i',i),e=>drClick('i',i,e))));
- hotbar.forEach((b,i)=>hb.appendChild(drCell(b,hotN[i],on('h',i),e=>drClick('h',i,e))));
- heldSet(S?drC(S.src).a[S.i]:0,S?drC(S.src).n[S.i]:0);
-}
-let drLast={k:'',t:0};
-function drQuick(src,i){ // 서랍장 → 핫바/가방, 내 가방 → 서랍장
- const c=drC(src);if(!c.a[i])return;let ok;
- if(src==='d'){ok=quickMove(c,i,drC('h'));if(c.a[i])ok=quickMove(c,i,drC('i'))||ok}
- else ok=quickMove(c,i,drC('d'));
- if(!ok){toast('옮길 빈 칸이 없어요',1200);return}
- DRS.sel=null;uiSnd('put');renderHotbar();saveInv();drRender();fdSet(DRS.x,DRS.y,DRS.z,drPack());
-}
-function drClick(src,i,ev){
- const S=DRS,k=src+i,now=performance.now(),dbl=drLast.k===k&&now-drLast.t<380;drLast={k,t:dbl?0:now};
- if(drC(src).a[i]&&((ev&&ev.shiftKey)||dbl)){S.sel=null;return drQuick(src,i)}
- if(!S.sel){if(drC(src).a[i]){S.sel={src,i};uiSnd('pick')}return drRender()}
- const a=S.sel;S.sel=null;
- if(!(a.src===src&&a.i===i)){
-  moveStack(drC(a.src),a.i,drC(src),i);
-  renderHotbar();saveInv();if(a.src==='d'||src==='d')fdSet(S.x,S.y,S.z,drPack());
- }
- uiSnd('put');drRender();
-}
-function openDresser(x,y,z){
- if(state!=='play'||ui)return;
- ui='dr';DRS.x=x;DRS.y=y;DRS.z=z;DRS.key=lkKey(x,y,z);drLoad(fdGet(x,y,z));DRS.sel=null;
- showOv('ovDr',true);if(document.pointerLockElement)document.exitPointerLock();drRender();sfx(.08,300);
-}
-function closeDr(){if(ui!=='dr')return;ui='';DRS.sel=null;heldSet(0);showOv('ovDr',false);saveInv();lockPointer()}
-$('drClose').onclick=closeDr;
 /* ===================== 서바이벌 전용 인벤토리 (지금은 꺼져 있음) =====================
    · SURV.enabled = true 가 되면 E 키가 이 인벤토리를 엽니다 (지금은 false 라 기존 크리에이티브 E 화면 그대로)
    · 크리에이티브 인벤토리와 완전히 따로 저장됩니다 (핫바 / 가방 27칸 / 방어구 4칸 / 제작칸)
@@ -4372,7 +4135,7 @@ function playerDie(why){
  if(P.dead)return;P.dead=true;P.sit=null;
  for(const k in keys)keys[k]=false;hold.b=hold.p=0;
  if(chatOpen)closeChat(false);
- for(const id of ['ovSurv','ovLock','ovDr','ovPC','ovEn','ovJb','pal','ovMap','ovPause'])if($(id))showOv(id,false);
+ for(const id of ['ovSurv','ovDr','ovPC','ovEn','ovJb','pal','ovMap','ovPause'])if($(id))showOv(id,false);
  heldSet(0);PM.src='';DRS.sel=null;SURV.sel=null;
  const list=[];hotbar.forEach((b,i)=>{if(b)list.push([b,hotN[i]])});inv.forEach((b,i)=>{if(b)list.push([b,invN[i]])});ARM.forEach(b=>{if(b)list.push([b,1])});
  hotbar.fill(0);inv.fill(0);ARM.fill(0);
@@ -4486,7 +4249,7 @@ function leaveGame(){
  micOff();
  savePos();
  netDisconnect();net.synced=false;
- state='title';ui='';ARM.fill(0);renderArm();renderVitals();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovLock',false);showOv('ovDr',false);showOv('ovPC',false);if($('ovSurv'))showOv('ovSurv',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
+ state='title';ui='';ARM.fill(0);renderArm();renderVitals();chatOpen=false;$('chat').classList.remove('open');P.fly=false;SPDM=1;for(const k in keys)keys[k]=false;hold.b=hold.p=0;showOv('ovPause',false);showInfo=false;$('info').style.display='none';showOv('ovDr',false);showOv('ovPC',false);if($('ovSurv'))showOv('ovSurv',false);$('fade').style.opacity=0;if(document.pointerLockElement)document.exitPointerLock();
  $('hud').style.display='none';$('touch').style.display='none';$('chatLog').textContent='';showOv('ovTitle',true);newSplash();showOv('ovQueue',false);showOv('pal',false);showOv('ovMap',false);showTab(false);
  for(const [id,e] of tagEls){e.remove()}tagEls.clear();animals.clear();for(const e of atagEls.values())e.remove();atagEls.clear();
  const [x,z]=[5000,5000];placeAtSurface(x,z);
@@ -4865,7 +4628,7 @@ const SPLASHES=[
 '침대는 밤에만 잘 수 있어요','횃불은 많을수록 좋아요','좀비는 낮에 불타요','땅을 파고 내려가 봐요!','다이아몬드는 어디에?',
 '조약돌 부자 되기','집부터 지으세요!','WASD 로 움직여요','점프 두 번이면 비행!','Shift 는 몰래 걷기',
 'Ctrl 누르고 달리기!','N 키로 지도를 열어요','M 키로 마이크 켜기!','T 키로 수다 떨기','E 로 가방 열기',
-'/help 를 입력해 보세요','도어락 비밀번호는 4자리','철문은 레드스톤 없이도 열려요','서랍장에 보물을 숨겨요','컴퓨터에 메모를 남겨요',
+'/help 를 입력해 보세요','시간을 바꿔 낮과 밤을 즐겨 보세요','철문은 레드스톤 없이도 열려요','서랍장에 보물을 숨겨요','컴퓨터에 메모를 남겨요',
 '소파에 앉아서 쉬어요','재생기로 음악을 틀어요!','개한테 뼈를 줘 보세요','멍멍! 길들이기 성공?','꼬꼬댁!',
 '돼지는 사랑입니다','소는 우유가 아니라 가죽을 줘요','양털 색이 8가지!','선인장은 따갑대요','호박등 반짝반짝',
 '바다 랜턴이 예뻐요','네온 블록 짱!','마그마 블록 위는 뜨거워요','흑요석은 단단해요','기반암은 못 부숴요',
