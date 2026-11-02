@@ -4723,8 +4723,8 @@ function tvPanel(c){
  const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(c.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-c.t)/1000))):0)});
  if(location.protocol.slice(0,4)==='http')p.set('origin',location.origin);
  let src;
- if(c.v){src='https://www.youtube-nocookie.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
- else{src='https://www.youtube-nocookie.com/embed/videoseries?';p.set('list',c.pl)}
+ if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
+ else{src='https://www.youtube.com/embed/videoseries?';p.set('list',c.pl)}
  if(c.pl&&c.l)p.set('loop','1');
  const el=document.createElement('iframe');
  el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
@@ -4778,8 +4778,8 @@ function tvFrame(c,W,H){
   let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
   const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(st.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-st.t)/1000))):0)});
   let src;
-  if(st.v){src='https://www.youtube-nocookie.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
-  else{src='https://www.youtube-nocookie.com/embed/videoseries?';p.set('list',st.pl)}
+  if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
+  else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
   if(st.pl&&st.l)p.set('loop','1');
   const el=document.createElement('iframe');
   el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
