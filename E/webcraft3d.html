@@ -703,6 +703,20 @@ const JB_SIDE=xt([112,78,46],8,null,(x,y)=>{
  return null;
 });
 const JUKE=defx('재생기',JB_TOP,JB_SIDE,JB_SIDE,{});
+/* ---- TV / 디스플레이: 얇은 판 모양 가구. 같은 방향으로 붙이면 하나의 큰 화면이 됨 (동작은 아래 'TV / 디스플레이' 구역) ---- */
+const TVFRONT=xt([14,16,22],5,null,(x,y)=>(x===0||x===15||y===0||y===15)?[6,6,8]:((x+y>=4&&x+y<=5&&x<7)?[56,62,78]:null));
+const DPFRONT=xt([14,16,22],5,null,(x,y)=>((x+y>=4&&x+y<=5&&x<7)?[48,54,68]:null));
+const TVSIDE=xt([38,40,46],6,null);
+const TVSLAB=[[0,0,0,1,1,.4]];
+for(const [nm,ft0] of [['TV',TVFRONT],['디스플레이',DPFRONT]]){
+ const ids=[];
+ for(let f=0;f<4;f++){
+  const ft=[];ft[FRONT[f]]=ft0;const bx=rotBoxes(TVSLAB,kOf(f));
+  const id=defx(nm+SFX4(f),TVSIDE,TVSIDE,TVSIDE,{shape:bx,col:bx,hide:f?1:0,ft,icon:ft0});
+  ids.push(id);FURN[id]={t:'tv',f,base:ids[0]};if(id!==ids[0])BASEOF[id]=ids[0];
+ }
+ DEF[ids[0]].name=nm;FVAR[ids[0]]=ids;
+}
 /* ---- 음식 (서바이벌에서 배고픔 회복) ---- */
 const RAW_T=xt([0,0,0,0],0,null,(x,y)=>{const dx=(x-7.5)/5.6,dy=(y-8)/4.4;if(dx*dx+dy*dy>1)return null;return ((x*3+y*5)%7<2)?[250,176,176]:[216,94,104]});
 const COOK_T=xt([0,0,0,0],0,null,(x,y)=>{const dx=(x-7.5)/5.6,dy=(y-8)/4.4;if(dx*dx+dy*dy>1)return null;return ((x*3+y*5)%7<2)?[196,124,66]:[150,82,42]});
@@ -765,7 +779,7 @@ rshp(['C','S'],{C:[W_COAL,W_CHAR],S:W_STICK},RIDN('횃불'),4);rshp(['S S','SSS'
 rshp(['PP','PP','PP'],{P:RPL},RIDN('참나무 문'),3);rshp(['II','II','II'],{I:W_ING_I},RIDN('철문'),3);
 rshp(['PSP','PSP'],{P:RPL,S:W_STICK},RIDN('참나무 울타리'),3);rshp(['III','III'],{I:W_ING_I},RIDN('철창'),16);
 rshp(['WWW','PPP'],{W:[16,17,18,19,20,21,22,23],P:RPL},RIDN('빨간 침대'));
-rshp(['PPP','P P','PPP'],{P:RPL},RIDN('참나무 서랍장'));rshp(['BBB',' I ','III'],{B:35,I:W_ING_I},RIDN('모루'));
+rshp(['PPP','P P','PPP'],{P:RPL},RIDN('참나무 서랍장'));rshp(['III','IGI','III'],{I:W_ING_I,G:9},RIDN('TV'));rshp(['II','IG'],{I:W_ING_I,G:9},RIDN('디스플레이'),2);rshp(['BBB',' I ','III'],{B:35,I:W_ING_I},RIDN('모루'));
 /* ---- 대량 추가: 광석 · 목재 · 석재 · 색 블록 · 식량/재료 아이템 · 금/가죽 장비 ---- */
 const fxc=(name,c,v,fn,o)=>{XID[name]=cube(name,xt(c,v,null,fn),o);return XID[name]};
 const oreB=(col,hl)=>(x,y)=>{for(const [bx,by] of [[2,2],[9,3],[5,9],[11,10],[1,11]])if(x>=bx&&x<=bx+2&&y>=by&&y<=by+1&&!(x===bx+2&&y===by+1))return (x===bx&&y===by)?hl:col;return null};
@@ -867,9 +881,9 @@ function washAway(x,y,z,b){ // 물에 쓸려 나감 (모든 접속자가 같은 
  spawnDrop(dropItemOf(b),x+.5,y+.35,z+.5,{id:'w'+x+'_'+y+'_'+z+'_'+b,vy:1.5});
 }
 
-const atlas=document.createElement('canvas');atlas.width=256;atlas.height=512;
+const atlas=document.createElement('canvas');atlas.width=256;atlas.height=1024;
 (function drawAtlas(){
- const g=atlas.getContext('2d'),img=g.createImageData(256,512),D=img.data;
+ const g=atlas.getContext('2d'),img=g.createImageData(256,1024),D=img.data;
  let rs=12345;const rnd=()=>{rs=(Math.imul(rs,1103515245)+12345)>>>0;return rs/4294967296};
  const put=(t,x,y,r,gg,b,a)=>{const X=(t%16)*16+x,Y=((t/16)|0)*16+y,i=(Y*256+X)*4;D[i]=clamp(r,0,255);D[i+1]=clamp(gg,0,255);D[i+2]=clamp(b,0,255);D[i+3]=a===undefined?255:a};
  const tile=(t,base,v,fn)=>{for(let y=0;y<16;y++)for(let x=0;x<16;x++){const n=(rnd()-.5)*v;let c=base;if(fn){const r=fn(x,y);if(r)c=r}put(t,x,y,c[0]+n,c[1]+n,c[2]+n,c[3])}};
@@ -975,7 +989,7 @@ const atlas=document.createElement('canvas');atlas.width=256;atlas.height=512;
  XTILES.forEach((d,i)=>{const c=d.c;tile(80+i,c,d.v,d.fn?(x,y)=>d.fn(x,y,c):patFn(d.p,c))});
  g.putImageData(img,0,0);
 })();
-const tileUV=t=>{const e=.0006,s=1/16,s2=1/32,u=(t%16)*s,v=((t/16)|0)*s2;return [u+e,v+e,u+s-e,v+s2-e]};
+const tileUV=t=>{const e=.0006,s=1/16,s2=1/64,u=(t%16)*s,v=((t/16)|0)*s2;return [u+e,v+e,u+s-e,v+s2-e]};
 
 /* ===================== 월드 데이터 / 편집 기록 ===================== */
 const chunks=new Map();           // key -> {cx,cz,d,maxY,dirty,m:{s,t}}
@@ -1194,7 +1208,7 @@ function applyEdit(x,y,z,b,t){
  let m=edits.get(k);if(!m){m=new Map();edits.set(k,m)}
  const old=m.get(idx);if(old&&old[1]>=t)return false;
  if(!old)editCount++;
- m.set(idx,[b,t]);if(t>maxT)maxT=t;saveDirty=true;
+ m.set(idx,[b,t]);if(t>maxT)maxT=t;saveDirty=true;tvVer++;
  setLoaded(x,y,z,b);if(supLive)supEnq(x,y,z);return true;
 }
 
@@ -1267,7 +1281,7 @@ function fdClean(v){
 }
 function fdApply(key,v,t){
  if(!fin(t))return false;const r=fdata.get(key);if(r&&r.t>=t)return false;
- fdata.set(key,{v,t});fdDirty=true;FDSYNC.dirty=true;jbOnData(key,v);
+ fdata.set(key,{v,t});fdDirty=true;FDSYNC.dirty=true;jbOnData(key,v);tvOnData(key,v);
  if(ui==='dr'&&DRS.key===key){drLoad(v);drRender()}
  return true;
 }
@@ -1289,7 +1303,7 @@ async function setWorldMode(m){
  for(const c of [...chunks.values()])freeChunk(c);
  edits.clear();editCount=0;maxT=0;lastT=0;saveDirty=false;
  FDSYNC.dirty=false;FDSYNC.loaded=false;FDSYNC.busy=false;
- fdata.clear();fdDirty=false;
+ fdata.clear();fdDirty=false;tvState.clear();tvGrpC.clear();tvClear();
  CS.dirty.clear();CS.sizes.clear();CS.big.clear();CS.blocked=false;CS.loaded=false;
  drops.clear();dropSeen.clear();mapBase=null;listCx=-999;
  const sf=m==='solo'?'_solo':'';SAVE_KEY='edits_'+ROOM+sf;FD_KEY='fd_'+ROOM+sf;
@@ -1490,7 +1504,7 @@ function meshChunk(c){
  c.m={s:bufs.s.nf?mkMesh(bufs.s.v,bufs.s.nf*4,bufs.s.i,bufs.s.nf*6):null,t:bufs.t.nf?mkMesh(bufs.t.v,bufs.t.nf*4,bufs.t.i,bufs.t.nf*6):null};
  c.dirty=false;
 }
-function addChunk(cx,cz){const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);{const ed=edits.get(ckey(cx,cz));if(ed)for(const [idx,v] of ed)if(v[0]===B_WATER)wEnqAround(cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15))}if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
+function addChunk(cx,cz){tvVer++;const c=genChunk(cx,cz);chunks.set(ckey(cx,cz),c);{const ed=edits.get(ckey(cx,cz));if(ed)for(const [idx,v] of ed)if(v[0]===B_WATER)wEnqAround(cx*CH+(idx&15),idx>>8,cz*CH+((idx>>4)&15))}if(c.ems.size)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)if(dx||dz)markDirty(cx+dx,cz+dz);return c}
 function freeChunk(c){if(c.m){delMesh(c.m.s);delMesh(c.m.t)}chunks.delete(ckey(c.cx,c.cz));if(wlev.size)for(const k of [...wlev.keys()]){const x=k%WORLD,z=Math.floor(k/WORLD)%WORLD;if((x>>4)===c.cx&&(z>>4)===c.cz)wlev.delete(k)}}
 
 /* ---- 청크 로딩 관리 ---- */
@@ -1762,7 +1776,7 @@ function breakBlock(){
  }
  if(fi){
   if(fi.t==='bed'){const sg=fi.part?-1:1,qx=h.x+DX[fi.f]*sg,qz=h.z+DZ[fi.f]*sg,qi=FURN[getBlock(qx,h.y,qz)];if(qi&&qi.t==='bed'&&qi.base===fi.base&&qi.f===fi.f&&qi.part!==fi.part)localEdit(qx,h.y,qz,0)}
-  else if(fi.t==='dresser'||fi.t==='pc')fdClear(h.x,h.y,h.z);
+  else if(fi.t==='dresser'||fi.t==='pc'||fi.t==='tv')fdClear(h.x,h.y,h.z);
  }
  if(h.b===JUKE)fdClear(h.x,h.y,h.z);
  const di=DINFO[h.b];if(di){const oy=h.y+(di.h?-1:1),od=DINFO[getBlock(h.x,oy,h.z)];if(od&&od.base===di.base)localEdit(h.x,oy,h.z,0)} // 문은 위/아래 같이
@@ -1794,6 +1808,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
   else if(fi.t==='sofa')sitOn(h);
   else if(fi.t==='dresser')openDresser(h.x,h.y,h.z);
   else if(fi.t==='pc')openPC(h.x,h.y,h.z);
+  else if(fi.t==='tv')openTv(h.x,h.y,h.z);
    else if(fi.t==='ench')openEnch(0);
    else if(fi.t==='anvil')openEnch(1);
   return true;
@@ -1890,7 +1905,7 @@ function matOf(b){ // 블록 이름으로 재질 알아내기
  else if(/모래$/.test(n))m='sand';
  else if(/자갈/.test(n))m='gravel';
  else if(/^눈|눈 블록/.test(n))m='snow';
- else if(/(철|금|구리|다이아몬드|에메랄드|네더라이트) 블록$|철창|모루|철문|컴퓨터|슈퍼블록/.test(n)||d.iron)m='metal';
+ else if(/(철|금|구리|다이아몬드|에메랄드|네더라이트) 블록$|철창|모루|철문|컴퓨터|슈퍼블록|^TV|^디스플레이/.test(n)||d.iron)m='metal';
  else if(d.trans||/유리|얼음|발광석|램프|네온|바다 랜턴|등불 블록|버섯등|개구리등/.test(n))m='glass';
  else if(/슬라임/.test(n))m='slime';
  else if(/양털|카펫|침대|소파|스펀지/.test(n)||(typeof FURN!=='undefined'&&FURN[b]&&FURN[b].t==='sofa'))m='cloth';
@@ -3186,6 +3201,7 @@ document.addEventListener('keydown',e=>{
  if(ui==='en'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeEn()}return}
  if(ui==='surv'){if(e.code==='Escape'||e.code==='KeyE'){e.preventDefault();closeSurv()}return}
  if(ui==='jb'){if(e.code==='Escape'){e.preventDefault();closeJuke()}return}
+ if(ui==='tv'){if(e.code==='Escape'){e.preventDefault();closeTv()}return}
  if(ui==='pc')return;
  if(e.code==='KeyE'){togglePal();e.preventDefault();return}
  if(e.code==='F5'||e.code==='KeyV'){e.preventDefault();if(!ui)cycleView();return}
@@ -4245,7 +4261,7 @@ function enterGame(){
 function goFS(){try{const e=document.documentElement;(e.requestFullscreen||e.webkitRequestFullscreen||(()=>{})).call(e)}catch(x){}}
 function leaveGame(){
  drops.clear();dropSeen.clear();supQ.length=0;supI=0;for(const k of [...jbAud.keys()])jbStop(k);
- saveInv();P.sit=null;if(ui==='pc')closePC(true);if($('ovDead'))showOv('ovDead',false);P.dead=false;
+ saveInv();tvClear();P.sit=null;if(ui==='pc')closePC(true);if($('ovDead'))showOv('ovDead',false);P.dead=false;
  micOff();
  savePos();
  netDisconnect();net.synced=false;
@@ -4565,6 +4581,249 @@ async function jbUpload(file){
  toast('🎵 올렸습니다 — ▶ 재생을 누르세요',2200);
 }
 
+/* ===================== TV / 디스플레이 =====================
+   · TV(1x1) 와 디스플레이 블록을 같은 방향으로 붙이면 하나의 큰 화면이 된다 (붙은 사각형 전체 = 화면 하나)
+   · 우클릭 = 조작창(유튜브 주소 / 전원). 창을 닫아도 전원을 끄기 전까지 계속 재생
+   · 상태는 가구 데이터(fdata)에 'TV|{json}' 로 저장·동기화 → 모든 접속자가 같은 영상을 같은 시점으로 봄
+   · 화면은 3D 화면 위에 iframe 을 투영 변환(matrix3d)으로 얹어 그린다. 소리는 25칸 안에서부터, 가까울수록 크게 */
+const tvState=new Map(),tvGrpC=new Map(),tvFr=new Map(),TVS={x:0,y:0,z:0},TVRANGE=25;
+let tvVer=0;
+const tvLayer=document.createElement('div');
+tvLayer.id='tvLayer';tvLayer.style.cssText='position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0';
+document.body.insertBefore(tvLayer,$('hud'));
+const isTv=b=>{const q=FURN[b];return !!q&&q.t==='tv'};
+function ytParse(s){
+ s=String(s||'').trim();if(!s)return null;
+ if(/^[\w-]{11}$/.test(s))return {v:s,pl:''};
+ let u;try{u=new URL(/^https?:\/\//i.test(s)?s:'https://'+s)}catch(e){return null}
+ const h=u.hostname.replace(/^(www|m|music)\./,'');let v='',pl='';
+ if(h==='youtu.be')v=u.pathname.slice(1).split('/')[0];
+ else if(h==='youtube.com'||h==='youtube-nocookie.com'){
+  if(u.pathname==='/watch')v=u.searchParams.get('v')||'';
+  else{const m=/^\/(?:shorts|embed|live|v)\/([\w-]{11})/.exec(u.pathname);if(m)v=m[1]}
+ }else return null;
+ pl=u.searchParams.get('list')||'';
+ if(!/^[\w-]{11}$/.test(v)||v==='videoseries')v='';
+ if(!/^[\w-]{10,64}$/.test(pl))pl='';
+ return (v||pl)?{v,pl}:null;
+}
+function tvParse(v){
+ if(typeof v!=='string'||v.slice(0,3)!=='TV|')return null;
+ try{
+  const o=JSON.parse(v.slice(3));if(!o||typeof o!=='object')return null;
+  const vid=typeof o.v==='string'&&/^[\w-]{11}$/.test(o.v)?o.v:'',pl=typeof o.pl==='string'&&/^[\w-]{10,64}$/.test(o.pl)?o.pl:'';
+  return {on:o.on?1:0,v:vid,pl,l:o.l===0?0:1,t:fin(o.t)?o.t:0};
+ }catch(e){return null}
+}
+function tvOnData(key,v){
+ const s=tvParse(v);if(s)tvState.set(key,s);else tvState.delete(key);
+ tvVer++;if(ui==='tv')tvRender();
+}
+function tvBuild(x,y,z){
+ const b0=getBlock(x,y,z);if(!isTv(b0))return null;
+ const f=FURN[b0].f,hx=f%2===0?1:0,hz=1-hx;
+ const seen=new Set([lkKey(x,y,z)]),st=[[x,y,z]],mem=[];
+ while(st.length&&mem.length<400){
+  const c=st.pop();mem.push(c);
+  for(const [d,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+   const nx=c[0]+d*hx,ny=c[1]+dy,nz=c[2]+d*hz,k=lkKey(nx,ny,nz);
+   if(seen.has(k))continue;seen.add(k);
+   const nb=getBlock(nx,ny,nz);if(isTv(nb)&&FURN[nb].f===f)st.push([nx,ny,nz]);
+  }
+ }
+ let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9;
+ for(const c of mem){x0=Math.min(x0,c[0]);x1=Math.max(x1,c[0]);y0=Math.min(y0,c[1]);y1=Math.max(y1,c[1]);z0=Math.min(z0,c[2]);z1=Math.max(z1,c[2])}
+ const w=hx?x1-x0+1:z1-z0+1,h=y1-y0+1,T=y1+1,B=y0;let cs;
+ // 화면 네 모서리: 앞에서 봤을 때 왼쪽위, 오른쪽위, 오른쪽아래, 왼쪽아래
+ if(f===2){const p=z0+.4;cs=[[x0,T,p],[x1+1,T,p],[x1+1,B,p],[x0,B,p]]}
+ else if(f===0){const p=z0+.6;cs=[[x1+1,T,p],[x0,T,p],[x0,B,p],[x1+1,B,p]]}
+ else if(f===1){const p=x0+.4;cs=[[p,T,z1+1],[p,T,z0],[p,B,z0],[p,B,z1+1]]}
+ else{const p=x0+.6;cs=[[p,T,z0],[p,T,z1+1],[p,B,z1+1],[p,B,z0]]}
+ const anchor=mem.slice().sort((a,b)=>a[1]-b[1]||a[0]-b[0]||a[2]-b[2])[0];
+ let win=null,bt=-1;
+ for(const c of mem){const k=lkKey(c[0],c[1],c[2]);if(tvState.has(k)){const r=fdata.get(k),t=r?r.t:0;if(t>=bt){bt=t;win=k}}}
+ return {f,mem,w,h,cs,anchor,win,nrm:[DX[f],0,DZ[f]],bb:[x0,y0,z0,x1+1,y1+1,z1+1],
+  center:[(cs[0][0]+cs[2][0])/2,(cs[0][1]+cs[2][1])/2,(cs[0][2]+cs[2][2])/2]};
+}
+function tvGroup(x,y,z){
+ const k0=lkKey(x,y,z),c=tvGrpC.get(k0);if(c&&c.ver===tvVer)return c.g;
+ const g=tvBuild(x,y,z);if(!g)return null;
+ if(tvGrpC.size>200)tvGrpC.clear();tvGrpC.set(k0,{ver:tvVer,g});return g;
+}
+const tvCur=g=>g&&g.win?tvState.get(g.win):null;
+function tvWrite(g,st){
+ const key=g.win||lkKey(g.anchor[0],g.anchor[1],g.anchor[2]),q=key.split('_').map(Number);
+ const o={on:st.on?1:0,v:st.v||'',pl:st.pl||'',l:st.l===0?0:1,t:Math.floor(st.t||Date.now())};
+ fdSet(q[0],q[1],q[2],'TV|'+JSON.stringify(o));
+ for(const c of g.mem){const k=lkKey(c[0],c[1],c[2]);if(k!==key&&tvState.has(k))fdSet(c[0],c[1],c[2],null)}
+}
+/* ---- 조작창: 큰 유튜브 플레이어 (소리 · 키보드 · 전체화면 모두 유튜브가 직접 처리) ---- */
+const tvP={el:null,sig:'',id:'',ct:0,at:0,ps:0};
+function tvEl(){
+ let el=$('ovTv');if(el)return el;
+ el=document.createElement('div');el.className='ov';el.id='ovTv';
+ el.innerHTML='<div class="card" style="width:min(1100px,98vw);max-height:98vh;padding:12px 14px;pointer-events:auto">'
+  +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:20px">📺 TV</b>'
+  +'<input class="t" id="tvUrl" maxlength="150" placeholder="유튜브 링크 붙여넣기 (또는 검색어)" autocomplete="off" style="flex:1 1 220px;margin:0;text-align:left;padding:7px">'
+  +'<div class="b" id="tvPlay" style="width:auto;margin:0;padding:8px 14px">▶ 재생</div>'
+  +'<div class="b dim" id="tvYt" style="width:auto;margin:0;padding:8px 12px">youtube.com 열기 ↗</div></div>'
+  +'<div class="sub" id="tvInfo" style="margin:6px 0;white-space:pre-line"></div>'
+  +'<div id="tvBox" style="position:relative;margin:0 auto;background:#000;border:2px solid #555;width:min(100%,calc((98vh - 230px)*1.7778));aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;color:#888;font-size:15px"></div>'
+  +'<div style="display:flex;gap:8px;flex-wrap:wrap"><div class="b dim" id="tvPower" style="flex:1 1 120px"></div><div class="b dim" id="tvRestart" style="flex:1 1 120px">↺ 처음부터</div><div class="b dim" id="tvLoop" style="flex:1 1 120px"></div><div class="b dim" id="tvClose" style="flex:1 1 120px">닫기 (Esc)</div></div></div>';
+ document.body.appendChild(el);
+ const act=fn=>{const g=tvGroup(TVS.x,TVS.y,TVS.z);if(!g)return toast('TV가 사라졌어요',1500);fn(g,tvCur(g));tvRender()};
+ const has=c=>!!c&&!!(c.v||c.pl);
+ $('tvPlay').onclick=()=>{
+  const q=$('tvUrl').value.trim(),r=ytParse(q);
+  if(!r){
+   if(!q)return toast('유튜브 링크를 붙여넣거나 검색어를 입력하세요',2200);
+   window.open('https://www.youtube.com/results?search_query='+encodeURIComponent(q),'_blank','noopener');
+   return toast('새 탭에서 영상을 찾은 뒤 링크를 복사해 여기에 붙여넣으세요',3200);
+  }
+  tvSyncBack();act((g,c)=>tvWrite(g,{on:1,v:r.v,pl:r.pl,l:c?c.l:1,t:Date.now()}));sfx(.08,520);
+ };
+ $('tvYt').onclick=()=>{window.open('https://www.youtube.com/','_blank','noopener');toast('유튜브에서 영상을 찾아 링크를 복사한 뒤 여기에 붙여넣으세요',3200)};
+ $('tvPower').onclick=()=>act((g,c)=>{
+  if(c&&c.on){tvSyncBack();tvWrite(g,Object.assign({},tvCur(g)||c,{on:0}))}
+  else if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:Date.now()}));
+  else toast('먼저 유튜브 링크를 붙여넣고 재생을 누르세요',2000);
+ });
+ $('tvRestart').onclick=()=>act((g,c)=>{if(has(c))tvWrite(g,Object.assign({},c,{on:1,t:Date.now()}));else toast('재생할 영상이 없어요',1500)});
+ $('tvLoop').onclick=()=>act((g,c)=>{if(has(c))tvWrite(g,Object.assign({},c,{l:c.l?0:1}));else toast('먼저 영상을 재생하세요',1500)});
+ $('tvClose').onclick=closeTv;
+ $('tvUrl').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();$('tvPlay').onclick()}else if(e.key==='Escape'){e.preventDefault();closeTv()}});
+ $('tvUrl').addEventListener('keyup',e=>e.stopPropagation());
+ return el;
+}
+// 플레이어(iframe) 안에서 영상을 바꾸거나 되감았다면, 창을 닫을 때 TV 상태(=모두가 보는 화면)에 반영한다
+addEventListener('message',ev=>{
+ if(!tvP.el||ev.source!==tvP.el.contentWindow)return;
+ let d=ev.data;if(typeof d==='string'){try{d=JSON.parse(d)}catch(e){return}}
+ const i=d&&d.info;if(!i||typeof i!=='object')return;
+ if(fin(i.currentTime)){tvP.ct=i.currentTime;tvP.at=Date.now()}
+ if(typeof i.playerState==='number')tvP.ps=i.playerState;
+ const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))tvP.id=vd.video_id;
+});
+function tvSyncBack(){
+ if(!tvP.el||!tvP.id||tvP.ps!==1)return;
+ const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);if(!c||!c.on)return;
+ const cur=tvP.ct+(Date.now()-tvP.at)/1000;
+ const same=c.v===tvP.id,exp=(Date.now()-c.t)/1000;
+ if(same&&Math.abs(cur-exp)<5)return;
+ tvWrite(g,{on:1,v:tvP.id,pl:c.pl,l:c.l,t:Date.now()-Math.max(0,cur)*1000});
+}
+function tvPanelClear(){if(tvP.el){tvP.el.remove();tvP.el=null}tvP.sig='';tvP.id='';tvP.ps=0;tvP.ct=0}
+function tvPanel(c){
+ const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl)),sig=on?c.v+'|'+c.pl+'|'+c.t:'';
+ if(sig===tvP.sig&&(on?tvP.el:!tvP.el))return;
+ tvPanelClear();tvP.sig=sig;box.textContent='';
+ if(!on){box.textContent=c&&(c.v||c.pl)?'전원이 꺼져 있어요':'유튜브 링크를 붙여넣고 ▶ 재생을 누르세요';return}
+ const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',rel:'0',playsinline:'1',enablejsapi:'1',start:String(c.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-c.t)/1000))):0)});
+ if(location.protocol.slice(0,4)==='http')p.set('origin',location.origin);
+ let src;
+ if(c.v){src='https://www.youtube.com/embed/'+c.v+'?';if(c.pl)p.set('list',c.pl);else if(c.l){p.set('loop','1');p.set('playlist',c.v)}}
+ else{src='https://www.youtube.com/embed/videoseries?';p.set('list',c.pl)}
+ if(c.pl&&c.l)p.set('loop','1');
+ const el=document.createElement('iframe');
+ el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
+ el.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:auto';
+ el.onload=()=>{try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
+ el.src=src+p.toString();box.appendChild(el);tvP.el=el;tvP.id=c.v||'';tvP.ct=0;tvP.at=Date.now();
+}
+function tvRender(init){
+ const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
+ $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n창을 닫아도 전원을 끄기 전까지 계속 재생되고, 여기서 영상을 바꾸거나 되감으면 닫을 때 모두의 화면에 반영돼요'):'TV를 찾을 수 없어요';
+ if(init){
+  if(c&&c.v)$('tvUrl').value='https://youtu.be/'+c.v+(c.pl?'?list='+c.pl:'');
+  else if(c&&c.pl)$('tvUrl').value='https://www.youtube.com/playlist?list='+c.pl;
+  else $('tvUrl').value='';
+ }
+ $('tvPower').textContent=c&&c.on?'⏻ 전원 끄기':'⏻ 전원 켜기';
+ $('tvLoop').textContent='반복: '+(!c||c.l?'켜짐':'꺼짐');
+ tvPanel(c);
+}
+function openTv(x,y,z){
+ if(state!=='play'||ui)return;
+ tvEl();ui='tv';TVS.x=x;TVS.y=y;TVS.z=z;showOv('ovTv',true);
+ if(document.pointerLockElement)document.exitPointerLock();
+ tvRender(true);
+}
+function closeTv(){if(ui!=='tv')return;tvSyncBack();tvPanelClear();ui='';showOv('ovTv',false);$('tvUrl').blur();lockPointer()}
+/* ---- 화면 그리기 ---- */
+function tvMatrix(p,pw,ph){ // iframe 사각형 -> 화면 위 네 점 (호모그래피)
+ const x0=p[0][0],y0=p[0][1],x1=p[1][0],y1=p[1][1],x2=p[2][0],y2=p[2][1],x3=p[3][0],y3=p[3][1];
+ const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3;
+ let a,b,c,d,e,f,g=0,hq=0;
+ if(Math.abs(dx3)<1e-9&&Math.abs(dy3)<1e-9){a=x1-x0;b=x3-x0;c=x0;d=y1-y0;e=y3-y0;f=y0}
+ else{
+  const den=dx1*dy2-dx2*dy1;if(Math.abs(den)<1e-9)return null;
+  g=(dx3*dy2-dx2*dy3)/den;hq=(dx1*dy3-dx3*dy1)/den;
+  a=x1-x0+g*x1;b=x3-x0+hq*x3;c=x0;d=y1-y0+g*y1;e=y3-y0+hq*y3;f=y0;
+ }
+ return 'matrix3d('+[a/pw,d/pw,0,g/pw,b/ph,e/ph,0,hq/ph,0,0,1,0,c,f,0,1].join(',')+')';
+}
+function tvLos(g){ // 카메라에서 화면 중앙이 벽에 가려지지 않았는지
+ const cx=g.center[0],cy=g.center[1],cz=g.center[2],dx=rc.x-cx,dy=rc.y-cy,dz=rc.z-cz,L=Math.hypot(dx,dy,dz),n=Math.max(1,Math.ceil(L/.35));
+ for(let i=1;i<n;i++){const t=i/n,b=getBlock(Math.floor(cx+dx*t),Math.floor(cy+dy*t),Math.floor(cz+dz*t));if(b&&OPQ[b])return false}
+ return true;
+}
+function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
+function tvFrame(c,W,H){
+ const key=c.key,st=c.st,g=c.g,sig=st.v+'|'+st.pl+'|'+st.t+'|'+st.l+'|'+g.w+'x'+g.h;
+ let e=tvFr.get(key);
+ if(e&&e.sig!==sig){e.el.remove();tvFr.delete(key);e=null}
+ if(!e){
+  let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
+  const p=new URLSearchParams({autoplay:'1',controls:'0',disablekb:'1',fs:'0',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(st.t?Math.min(43200,Math.max(0,Math.floor((Date.now()-st.t)/1000))):0)});
+  let src;
+  if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
+  else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
+  if(st.pl&&st.l)p.set('loop','1');
+  const el=document.createElement('iframe');
+  el.allow='autoplay; encrypted-media; picture-in-picture';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
+  el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
+  e={el,sig,pw,ph,vol:-1,vt:0,vis:false,los:true,lt:0};
+  el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
+  el.src=src+p.toString();tvLayer.appendChild(el);tvFr.set(key,e);
+ }
+ const el=e.el,now=performance.now();
+ if(now-e.lt>120){e.lt=now;e.los=tvLos(g)}
+ const n=g.nrm;
+ let show=e.los&&((rc.x-g.center[0])*n[0]+(rc.z-g.center[2])*n[2])>.05;
+ const pts=[];
+ if(show)for(const q of g.cs){
+  const x=q[0]-rc.x,y=q[1]-rc.y,z=q[2]-rc.z,cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
+  if(cw<=.05){show=false;break}
+  pts.push([(cx/cw*.5+.5)*W,(1-(cy/cw*.5+.5))*H]);
+ }
+ const m=show?tvMatrix(pts,e.pw,e.ph):null;
+ if(m){el.style.transform=m;if(!e.vis){el.style.visibility='visible';e.vis=true}}
+ else if(e.vis){el.style.visibility='hidden';e.vis=false}
+ if(now-e.vt>250){ // 거리에 따른 음량: 25칸 밖 0 → 가까울수록 커짐
+  e.vt=now;let v=Math.round(100*Math.pow(clamp(1-c.d/TVRANGE,0,1),1.4));if(ui==='tv'){const pg=tvGroup(TVS.x,TVS.y,TVS.z);if(pg&&pg.win===key)v=0} // 조작창이 열려 있으면 월드 쪽 소리는 끈다 (플레이어와 겹치지 않게)
+  
+  if(v!==e.vol){e.vol=v;tvCmd(el,'setVolume',[v]);if(v>0)tvCmd(el,'unMute')}
+ }
+}
+function tvClear(){for(const e of tvFr.values())e.el.remove();tvFr.clear()}
+function tvUpdate(W,H){
+ if(!tvState.size){if(tvFr.size)tvClear();return}
+ const cand=[];
+ for(const [key,st] of tvState){
+  if(!st.on||(!st.v&&!st.pl))continue;
+  const q=key.split('_'),x=+q[0],y=+q[1],z=+q[2];
+  if(Math.abs(x-P.x)>80||Math.abs(z-P.z)>80||!getChunk(x>>4,z>>4))continue;
+  const g=tvGroup(x,y,z);if(!g||g.win!==key)continue;
+  const bb=g.bb,px=P.x,py=P.y+1.2,pz=P.z;
+  const d=Math.hypot(Math.max(bb[0]-px,0,px-bb[3]),Math.max(bb[1]-py,0,py-bb[4]),Math.max(bb[2]-pz,0,pz-bb[5]));
+  if(d<TVRANGE)cand.push({key,st,g,d});
+ }
+ cand.sort((a,b)=>a.d-b.d);cand.length=Math.min(cand.length,3);
+ const live=new Set();
+ for(const c of cand){live.add(c.key);tvFrame(c,W,H)}
+ for(const [k,e] of [...tvFr])if(!live.has(k)){e.el.remove();tvFr.delete(k)}
+}
+
 /* ===================== 메인 루프 ===================== */
 let last=performance.now(),sendT=0,saveT=0,fpsA=0,fpsN=0,fps=0;
 function resize(){const d=Math.min(devicePixelRatio||1,1.5),w=innerWidth,h=innerHeight;cv.width=Math.max(2,w*d|0);cv.height=Math.max(2,h*d|0)}
@@ -4616,7 +4875,7 @@ function frame(t){
  for(const c of vis){if(!c.m.t)continue;gl.uniform3f(U.off,c.cx*CH-rc.x,-rc.y,c.cz*CH-rc.z);gl.bindVertexArray(c.m.t.vao);gl.drawElements(gl.TRIANGLES,c.m.t.n,gl.UNSIGNED_INT,0)}
  gl.depthMask(true);gl.disable(gl.BLEND);
  if(state==='play'){
-  updateTags(innerWidth,innerHeight);updateAnimalTags(innerWidth,innerHeight);
+  updateTags(innerWidth,innerHeight);updateAnimalTags(innerWidth,innerHeight);tvUpdate(innerWidth,innerHeight);
   if(showInfo)$('pos').textContent=`위치 ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   프레임 ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 크기 ${WORLD}×${WORLD} · 내가 바꾼 블록 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
  }
 }
