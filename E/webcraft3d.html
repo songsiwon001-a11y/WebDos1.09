@@ -833,10 +833,27 @@ rsls([W_SCRAP,W_SCRAP,W_SCRAP,W_SCRAP,W_ING_G,W_ING_G,W_ING_G,W_ING_G],W_NING);
 rsls([[W_ANC],RFUEL],W_SCRAP,1,1);rsls([[W_ORE['구리'],W_DEEP['구리']],RFUEL],W_CUING,1,1);rsls([[39,W_DEEP['철']],RFUEL],W_ING_I,1,1);rsls([[40,W_DEEP['금'],W_NGO],RFUEL],W_ING_G,1,1);
 rsls([W_POTATO,RFUEL],W_BAKED,1,1);rsls([26,RFUEL],RIDN('매끄러운 사암'),1,1);rsls([28,RFUEL],RIDN('매끄러운 석영'),1,1);rsls([W_DEEPSLATE+0,RFUEL],RIDN('연마된 심층암'),1,1);
 Object.assign(W_DROPMAP,{[W_DEEP['석탄']]:W_COAL,[W_DEEP['다이아몬드']]:W_DIAM,[W_ORE['에메랄드']]:W_EMER,[W_DEEP['에메랄드']]:W_EMER,[W_ORE['청금석']]:LAPIS,[W_DEEP['청금석']]:LAPIS,[W_NQ]:W_QUARTZ,46:W_MELON,47:W_WHEAT,[W_DEEPSLATE]:XID['조약 심층암']});
+/* ---- 양동이: 빈 양동이로 물(원천 블록)을 우클릭하면 담고, 물 양동이로 우클릭하면 그 자리에 물을 붓는다 ---- */
+const bucketF=water=>(x,y)=>{
+ const xl=3+((y-5)>>2),xr=12-((y-5)>>2),ED=[96,96,106],BD=[188,188,196],BH=[222,222,230];
+ if(y===2&&x>=5&&x<=10)return ED;
+ if(y===3&&(x===4||x===11))return ED;
+ if(y===4){if(x===3||x===12)return ED;if(x>=4&&x<=11)return water?((x+y)%3?[48,98,226]:[120,170,255]):[58,58,66];return null}
+ if(y>=5&&y<=13){
+  if(x<xl||x>xr)return null;
+  if(x===xl||x===xr||y===13)return ED;
+  if(water&&y<=6)return ((x+y)%3?[48,98,226]:[120,170,255]);
+  return (x<=xl+1)?BH:BD;
+ }
+ return null;
+};
+const BUCKET_E=itm('양동이',bucketF(false),{bucket:1});
+const BUCKET_W=itm('물 양동이',bucketF(true),{bucket:2});
+rshp(['I I',' I '],{I:W_ING_I},BUCKET_E);
 const NB=DEF.length-1,B_WATER=10,B_BED=13;
 /* ---- 중첩(스택) 규칙: 원작처럼 도구·방어구·인챈트된 것·침대·부싯돌과 라이터는 1개, 나머지는 64개까지 ---- */
 const STK=new Uint8Array(NB+1);
-for(let i=1;i<=NB;i++){const d=DEF[i];STK[i]=(d.kind||d.tool||d.armor!==undefined||d.ench||d.book||(FURN[i]&&FURN[i].t==='bed')||i===W_FNS)?1:64}
+for(let i=1;i<=NB;i++){const d=DEF[i];STK[i]=(d.kind||d.tool||d.bucket||d.armor!==undefined||d.ench||d.book||(FURN[i]&&FURN[i].t==='bed')||i===W_FNS)?1:64}
 const PALETTE=[];for(let i=1;i<=NB;i++)if(i!==B_WATER&&!DEF[i].hide&&!DEF[i].cmdonly&&!DEF[i].nopal)PALETTE.push(i);
 const TRANS=new Uint8Array(NB+1),SOLID=new Uint8Array(NB+1),EMIT=new Uint8Array(NB+1),LUM=new Uint8Array(NB+1),PART=new Uint8Array(NB+1),OPQ=new Uint8Array(NB+1),LAD=new Uint8Array(NB+1);
 for(let i=1;i<=NB;i++){TRANS[i]=DEF[i].trans?1:0;SOLID[i]=DEF[i].solid?1:0;EMIT[i]=DEF[i].emit?1:0;LUM[i]=DEF[i].emit?Math.min(15,DEF[i].lum||15):0;PART[i]=DEF[i].shape?1:0;LAD[i]=DEF[i].ladder?1:0;OPQ[i]=(!DEF[i].shape&&!DEF[i].trans&&i!==B_WATER)?1:0}
@@ -1682,14 +1699,14 @@ function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
   if(SVMODE&&P.ground&&!wasG&&!P.inWater){const fh=vyPre*vyPre/56;if(fh>3.6)hurtPlayer(Math.ceil(fh-3),0,0,'추락했습니다',true)}
  }
 }
-function ray(maxD){
+function ray(maxD,wt){
  const f=fwdOf(cam.yaw,cam.pitch);let x=Math.floor(cam.x),y=Math.floor(cam.y),z=Math.floor(cam.z);
  const sx=f[0]>0?1:-1,sy=f[1]>0?1:-1,sz=f[2]>0?1:-1;
  const dx=f[0]===0?1e30:Math.abs(1/f[0]),dy=f[1]===0?1e30:Math.abs(1/f[1]),dz=f[2]===0?1e30:Math.abs(1/f[2]);
  let tx=f[0]===0?1e30:((sx>0?x+1-cam.x:cam.x-x)*dx),ty=f[1]===0?1e30:((sy>0?y+1-cam.y:cam.y-y)*dy),tz=f[2]===0?1e30:((sz>0?z+1-cam.z:cam.z-z)*dz);
  let nx=0,ny=0,nz=0,t=0;
  for(let i=0;i<64;i++){
-  const b=getBlock(x,y,z);if(b&&b!==B_WATER)return {x,y,z,nx,ny,nz,b};
+  const b=getBlock(x,y,z);if(b&&(wt||b!==B_WATER))return {x,y,z,nx,ny,nz,b};
   if(tx<ty&&tx<tz){t=tx;tx+=dx;x+=sx;nx=-sx;ny=nz=0}else if(ty<tz){t=ty;ty+=dy;y+=sy;ny=-sy;nx=nz=0}else{t=tz;tz+=dz;z+=sz;nz=-sz;nx=ny=0}
   if(t>maxD)return null;
  }
@@ -4118,8 +4135,32 @@ function attackAnimal(){ // 좌클릭: 동물 때리기. 처리했으면 true
  hitSnd();return true;
 }
 function hitOrBreak(){if(!attackAnimal())breakBlock()}
+function useBucket(d){
+ if(state!=='play'||P.dead)return;
+ const h=ray(6,true);
+ if(d.bucket===1){ // 빈 양동이: 물 원천 블록을 담는다
+  if(!h||h.b!==B_WATER)return toast('물을 바라보고 우클릭하면 양동이에 담을 수 있어요',1400);
+  if(wlev.has(wkey(h.x,h.y,h.z)))return toast('흐르는 물은 담을 수 없어요 — 물이 나오는 원천(고인 물)을 담아 보세요',2000);
+  localEdit(h.x,h.y,h.z,0);
+  hotbar[P.sel]=BUCKET_W;renderHotbar();saveInv();
+  matSnd('place','water',1,0);toast('물을 담았습니다',1000);
+ }else{ // 물 양동이: 바라보는 곳에 물을 붓는다
+  if(!h)return toast('붓고 싶은 곳을 바라보세요',1200);
+  let x=h.x,y=h.y,z=h.z;
+  if(h.b===B_WATER){ // 흐르는 물 위에 부으면 원천으로 바뀜, 원천이면 그대로
+   if(!wlev.has(wkey(x,y,z)))return toast('이미 물이 있어요',1000);
+  }else{x+=h.nx;y+=h.ny;z+=h.nz}
+  if(y<1||y>=WH||x<0||z<0||x>=WORLD||z>=WORLD)return;
+  const cur=getBlock(x,y,z);
+  if(cur&&cur!==B_WATER)return toast('여기에는 물을 부을 수 없어요',1200);
+  localEdit(x,y,z,B_WATER);
+  if(SVMODE){hotbar[P.sel]=BUCKET_E;renderHotbar();saveInv()} // 크리에이티브에서는 물 양동이가 줄어들지 않음
+  matSnd('place','water',1,0);
+ }
+}
 function useItem(b,h,rep){ // 스폰알 / 뼈 (연속 클릭 방지: 꾹 누르기는 무시)
  if(rep)return;const d=DEF[b];
+ if(d.bucket){useBucket(d);return}
  if(d.food){eatFood(b,d);return}
  if(d.armor!==undefined){equipArmor(b);return}
  if(b===W_FNS){if(!h)return;if(tryPortal(h.x+h.nx,h.y+h.ny,h.z+h.nz)){sfx(.2,300);toast('✨ 천국 포탈이 열렸습니다',2200)}else toast('발광석 틀(안쪽 2×3 이상)을 세우고 안쪽에 불을 붙이세요',2400);return}
