@@ -1297,7 +1297,7 @@ let FD_KEY='fd_'+ROOM;const fdata=new Map();let fdDirty=false,brkWarn={k:'',t:0}
 const fdGet=(x,y,z)=>{const r=fdata.get(lkKey(x,y,z));return r&&r.v!=null?r.v:null};
 function drItems(v){const a=Array.isArray(v)?v:[],o=[];for(let i=0;i<27;i++){const n=a[i]|0,b=n&1023;o.push(n>0&&b>0&&b<=NB?n:0)}return o}
 function fdClean(v){
- if(typeof v==='string'){const s=v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g,'').slice(0,300);return s||null}
+ if(typeof v==='string'){const s=v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g,'').slice(0,v.slice(0,3)==='TV|'?2300:300);return s||null} // 일반 칸은 300자, TV 상태(TV|…)는 긴 영상 주소를 위해 2300자까지
  if(Array.isArray(v)){const o=drItems(v);return o.some(Boolean)?o:null}
  return null;
 }
@@ -4795,12 +4795,22 @@ function ytParse(s){
  if(!/^[\w-]{10,64}$/.test(pl))pl='';
  return (v||pl)?{v,pl}:null;
 }
+/* 유튜브 말고도 .m3u8(실시간 방송/HLS) · .mp4 · .webm 같은 직접 영상 주소를 TV 에 틀 수 있다 (주소는 2000자까지) */
+function tvLinkParse(s){
+ const y=ytParse(s);if(y)return {v:y.v,pl:y.pl,u:''};
+ s=String(s||'').trim();if(!/^https?:\/\//i.test(s))return null;
+ let u;try{u=new URL(s)}catch(e){return null}
+ if(!/\.(m3u8|mp4|webm|m4v|mov|ogv)$/i.test(u.pathname)&&!/m3u8/i.test(u.pathname+u.search))return null;
+ if(s.length>2000||/["'<>\\\s]/.test(s))return {err:1};
+ return {v:'',pl:'',u:s};
+}
 function tvParse(v){
  if(typeof v!=='string'||v.slice(0,3)!=='TV|')return null;
  try{
   const o=JSON.parse(v.slice(3));if(!o||typeof o!=='object')return null;
   const vid=typeof o.v==='string'&&/^[\w-]{11}$/.test(o.v)?o.v:'',pl=typeof o.pl==='string'&&/^[\w-]{10,64}$/.test(o.pl)?o.pl:'';
-  return {on:o.on?1:0,v:vid,pl,l:o.l===0?0:1,t:fin(o.t)?o.t:0,p:o.p?1:0,pt:fin(o.pt)&&o.pt>0?o.pt:0};
+  const u=typeof o.u==='string'&&/^https?:\/\/[^\s"'<>\\]{4,2000}$/i.test(o.u)?o.u:'';
+  return {on:o.on?1:0,v:u?'':vid,pl:u?'':pl,u,l:o.l===0?0:1,t:fin(o.t)?o.t:0,p:o.p?1:0,pt:fin(o.pt)&&o.pt>0?o.pt:0};
  }catch(e){return null}
 }
 function tvOnData(key,v){
@@ -4842,6 +4852,7 @@ const tvCur=g=>g&&g.win?tvState.get(g.win):null;
 function tvWrite(g,st){
  const key=g.win||lkKey(g.anchor[0],g.anchor[1],g.anchor[2]),q=key.split('_').map(Number);
  const o={on:st.on?1:0,v:st.v||'',pl:st.pl||'',l:st.l===0?0:1,t:Math.floor(st.t||sNow()),p:st.p?1:0,pt:st.p&&fin(st.pt)?Math.round(st.pt*10)/10:0};
+ if(st.u){o.u=st.u;o.v='';o.pl=''}
  fdSet(q[0],q[1],q[2],'TV|'+JSON.stringify(o));
  for(const c of g.mem){const k=lkKey(c[0],c[1],c[2]);if(k!==key&&tvState.has(k))fdSet(c[0],c[1],c[2],null)}
  tvRecordSoon();
@@ -4853,7 +4864,7 @@ function tvEl(){
  el=document.createElement('div');el.className='ov';el.id='ovTv';
  el.innerHTML='<div class="card" style="width:min(1100px,98vw);max-height:98vh;padding:12px 14px;pointer-events:auto">'
   +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:20px">📺 TV</b>'
-  +'<input class="t" id="tvUrl" maxlength="150" placeholder="유튜브 링크 붙여넣기 (또는 검색어)" autocomplete="off" style="flex:1 1 220px;margin:0;text-align:left;padding:7px">'
+  +'<input class="t" id="tvUrl" maxlength="2000" placeholder="유튜브 링크 또는 .m3u8 / .mp4 영상 주소 붙여넣기 (또는 검색어)" autocomplete="off" style="flex:1 1 220px;margin:0;text-align:left;padding:7px">'
   +'<div class="b" id="tvPlay" style="width:auto;margin:0;padding:8px 14px">▶ 재생</div>'
   +'<div class="b dim" id="tvYt" style="width:auto;margin:0;padding:8px 12px">youtube.com 열기 ↗</div></div>'
   +'<div class="sub" id="tvInfo" style="margin:6px 0;white-space:pre-line"></div>'
@@ -4861,15 +4872,17 @@ function tvEl(){
   +'<div style="display:flex;gap:8px;flex-wrap:wrap"><div class="b dim" id="tvPower" style="flex:1 1 120px"></div><div class="b dim" id="tvRestart" style="flex:1 1 120px">↺ 처음부터</div><div class="b dim" id="tvLoop" style="flex:1 1 120px"></div><div class="b dim" id="tvClose" style="flex:1 1 120px">닫기 (Esc)</div></div></div>';
  document.body.appendChild(el);
  const act=fn=>{const g=tvGroup(TVS.x,TVS.y,TVS.z);if(!g)return toast('TV가 사라졌어요',1500);fn(g,tvCur(g));tvRender()};
- const has=c=>!!c&&!!(c.v||c.pl);
+ const has=c=>!!c&&!!(c.v||c.pl||c.u);
  $('tvPlay').onclick=()=>{
-  const q=$('tvUrl').value.trim(),r=ytParse(q);
+  const q=$('tvUrl').value.trim(),r=tvLinkParse(q);
+  if(r&&r.err)return toast('영상 주소가 너무 길거나 쓸 수 없는 글자가 들어 있어요 (2000자 이하)',3200);
   if(!r){
-   if(!q)return toast('유튜브 링크를 붙여넣거나 검색어를 입력하세요',2200);
+   if(!q)return toast('유튜브 링크나 .m3u8 / .mp4 영상 주소를 붙여넣거나 검색어를 입력하세요',2600);
+   if(/^https?:\/\//i.test(q))return toast('지원하지 않는 주소예요 — 유튜브 링크나 .m3u8 · .mp4 · .webm 영상 주소를 넣어 주세요',3200);
    window.open('https://www.youtube.com/results?search_query='+encodeURIComponent(q),'_blank','noopener');
    return toast('새 탭에서 영상을 찾은 뒤 링크를 복사해 여기에 붙여넣으세요',3200);
   }
-  tvSyncBack();act((g,c)=>tvWrite(g,{on:1,v:r.v,pl:r.pl,l:c?c.l:1,t:sNow()}));sfx(.08,520);
+  tvSyncBack();act((g,c)=>tvWrite(g,{on:1,v:r.v,pl:r.pl,u:r.u,l:c?c.l:1,t:sNow()}));sfx(.08,520);
  };
  $('tvYt').onclick=()=>{window.open('https://www.youtube.com/','_blank','noopener');toast('유튜브에서 영상을 찾아 링크를 복사한 뒤 여기에 붙여넣으세요',3200)};
  $('tvPower').onclick=()=>act((g,c)=>{
@@ -4894,36 +4907,37 @@ addEventListener('message',ev=>{
  if(fin(i.currentTime)){tvP.ct=i.currentTime;tvP.at=Date.now()}
  if(fin(i.duration)&&i.duration>0){tvP.dur=i.duration;if(i.duration>(tvP.mainDur||0))tvP.mainDur=i.duration}
  if(typeof i.playerState==='number'){if(tvP.ps!==i.playerState)tvP.psT=Date.now();tvP.ps=i.playerState}
- const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id)){if(tvP.id!==vd.video_id)tvP.mainDur=0;tvP.id=vd.video_id}
+ const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&(/^[\w-]{11}$/.test(vd.video_id)||vd.video_id==='stream')){if(tvP.id!==vd.video_id)tvP.mainDur=0;tvP.id=vd.video_id}
 });
+const tvVid=c=>c.u?'stream':c.v;
 function tvSv(st){return st.t+'|'+(st.p?1:0)+'|'+(st.p?Math.round((st.pt||0)*10)/10:0)}
 function tvStart(st){return st.t?Math.max(0,Math.min(43200,Math.floor(st.p?(st.pt||0):(sNow()-st.t)/1000))):0}
 function tvPanelPush(g,c,paused,cur){ // 조작창의 재생 위치/일시정지를 TV 상태(=월드 화면 · 다른 접속자)에 반영
  cur=Math.max(0,cur);const nt=Math.floor(sNow()-cur*1000),pt=paused?Math.round(cur*10)/10:0;
  tvP.sv=nt+'|'+(paused?1:0)+'|'+pt;tvP.tA=nt;tvP.ls=Date.now();tvP.dc=0;
- tvWrite(g,{on:1,v:c.v,pl:c.pl||'',l:c.l,t:nt,p:paused?1:0,pt});
+ tvWrite(g,{on:1,v:c.v,pl:c.pl||'',u:c.u||'',l:c.l,t:nt,p:paused?1:0,pt});
 }
 function tvSyncBack(){
  if(!tvP.el||!tvP.id)return;
  const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);if(!c||!c.on||c.p)return;
- if(tvP.ps===2&&tvP.psT>0){tvPanelPush(g,Object.assign({},c,{v:tvP.id}),true,tvP.ct);return}
+ if(tvP.ps===2&&tvP.psT>0){tvPanelPush(g,Object.assign({},c,{v:c.u?'':tvP.id}),true,tvP.ct);return}
  if(tvP.ps!==1)return;
  const cur=tvP.ct+(Date.now()-tvP.at)/1000;
- if(c.v===tvP.id&&Math.abs(cur-(sNow()-c.t)/1000)<2)return;
- tvPanelPush(g,Object.assign({},c,{v:tvP.id}),false,cur);
+ if(tvVid(c)===tvP.id&&Math.abs(cur-(sNow()-c.t)/1000)<2)return;
+ tvPanelPush(g,Object.assign({},c,{v:c.u?'':tvP.id}),false,cur);
 }
 function tvPanelClear(){tvP.el=null;tvP.sig='';tvP.id='';tvP.ps=0;tvP.ct=0;tvP.psT=0;tvP.mainDur=0}
 function tvDockKey(){if(ui!=='tv')return '';const g=tvGroup(TVS.x,TVS.y,TVS.z);return (g&&g.win)||''}
 function tvPanel(c){ // 조작창에는 따로 플레이어를 만들지 않는다: 월드 TV 의 플레이어(iframe)를 이 자리에 그대로 옮겨 보여준다 (같은 화면 · 광고 건너뛰기 · 되감기 모두 공유)
- const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl));
- box.textContent=on?'화면을 불러오는 중…':(c&&(c.v||c.pl)?'전원이 꺼져 있어요':'유튜브 링크를 붙여넣고 ▶ 재생을 누르세요');
+ const box=$('tvBox'),on=!!(c&&c.on&&(c.v||c.pl||c.u));
+ box.textContent=on?'화면을 불러오는 중…':(c&&(c.v||c.pl||c.u)?'전원이 꺼져 있어요':'유튜브 링크나 .m3u8 / .mp4 영상 주소를 붙여넣고 ▶ 재생을 누르세요');
  if(!on)tvP.el=null;
 }
 function tvDockAttach(){ // 조작창 로직(tvP)이 월드 TV 플레이어를 바라보게 연결
  const key=tvDockKey(),e=key&&tvFr.get(key),g=key&&tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
- if(!e||!c||!c.on||!(c.v||c.pl)){tvP.el=null;return}
+ if(!e||!c||!c.on||!(c.v||c.pl||c.u)){tvP.el=null;return}
  if(tvP.el!==e.el){
-  tvP.el=e.el;tvP.id=c.v||'';tvP.sv=tvSv(c);tvP.tA=c.t;tvP.ps=e.ps||0;tvP.psT=e.psT||1;tvP.ct=e.ct||0;tvP.at=e.at||Date.now();
+  tvP.el=e.el;tvP.id=tvVid(c)||'';tvP.sv=tvSv(c);tvP.tA=c.t;tvP.ps=e.ps||0;tvP.psT=e.psT||1;tvP.ct=e.ct||0;tvP.at=e.at||Date.now();
   tvP.dur=e.dur||0;tvP.mainDur=e.dur||0;tvP.born=e.born;tvP.ls=0;tvP.dc=0;
  }
 }
@@ -4931,7 +4945,8 @@ function tvRender(init){
  const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
  $('tvInfo').textContent=g?('화면 '+g.w+' × '+g.h+'칸 · 전원 '+(c&&c.on?'켜짐':'꺼짐')+' · 플레이어를 누르면 키보드(스페이스·K·F·방향키)와 전체화면 버튼이 유튜브 그대로 동작해요 · 소리는 이 창에서만 크게, 월드에서는 25칸 안에서 들려요\n이 창에 보이는 화면은 월드 TV 와 같은 화면이에요 (광고 건너뛰기 · 일시정지 · 되감기 · 전체화면이 그대로 월드 TV 에 보이고, 다른 접속자 TV 는 위치를 따라가요) · 창을 닫아도 전원을 끄기 전까지 계속 재생돼요'):'TV를 찾을 수 없어요';
  if(init){
-  if(c&&c.v)$('tvUrl').value='https://youtu.be/'+c.v+(c.pl?'?list='+c.pl:'');
+  if(c&&c.u)$('tvUrl').value=c.u;
+  else if(c&&c.v)$('tvUrl').value='https://youtu.be/'+c.v+(c.pl?'?list='+c.pl:'');
   else if(c&&c.pl)$('tvUrl').value='https://www.youtube.com/playlist?list='+c.pl;
   else $('tvUrl').value='';
  }
@@ -4965,23 +4980,79 @@ function tvLos(g){ // 화면 중앙 또는 카메라에 가장 가까운 지점 
  return tvLos1(c0[0]+u[0]*tu+v[0]*tv,c0[1]+u[1]*tu+v[1]*tv,c0[2]+u[2]*tu+v[2]*tv);
 }
 function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
+/* ---- 직접 영상 플레이어 (.m3u8 / .mp4 …): TV 안에 작은 플레이어 페이지를 넣고, 유튜브 플레이어와 똑같은 신호(재생 위치 · 길이 · 상태 / 이동 · 재생 · 일시정지 · 음량 명령)를 주고받는다 ---- */
+function tvStreamMain(C){
+ const v=document.getElementById('v'),m=document.getElementById('m');let ps=-1,hls=null,sought=false;
+ const post=o=>{try{parent.postMessage(JSON.stringify(o),'*')}catch(e){}};
+ const info=()=>post({event:'infoDelivery',info:{currentTime:v.currentTime||0,duration:isFinite(v.duration)?v.duration:0,playerState:ps,videoData:{video_id:'stream'}}});
+ const setPs=n=>{ps=n;info()};
+ v.loop=!!C.l;
+ v.addEventListener('playing',()=>{m.textContent='';setPs(1)});
+ v.addEventListener('pause',()=>{if(!v.ended)setPs(2)});
+ v.addEventListener('waiting',()=>setPs(3));
+ v.addEventListener('ended',()=>setPs(0));
+ v.addEventListener('loadedmetadata',()=>{if(!sought){sought=true;if(C.s>0&&isFinite(v.duration)&&C.s<v.duration){try{v.currentTime=C.s}catch(e){}}}});
+ const fail=t=>{m.textContent=t;post({event:'onError',info:1000})};
+ v.addEventListener('error',()=>fail('영상을 불러오지 못했어요 (주소를 확인해 주세요)'));
+ if(/m3u8/i.test(C.u)&&!v.canPlayType('application/vnd.apple.mpegurl')){
+  if(window.Hls&&Hls.isSupported()){
+   hls=new Hls({lowLatencyMode:true});
+   hls.on(Hls.Events.ERROR,(e,d)=>{if(d&&d.fatal){if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&!hls._r){hls._r=1;hls.startLoad()}else fail('방송을 불러오지 못했어요 (주소가 막혀 있거나 지원하지 않는 방송일 수 있어요)')}});
+   hls.loadSource(C.u);hls.attachMedia(v);
+  }else fail(window.Hls?'이 기기는 m3u8 방송을 지원하지 않아요':'재생 도구를 불러오지 못했어요 (인터넷 연결을 확인해 주세요)');
+ }else v.src=C.u;
+ v.play().catch(()=>{});
+ addEventListener('message',ev=>{
+  let d=ev.data;if(typeof d==='string'){try{d=JSON.parse(d)}catch(e){return}}
+  if(!d)return;
+  if(d.event==='listening'){info();return}
+  if(d.event!=='command')return;
+  const a=d.args||[];
+  switch(d.func){
+   case 'seekTo':try{v.currentTime=Math.max(0,+a[0]||0)}catch(e){}break;
+   case 'playVideo':{const q=v.play();if(q&&q.catch)q.catch(()=>{v.muted=true;v.play().catch(()=>{})})}break;
+   case 'pauseVideo':v.pause();break;
+   case 'setVolume':v.volume=Math.max(0,Math.min(1,(+a[0]||0)/100));break;
+   case 'unMute':v.muted=false;break;
+   case 'mute':v.muted=true;break;
+  }
+ });
+ setInterval(info,250);
+}
+function tvStreamDoc(url,start,loop){
+ const cfg=JSON.stringify({u:url,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
+ return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;background:#000}#m{position:absolute;left:0;right:0;top:45%;text-align:center;color:#bbb;font:14px sans-serif;padding:0 12px}</style></head><body><video id="v" playsinline autoplay muted controls></video><div id="m"></div>'
+  +'<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script><script>('+tvStreamMain.toString()+')('+cfg+');<\/script></body></html>';
+}
+/* 늦게 들어온 사람: 접속자 공유 시계(sNow)가 아직 안 맞은 상태에서 시작 위치를 계산하면 어긋나므로(음수면 0초 = 처음부터),
+   시계가 맞춰질 때까지(최대 6초) TV 화면 만들기를 잠깐 기다린다 */
+const TVCK={t0:0};
+function tvClkReady(){
+ if(WMODE!=='multi')return true;
+ let any=false;for(const p of peers.values())if(p.open){any=true;if(p.ckOff!=null){TVCK.t0=0;return true}}
+ if(!any){TVCK.t0=0;return true}
+ const n=Date.now();if(!TVCK.t0)TVCK.t0=n;return n-TVCK.t0>6000;
+}
 function tvFrame(c,W,H){
- const key=c.key,st=c.st,g=c.g,sig=st.v+'|'+st.pl+'|'+st.l+'|'+g.w+'x'+g.h;
+ const key=c.key,st=c.st,g=c.g,sig=st.v+'|'+st.pl+'|'+(st.u||'')+'|'+st.l+'|'+g.w+'x'+g.h;
  let e=tvFr.get(key);
  if(e&&e.sig!==sig){e.el.remove();tvFr.delete(key);e=null}
+ if(!e&&!tvClkReady())return;
  if(!e){
   let pw=g.w*256,ph=g.h*256;const sc=Math.min(1,1280/pw,1280/ph);pw=Math.max(160,Math.round(pw*sc));ph=Math.max(90,Math.round(ph*sc));
   const p=new URLSearchParams({autoplay:'1',controls:'1',fs:'1',modestbranding:'1',rel:'0',playsinline:'1',iv_load_policy:'3',enablejsapi:'1',start:String(tvStart(st))});
-  let src;
-  if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
+  let src='';
+  if(st.u){}
+  else if(st.v){src='https://www.youtube.com/embed/'+st.v+'?';if(st.pl)p.set('list',st.pl);else if(st.l){p.set('loop','1');p.set('playlist',st.v)}}
   else{src='https://www.youtube.com/embed/videoseries?';p.set('list',st.pl)}
   if(st.pl&&st.l)p.set('loop','1');
   const el=document.createElement('iframe');el.setAttribute('credentialless','');try{el.credentialless=true}catch(x){}
   el.allow='autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write';el.setAttribute('allowfullscreen','');el.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
-  e={el,sig,pw,ph,dk:0,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0};
+  e={el,sig,pw,ph,dk:0,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0,lis:0,fz:0};
   el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
-  el.src=src+p.toString();tvLayer.appendChild(el);tvFr.set(key,e);
+  if(st.u)el.srcdoc=tvStreamDoc(st.u,tvStart(st),st.l);else el.src=src+p.toString();
+  tvLayer.appendChild(el);tvFr.set(key,e);
  }
  const el=e.el,now=performance.now();
  if(now-e.lt>120){e.lt=now;e.los=tvLos(g)}
@@ -5010,7 +5081,7 @@ function tvClear(){for(const e of tvFr.values())e.el.remove();tvFr.clear()}
    · TV 를 바꿀 때마다 바로, 그리고 켜져 있는 동안은 30초마다(대기열 1번 접속자가) 갱신
    · 위치는 가까이서 실제로 재생 중인 플레이어가 있으면 그 값, 없으면 모두가 공유하는 시작 시각으로 계산한 값 */
 const TVREC={tm:0,pos:new Map()};
-const tvLink=s=>s.v?('https://youtu.be/'+s.v+(s.pl?'?list='+s.pl:'')):(s.pl?'https://www.youtube.com/playlist?list='+s.pl:'');
+const tvLink=s=>s.u?s.u:s.v?('https://youtu.be/'+s.v+(s.pl?'?list='+s.pl:'')):(s.pl?'https://www.youtube.com/playlist?list='+s.pl:'');
 const tvFmt=sec=>{sec=Math.max(0,Math.floor(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return (h?h+':'+String(m).padStart(2,'0'):''+m)+':'+String(s).padStart(2,'0')};
 addEventListener('message',ev=>{ // 월드 속 TV 플레이어가 알려주는 현재 시간/길이/상태
  if(!tvFr.size)return;
@@ -5021,10 +5092,10 @@ addEventListener('message',ev=>{ // 월드 속 TV 플레이어가 알려주는 �
  if(fin(i.currentTime)){e.ct=i.currentTime;e.at=Date.now()}
  if(typeof i.playerState==='number'){if(e.ps!==i.playerState)e.psT=Date.now();e.ps=i.playerState}
  if(fin(i.duration)&&i.duration>0)e.dur=i.duration;
- const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&/^[\w-]{11}$/.test(vd.video_id))e.vid=vd.video_id;
+ const vd=i.videoData;if(vd&&typeof vd.video_id==='string'&&(/^[\w-]{11}$/.test(vd.video_id)||vd.video_id==='stream'))e.vid=vd.video_id;
 });
 function tvPosOf(key,st){
- const now=Date.now(),e=tvFr.get(key);let ct=NaN,dur=0,cur=st.v||'';
+ const now=Date.now(),e=tvFr.get(key);let ct=NaN,dur=0,cur=st.v||(st.u?'stream':'');
  if(e){if(e.dur>0)dur=e.dur;if(e.vid)cur=e.vid;if(e.ps===1&&fin(e.ct)&&now-e.at<3000)ct=e.ct+(now-e.at)/1000}
  if(ui==='tv'&&tvP.el&&tvP.ps===1&&fin(tvP.ct)&&now-tvP.at<3000){const g=tvGroup(TVS.x,TVS.y,TVS.z);if(g&&g.win===key){ct=tvP.ct+(now-tvP.at)/1000;if(tvP.id)cur=tvP.id}}
  if(st.on){
@@ -5038,7 +5109,7 @@ function tvRecordNow(){
  if(WMODE!=='multi'||!net.fsOk)return;const db=fbInit();if(!db)return;
  const tvs=[];
  for(const [key,st] of tvState){
-  if(!st.v&&!st.pl)continue;
+  if(!st.v&&!st.pl&&!st.u)continue;
   const r=tvPosOf(key,st),pos=Math.round(r.pos*10)/10;
   tvs.push({k:key,on:st.on?1:0,link:tvLink(st),v:st.v,pl:st.pl,cur:r.cur,l:st.l,pos,time:tvFmt(pos),dur:r.dur?Math.round(r.dur):0});
  }
@@ -5065,20 +5136,22 @@ function tvSyncTick(){
  if(state!=='play'||!tvState.size)return;
  const now=Date.now();
  for(const [key,e] of tvFr){ // 월드 속 TV 화면: 항상 TV 상태(기준 시각/일시정지)를 따라감
-  const st=tvState.get(key);if(!st||!st.on||!st.v||st.pl)continue;
+  const st=tvState.get(key);if(!st||!st.on||!(st.v||st.u)||st.pl)continue;
   if(ui==='tv'&&tvP.el===e.el)continue;
+  if((!e.at||now-e.at>4000)&&now-e.lis>2000){e.lis=now;try{e.el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}}
+  if(!e.fz&&now-e.born>4000&&tvClkReady()&&!st.p&&!((st.l||st.u)&&!(e.dur>0))){e.fz=1;e.ls=now;tvCmd(e.el,'seekTo',[tvExp(st,e.dur||0),true]);tvCmd(e.el,'playVideo')} // 처음 4초 뒤 한 번: 지금 재생 중인 위치로 확실히 맞춤
   const sv=tvSv(st);
   if(e.sv!==sv){e.sv=sv;e.tA=st.t;e.ls=now;e.dc=0;tvCmd(e.el,'seekTo',[tvExp(st,e.dur),true]);tvCmd(e.el,st.p?'pauseVideo':'playVideo');continue}
   if(st.p){if(e.ps===1&&now-e.pl>1500){e.pl=now;tvCmd(e.el,'pauseVideo')}continue}
   if((e.ps===2||((e.ps===5||e.ps===-1)&&now-e.born>3000))&&now-e.pl>1500){e.pl=now;tvCmd(e.el,'playVideo');continue}
   if(now-e.ls<2500||now-e.born<3000||e.ps!==1||!fin(e.ct)||now-e.at>2500)continue;
-  const d=e.dur||0;if(st.l&&!(d>0))continue;
+  const d=e.dur||0;if((st.l||st.u)&&!(d>0))continue;
   if(!st.l&&d>0&&tvExp(st,d)>d-1.5)continue;
   if(Math.abs(tvDrift(st,d,e.ct+(now-e.at)/1000))>1.5){e.ls=now;tvCmd(e.el,'seekTo',[tvExp(st,d),true])}
  }
  if(ui==='tv'&&tvP.el){ // 우클릭 조작창: 바깥에서 바뀌면 따라가고, 창 안에서 조작하면(되감기·일시정지) 바로 TV 상태에 반영
   const g=tvGroup(TVS.x,TVS.y,TVS.z),c=g&&tvCur(g);
-  if(c&&c.on&&c.v&&!c.pl&&c.v===tvP.id){
+  if(c&&c.on&&(c.v||c.u)&&!c.pl&&tvVid(c)===tvP.id){
    const sv=tvSv(c);
    if(tvP.sv!==sv){tvP.sv=sv;tvP.tA=c.t;tvP.ls=now;tvP.dc=0;tvCmd(tvP.el,'seekTo',[tvExp(c,tvP.dur),true]);tvCmd(tvP.el,c.p?'pauseVideo':'playVideo')}
    else if(tvP.psT>0){
@@ -5097,13 +5170,13 @@ setInterval(tvSyncTick,500);
 setInterval(()=>{
  if(state!=='play'||WMODE!=='multi'||!net.admitted)return;
  const m=members();if(!m.length||!m[0].me)return; // 대기열 1번(가장 먼저 들어온 사람) 만 주기적으로 기록
- for(const s of tvState.values())if(s.on&&(s.v||s.pl)){tvRecordNow();return}
+ for(const s of tvState.values())if(s.on&&(s.v||s.pl||s.u)){tvRecordNow();return}
 },30000);
 function tvUpdate(W,H){
  if(!tvState.size){if(tvFr.size)tvClear();tvLayer.style.zIndex='0';return}
  const cand=[];
  for(const [key,st] of tvState){
-  if(!st.on||(!st.v&&!st.pl))continue;
+  if(!st.on||(!st.v&&!st.pl&&!st.u))continue;
   const q=key.split('_'),x=+q[0],y=+q[1],z=+q[2];
   if(Math.abs(x-P.x)>80||Math.abs(z-P.z)>80||!getChunk(x>>4,z>>4))continue;
   const g=tvGroup(x,y,z);if(!g||g.win!==key)continue;
