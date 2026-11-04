@@ -3412,8 +3412,21 @@ cv.addEventListener('mousedown',e=>{
  else if(e.button===2){if(!useAnimal()&&!useBlock())placeBlock();hold.p=1;hold.t=.28}
  else if(e.button===1){pickBlock();e.preventDefault()}
 });
-document.addEventListener('mouseup',e=>{if(e.button===0)hold.b=0;if(e.button===2)hold.p=0});
+/* 마우스를 뗀 신호(mouseup)가 창 밖 · TV 화면(iframe) · 창 전환 · ESC 등으로 사라져도 '계속 누름' 이 남지 않게 여러 방법으로 풀어 준다 */
+const holdClr=()=>{hold.b=hold.p=0};
+document.addEventListener('mouseup',e=>{if(e.button===0)hold.b=0;if(e.button===2)hold.p=0},true);
+addEventListener('pointerup',e=>{if(e.pointerType==='mouse'){if(e.button===0)hold.b=0;if(e.button===2)hold.p=0}},true);
+addEventListener('pointercancel',holdClr,true);
+document.addEventListener('dragend',holdClr,true);
+document.addEventListener('mouseleave',holdClr);
+document.addEventListener('pointerlockchange',holdClr);
+document.addEventListener('visibilitychange',holdClr);
+addEventListener('focusout',e=>{if(!e.relatedTarget)holdClr()});
 document.addEventListener('mousemove',e=>{
+ if(!isTouch&&(hold.b||hold.p)){ // 움직이는 중에 실제 버튼 상태(e.buttons)와 다르면 바로잡음
+  if(hold.b&&!(e.buttons&1))hold.b=0;
+  if(hold.p&&!(e.buttons&2))hold.p=0;
+ }
  if(!locked||ui)return;
  cam.yaw-=e.movementX*.0022;cam.pitch=clamp(cam.pitch-e.movementY*.0022,-1.55,1.55);
 });
@@ -5654,6 +5667,7 @@ function frame(t){
  if(state==='play'){
   if(!getChunk(Math.floor(P.x/CH),Math.floor(P.z/CH))){ensureAround(Math.floor(P.x/CH),Math.floor(P.z/CH),1)}
   const free=!ui&&(locked||isTouch);
+  if(!free&&(hold.b||hold.p))hold.b=hold.p=0; // 창이 열렸거나 마우스 잠금이 풀리면 누름 상태 해제
   const mv={f:0,s:0,jump:false,down:false,sprint:false};
   if(free){
    mv.f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joy.y;mv.s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joy.x;
