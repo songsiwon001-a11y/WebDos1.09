@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>WebCraft - 정식 버전 1.1</title>
+<title>WebCraft - 정식 버전 1.2</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/neodgm/neodgm-webfont@latest/neodgm/style.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
 <style>
@@ -86,7 +86,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <div id="tab"></div>
 
 <div class="ov" id="ovTitle" style="display:flex">
- <div id="versionBadge">정식 버전 1.1</div>
+ <div id="versionBadge">정식 버전 1.2</div>
  <div class="card">
   <div class="logoWrap"><h1>WebCraft</h1><div id="splash"></div></div>
   <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
@@ -2251,10 +2251,11 @@ function netListen(){
  },e=>netFail((e&&e.code)||'error'));
  fs.sigU=db.collection(FS_SIG).where('to','==',net.id).onSnapshot(snap=>{
   if(net.fs!==fs)return;
+  const first0=!fs.sigSeen;fs.sigSeen=true; // 처음 받는 목록에서만 오래된 신호를 거른다 (상대 PC 시계가 틀려도 새 신호는 버리지 않음)
   const arr=[];snap.docChanges().forEach(ch=>{if(ch.type==='added'){arr.push(ch.doc.data()||{});ch.doc.ref.delete().catch(()=>{})}});
   arr.sort((a,b)=>((a.t||0)-(b.t||0))||((a.c||0)-(b.c||0)));
   const wall=Date.now();
-  for(const d of arr){if(wall-(+d.t||0)>60000||typeof d.s!=='string'||d.s.length>60000)continue;let m;try{m=JSON.parse(d.s)}catch(e){continue}onSignal(m)}
+  for(const d of arr){if((first0&&Math.abs(wall-(+d.t||0))>180000)||typeof d.s!=='string'||d.s.length>60000)continue;let m;try{m=JSON.parse(d.s)}catch(e){continue}onSignal(m)}
  },e=>netFail((e&&e.code)||'error'));
 }
 function netFail(why){
@@ -2304,7 +2305,7 @@ function netTick(){
   if(!p&&peers.size<MAXP-1&&now>(net.retry[m.id]||0))startOffer(m.id);
  }
  for(const p of [...peers.values()]){
-  if(!p.open&&now-p.t0>(p.init&&!p.relay?6000:20000)){if(p.init&&!p.relay){net.relayFor[p.id]=1;peerDown(p,'timeout');net.retry[p.id]=0;continue}if(!net.turnHint){net.turnHint=1;const ct=p.ct||{},cs='후보 host '+(ct.host||0)+' · srflx '+(ct.srflx||0)+' · relay '+(ct.relay||0);console.warn('[연결 실패]',p.id,cs);toast(myTurnOn()?(ct.relay?'친구와 연결하지 못했어요 — 중계 서버는 연결됐지만 상대 쪽 연결이 안 됐어요 (친구도 같은 주소로 접속했는지 확인) · '+cs:'친구와 연결하지 못했어요 — 중계 서버 계정을 받지 못했어요 (앱 이름/키 확인) · '+cs):'다른 인터넷의 친구와 연결하지 못했어요 — 공개 중계 서버가 닫혀 있어요. 파일 위쪽의 METERED_APP / METERED_KEY 에 무료 계정을 넣어 주세요 · '+cs,10000)}peerDown(p,'timeout')}
+  if(!p.open&&now-p.t0>(p.init&&!p.relay?9000:(p.relay?40000:20000))){if(p.init&&!p.relay){net.relayFor[p.id]=1;peerDown(p,'timeout');net.retry[p.id]=0;continue}if(!net.turnHint){net.turnHint=1;const ct=p.ct||{},cs='후보 host '+(ct.host||0)+' · srflx '+(ct.srflx||0)+' · relay '+(ct.relay||0);console.warn('[연결 실패]',p.id,cs);toast(myTurnOn()?(ct.relay?'친구와 연결하지 못했어요 — 중계 서버는 연결됐지만 상대 쪽 연결이 안 됐어요 (친구도 같은 주소로 접속했는지 확인) · '+cs:'친구와 연결하지 못했어요 — 중계 서버 계정을 받지 못했어요 (앱 이름/키 확인) · '+cs):'다른 인터넷의 친구와 연결하지 못했어요 — 공개 중계 서버가 닫혀 있어요. 파일 위쪽의 METERED_APP / METERED_KEY 에 무료 계정을 넣어 주세요 · '+cs,10000)}peerDown(p,'timeout')}
   else if(p.open&&now-p.rx>20000)peerDown(p,'silent');
   else if(p.open&&!net.lobby[p.id]&&now-p.rx>6000&&net.fsOk&&!adm.some(v=>v.id===p.id))peerDown(p,'gone');
  }
@@ -2339,7 +2340,7 @@ const MYT_KEY=METERED_KEY||(()=>{try{return localStorage.getItem('wc_turnkey')||
 const myTurnOn=()=>!!(MY_ICE.length||(MYT_APP&&MYT_KEY));
 let turnMy=MY_ICE.slice(),turnMyP=null;
 function turnMyLoad(){ // 내 무료 중계 서버 계정으로 임시 접속 정보 받기 (한 번만, 6초 안에 안 되면 포기)
- if(MY_ICE.length||!myTurnOn())return Promise.resolve();
+ if(!(MYT_APP&&MYT_KEY))return Promise.resolve(); // 새 계정(주소 끝 ?turnapp=&turnkey= 또는 METERED_APP/KEY)이 있으면, 기존 MY_ICE 가 있어도 같이 받아서 함께 쓴다
  if(turnMyP)return turnMyP;
  return turnMyP=(async()=>{
   try{
@@ -2348,7 +2349,7 @@ function turnMyLoad(){ // 내 무료 중계 서버 계정으로 임시 접속 �
    if(!r.ok)throw new Error('http '+r.status);
    const j=await r.json(),l=Array.isArray(j)?j:(Array.isArray(j.iceServers)?j.iceServers:[]),out=[];
    for(const e of l){const u=(Array.isArray(e.urls)?e.urls:[e.urls]).filter(x=>typeof x==='string'&&/^turns?:/.test(x));if(u.length&&typeof e.username==='string'&&typeof e.credential==='string')out.push({urls:u,username:e.username,credential:e.credential})}
-   if(out.length)turnMy=out;else{turnMyP=null;console.warn('[turn] 받아온 서버가 없습니다')}
+   if(out.length)turnMy=out.concat(MY_ICE);else{turnMyP=null;console.warn('[turn] 받아온 서버가 없습니다')}
   }catch(e){turnMyP=null;console.warn('[turn] 내 중계 서버 계정을 받지 못했습니다 — 앱 이름/키를 확인하세요',e)}
  })();
 }
@@ -2398,7 +2399,14 @@ function mkPeer(id,att,init,relay){
  pc.onconnectionstatechange=()=>{if((pc.connectionState==='failed'||pc.connectionState==='closed')&&peers.get(id)===p)peerDown(p,'rtc')};
  peers.set(id,p);return p;
 }
-function waitIce(pc,ms){return new Promise(res=>{if(pc.iceGatheringState==='complete')return res();const t=setTimeout(done,ms);function done(){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',chk);res()}function chk(){if(pc.iceGatheringState==='complete')done()}pc.addEventListener('icegatheringstatechange',chk)})}
+function waitIce(pc,ms,relay){return new Promise(res=>{
+ if(pc.iceGatheringState==='complete')return res();
+ let rt=0;const t=setTimeout(done,ms);
+ function done(){clearTimeout(t);clearTimeout(rt);pc.removeEventListener('icegatheringstatechange',chk);pc.removeEventListener('icecandidate',cand);res()}
+ function chk(){if(pc.iceGatheringState==='complete')done()}
+ function cand(e){if(relay&&!rt&&e.candidate&&/ typ relay /.test(e.candidate.candidate))rt=setTimeout(done,1200)} // 중계(relay) 후보가 나오면 잠깐만 더 기다리고 바로 진행
+ pc.addEventListener('icegatheringstatechange',chk);pc.addEventListener('icecandidate',cand);
+})}
 async function startOffer(id){
  if(!window.RTCPeerConnection)return;
  const relay=!!net.relayFor[id]; // 같은 네트워크/직접 가능한 사이는 중계 없이. 직접이 안 될 때만 relayFor 가 켜짐
@@ -2406,7 +2414,7 @@ async function startOffer(id){
  const att=(Math.random()*1e9)|0;let p;
  try{
   p=mkPeer(id,att,true,relay);
-  const o=await p.pc.createOffer();await p.pc.setLocalDescription(o);await waitIce(p.pc,p.relay?7000:2500);
+  const o=await p.pc.createOffer();await p.pc.setLocalDescription(o);await waitIce(p.pc,p.relay?7000:2500,p.relay);
   if(peers.get(id)!==p)return;
   sendSig(id,{k:'sd',a:att,r:relay?1:0,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
  }catch(e){if(p)peerDown(p,'offer')}
@@ -2427,7 +2435,7 @@ async function onSignal(m){
    p=mkPeer(id,m.a,false,!!m.r);
    await p.pc.setRemoteDescription({type:'offer',sdp:m.d.sdp});
    {const tx=p.pc.getTransceivers().find(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='audio');if(tx){try{tx.direction='sendrecv'}catch(e){}p.aTx=tx}}
-   const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,p.relay?7000:2500);
+   const a=await p.pc.createAnswer();await p.pc.setLocalDescription(a);await waitIce(p.pc,p.relay?7000:2500,p.relay);
    if(peers.get(id)!==p)return;
    sendSig(id,{k:'sd',a:m.a,d:{type:p.pc.localDescription.type,sdp:p.pc.localDescription.sdp}});
   }else if(m.d.type==='answer'){
