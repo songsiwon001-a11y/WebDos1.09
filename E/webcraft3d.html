@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>WebCraft - 정식 버전 1.2</title>
+<title>WebCraft - 정식 버전 1.1</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/neodgm/neodgm-webfont@latest/neodgm/style.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
 <style>
@@ -86,7 +86,7 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
 <div id="tab"></div>
 
 <div class="ov" id="ovTitle" style="display:flex">
- <div id="versionBadge">정식 버전 1.2</div>
+ <div id="versionBadge">정식 버전 1.1</div>
  <div class="card">
   <div class="logoWrap"><h1>WebCraft</h1><div id="splash"></div></div>
   <div class="sub">멀티플레이 지원<br>16명과 함께하는 야생</div>
@@ -4806,11 +4806,16 @@ function ytParse(s){
 /* 유튜브 말고도 .m3u8(실시간 방송/HLS) · .mp4 · .webm 같은 직접 영상 주소를 TV 에 틀 수 있다 (주소는 2000자까지) */
 function tvLinkParse(s){
  const y=ytParse(s);if(y)return {v:y.v,pl:y.pl,u:''};
- s=String(s||'').trim();if(!/^https?:\/\//i.test(s))return null;
+ s=String(s||'').trim();
+ const MEDIA=/\.(m3u8|mp4|webm|m4v|mov|ogv|mkv|ts)(?=$|[?#\/])|m3u8/i;
+ if(/^\/\//.test(s))s='https:'+s; // //host/a.m3u8 형태
+ else if(!/^https?:\/\//i.test(s)){ // 주소창에서 복사하다 https:// 가 빠진 경우: 도메인/경로 + 영상 확장자면 https:// 를 붙여 줌
+  if(/\s/.test(s)||!/^[\w-]+(\.[\w-]+)+(:\d+)?\//.test(s)||!MEDIA.test(s))return null;
+  s='https://'+s;
+ }
  let u;try{u=new URL(s)}catch(e){return null}
- if(!/\.(m3u8|mp4|webm|m4v|mov|ogv)$/i.test(u.pathname)&&!/m3u8/i.test(u.pathname+u.search))return null;
  if(s.length>2000||/["'<>\\\s]/.test(s))return {err:1};
- return {v:'',pl:'',u:s};
+ return {v:'',pl:'',u:s}; // 유튜브가 아닌 http(s) 주소는 확장자와 상관없이 직접 영상 주소로 시도
 }
 function tvParse(v){
  if(typeof v!=='string'||v.slice(0,3)!=='TV|')return null;
@@ -4886,7 +4891,7 @@ function tvEl(){
   if(r&&r.err)return toast('영상 주소가 너무 길거나 쓸 수 없는 글자가 들어 있어요 (2000자 이하)',3200);
   if(!r){
    if(!q)return toast('유튜브 링크나 .m3u8 / .mp4 영상 주소를 붙여넣거나 검색어를 입력하세요',2600);
-   if(/^https?:\/\//i.test(q))return toast('지원하지 않는 주소예요 — 유튜브 링크나 .m3u8 · .mp4 · .webm 영상 주소를 넣어 주세요',3200);
+   if(/^(https?:)?\/\//i.test(q)||(!/\s/.test(q)&&/^[\w-]+(\.[\w-]+)+(:\d+)?\//.test(q)))return toast('지원하지 않는 주소예요 — 유튜브 링크나 .m3u8 · .mp4 · .webm 영상 주소를 넣어 주세요',3200);
    window.open('https://www.youtube.com/results?search_query='+encodeURIComponent(q),'_blank','noopener');
    return toast('새 탭에서 영상을 찾은 뒤 링크를 복사해 여기에 붙여넣으세요',3200);
   }
