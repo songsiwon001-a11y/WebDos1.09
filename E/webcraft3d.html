@@ -1413,7 +1413,7 @@ precision highp float;void main(){}`;
 }
 function wcSunDirection(){const phase=((curHour()-6+24)%24)/24,ang=phase*Math.PI*2,L=[-Math.cos(ang)*0.55,Math.sin(ang),-0.30],n=Math.hypot(...L)||1;return L.map(v=>v/n)}
 function wcRenderShadows(vis){
- if(!WC_SHADOW.ready||wcSunDirection()[1]<0.08)return false;const cf=gl.isEnabled(gl.CULL_FACE);gl.bindFramebuffer(gl.FRAMEBUFFER,WC_SHADOW.fbo);gl.viewport(0,0,WC_SHADOW.size,WC_SHADOW.size);gl.clear(gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.disable(gl.BLEND);gl.disable(gl.CULL_FACE);
+ if(!SH.on||!WC_SHADOW.ready||wcSunDirection()[1]<0.08)return false;const cf=gl.isEnabled(gl.CULL_FACE);gl.bindFramebuffer(gl.FRAMEBUFFER,WC_SHADOW.fbo);gl.viewport(0,0,WC_SHADOW.size,WC_SHADOW.size);gl.clear(gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.disable(gl.BLEND);gl.disable(gl.CULL_FACE);
  WC_SHADOW.mat=wcShadowMatrix();gl.useProgram(WC_SHADOW.prog);gl.uniformMatrix4fv(gl.getUniformLocation(WC_SHADOW.prog,'u_lightVP'),false,WC_SHADOW.mat);const off=gl.getUniformLocation(WC_SHADOW.prog,'u_off');
  for(const c of vis){if(!c.m||!c.m.s)continue;gl.uniform3f(off,c.cx*CH-rc.x,-rc.y,c.cz*CH-rc.z);gl.bindVertexArray(c.m.s.vao);gl.drawElements(gl.TRIANGLES,c.m.s.n,gl.UNSIGNED_INT,0)}
  if(cf)gl.enable(gl.CULL_FACE);else gl.disable(gl.CULL_FACE);gl.bindFramebuffer(gl.FRAMEBUFFER,SH.active?SH.fboS:null);gl.viewport(0,0,cv.width,cv.height);return true;
@@ -5228,7 +5228,7 @@ function sitOn(h){
    · 일시정지 화면의 "쉐이더" 버튼으로 끄고 켤 수 있다. */
 const SH={on:false,ok:false,files:null,name:'',err:'',passes:[],NT:1,NU:1,w:0,h:0,main:[],alt:[],dirty:[],depth:null,fboS:null,fboP:null,vao:null,
  black:null,white:null,noise:null,hf:false,active:false,fc:0,t0:performance.now(),lastT:0,maxU:16};
-try{SH.on=localStorage.getItem('wc_shader')!=='0'}catch(e){}
+try{SH.on=localStorage.getItem('wc_shader')==='1'}catch(e){}
 SH.NT=Math.max(1,Math.min(8,gl.getParameter(gl.MAX_DRAW_BUFFERS),gl.getParameter(gl.MAX_COLOR_ATTACHMENTS)));
 SH.maxU=Math.max(8,gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS));
 
