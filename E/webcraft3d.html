@@ -111,6 +111,14 @@ input.t{width:100%;padding:9px;background:#111;color:#fff;border:2px solid #666;
   <h1 style="font-size:30px">일시정지</h1>
   <div class="sub" id="pStat"></div>
   <div class="sub">멀리 보기: <span id="rdv"></span> 단계<br><input type="range" id="rd" min="3" max="12" step="1" style="width:90%"></div>
+  <div class="sub" style="border-top:1px solid #555;padding-top:10px;margin-top:6px">
+   <b>쉐이더</b> — <span id="shSt"></span>
+   <div class="b dim" id="bShTog">쉐이더: 꺼짐</div>
+   <div class="b dim" id="bShLoad">쉐이더팩 올리기 (.zip)</div>
+   <div class="b dim" id="bShDel" style="display:none">쉐이더팩 지우기</div>
+   <input id="shFile" type="file" accept=".zip,application/zip" style="display:none">
+   <div id="shErr" style="color:#f88;font-size:12px;white-space:pre-wrap;max-height:90px;overflow:auto;margin-top:6px"></div>
+  </div>
   <div class="b" id="bResume">계속하기</div>
   <div class="b" id="bExport" style="display:none">월드 저장 파일 만들기</div>
   <div class="b" id="bImport" style="display:none">월드 저장 파일 열기</div>
@@ -1571,6 +1579,7 @@ function updateRenderCam(){
 }
 const fwdOf=(y,p)=>[-Math.sin(y)*Math.cos(p),Math.sin(p),-Math.cos(y)*Math.cos(p)];
 const VP=new Float32Array(16);
+const GB={V:new Float32Array(16),P:new Float32Array(16),pV:new Float32Array(16),pP:new Float32Array(16),pc:[0,0,0]};
 function buildVP(w,h){
  const f=fwdOf(rc.yaw,rc.pitch),r=[Math.cos(rc.yaw),0,-Math.sin(rc.yaw)];
  const u=[r[1]*f[2]-r[2]*f[1],r[2]*f[0]-r[0]*f[2],r[0]*f[1]-r[1]*f[0]];
@@ -1578,6 +1587,7 @@ function buildVP(w,h){
  const fov=(isTouch?75:70)*Math.PI/180,a=w/h,n=.08,fr=1200,t=1/Math.tan(fov/2);
  const P=[t/a,0,0,0, 0,t,0,0, 0,0,(fr+n)/(n-fr),-1, 0,0,2*fr*n/(n-fr),0];
  for(let c=0;c<4;c++)for(let r_=0;r_<4;r_++){let s=0;for(let k=0;k<4;k++)s+=P[k*4+r_]*V[c*4+k];VP[c*4+r_]=s}
+ GB.V.set(V);GB.P.set(P);
  return f;
 }
 
@@ -3258,7 +3268,7 @@ document.addEventListener('pointerlockchange',()=>{
  locked=document.pointerLockElement===cv;
  if(!locked&&state==='play'&&!ui&&!isTouch&&!micBusy){ui='pause';openPause()}
 });
-function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 이름 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;showOv('ovPause',true)}
+function openPause(){updateAdminMenu();$('pStat').textContent=net.on?`멀티플레이 — 연결 ${[...peers.values()].filter(p=>p.open).length+1}명 · 월드 이름 ${ROOM}`:'솔로 플레이';$('rd').value=RD;$('rdv').textContent=RD;if(typeof shUi==='function')shUi();showOv('ovPause',true)}
 function resume(){if(ui==='pause'){ui='';showOv('ovPause',false);lockPointer()}}
 $('bResume').onclick=resume;
 $('bExport').onclick=exportWebcraft;
@@ -5138,6 +5148,306 @@ function sitOn(h){
  cam.yaw=Math.atan2(-DX[fi.f],-DZ[fi.f]); // 소파 앞면 방향을 보게
 }
 
+/* ===================== 쉐이더 (마인크래프트 쉐이더팩 zip 불러오기) =====================
+   · 기본은 꺼짐. 켜면 장면을 텍스처에 그린 뒤 팩의 deferred* / composite* / final 패스를 차례로 돌린다.
+   · gbuffers_* / shadow 단계는 지원하지 않는다 (장면은 게임 자체 셰이더로 그려진다).            */
+const SH={on:false,ok:false,files:null,name:'',err:'',passes:[],NT:1,NU:1,w:0,h:0,main:[],alt:[],dirty:[],depth:null,fboS:null,fboP:null,vao:null,
+ black:null,white:null,noise:null,hf:false,active:false,fc:0,t0:performance.now(),lastT:0,maxU:16};
+try{SH.on=localStorage.getItem('wc_shader')==='1'}catch(e){}
+SH.NT=Math.max(1,Math.min(8,gl.getParameter(gl.MAX_DRAW_BUFFERS),gl.getParameter(gl.MAX_COLOR_ATTACHMENTS)));
+SH.maxU=Math.max(8,gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS));
+
+function m4inv(a){
+ const o=new Float32Array(16);
+ const b00=a[0]*a[5]-a[1]*a[4],b01=a[0]*a[6]-a[2]*a[4],b02=a[0]*a[7]-a[3]*a[4],b03=a[1]*a[6]-a[2]*a[5],b04=a[1]*a[7]-a[3]*a[5],b05=a[2]*a[7]-a[3]*a[6],
+  b06=a[8]*a[13]-a[9]*a[12],b07=a[8]*a[14]-a[10]*a[12],b08=a[8]*a[15]-a[11]*a[12],b09=a[9]*a[14]-a[10]*a[13],b10=a[9]*a[15]-a[11]*a[13],b11=a[10]*a[15]-a[11]*a[14];
+ let d=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;if(!d)return o;d=1/d;
+ o[0]=(a[5]*b11-a[6]*b10+a[7]*b09)*d;o[1]=(a[2]*b10-a[1]*b11-a[3]*b09)*d;o[2]=(a[13]*b05-a[14]*b04+a[15]*b03)*d;o[3]=(a[10]*b04-a[9]*b05-a[11]*b03)*d;
+ o[4]=(a[6]*b08-a[4]*b11-a[7]*b07)*d;o[5]=(a[0]*b11-a[2]*b08+a[3]*b07)*d;o[6]=(a[14]*b02-a[12]*b05-a[15]*b01)*d;o[7]=(a[8]*b05-a[10]*b02+a[11]*b01)*d;
+ o[8]=(a[4]*b10-a[5]*b08+a[7]*b06)*d;o[9]=(a[1]*b08-a[0]*b10-a[3]*b06)*d;o[10]=(a[12]*b04-a[13]*b02+a[15]*b00)*d;o[11]=(a[9]*b02-a[8]*b04-a[11]*b00)*d;
+ o[12]=(a[5]*b07-a[4]*b09-a[6]*b06)*d;o[13]=(a[0]*b09-a[1]*b07+a[2]*b06)*d;o[14]=(a[13]*b01-a[12]*b03-a[14]*b00)*d;o[15]=(a[8]*b03-a[9]*b01+a[10]*b00)*d;
+ return o;
+}
+
+/* ---- zip 읽기 (shaders/ 아래 텍스트 파일만 꺼낸다) ---- */
+async function shInflate(u8){
+ const s=new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+ return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function shUnzip(buf){
+ if(typeof DecompressionStream==='undefined')throw new Error('이 브라우저는 zip 해제를 지원하지 않아요 (최신 크롬·사파리·파이어폭스에서 열어 주세요)');
+ const u8=new Uint8Array(buf),dv=new DataView(buf);
+ let e=-1;for(let i=u8.length-22;i>=Math.max(0,u8.length-65558);i--){if(dv.getUint32(i,true)===0x06054b50){e=i;break}}
+ if(e<0)throw new Error('zip 파일이 아니에요');
+ const n=dv.getUint16(e+10,true);let p=dv.getUint32(e+16,true);
+ const out={},td=new TextDecoder();let total=0;
+ for(let k=0;k<n;k++){
+  if(p+46>u8.length||dv.getUint32(p,true)!==0x02014b50)break;
+  const meth=dv.getUint16(p+10,true),cs=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),xl=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),lo=dv.getUint32(p+42,true);
+  const name=td.decode(u8.subarray(p+46,p+46+nl)).replace(/\\/g,'/');p+=46+nl+xl+cl;
+  if(name.endsWith('/'))continue;
+  const m=name.match(/(?:^|\/)shaders\/(.+)$/i);
+  if(!m||!/\.(fsh|vsh|glsl|inc|h|frag|vert|properties)$/i.test(m[1]))continue;
+  if(dv.getUint32(lo,true)!==0x04034b50)continue;
+  const ds=lo+30+dv.getUint16(lo+26,true)+dv.getUint16(lo+28,true);
+  let d=u8.subarray(ds,ds+cs);
+  if(meth===8)d=await shInflate(d);else if(meth!==0)continue;
+  total+=d.length;if(total>40e6)throw new Error('쉐이더팩이 너무 커요');
+  out[m[1]]=td.decode(d).replace(/\r/g,'');
+ }
+ return out;
+}
+
+/* ---- 소스 변환: OptiFine/Iris GLSL (120~460) → WebGL2 (GLSL ES 300) ---- */
+function shExpand(files,name,depth){
+ const src=files[name];if(src==null||depth>12)return '';
+ const dir=name.includes('/')?name.slice(0,name.lastIndexOf('/')+1):'';
+ return src.replace(/^[ \t]*#[ \t]*include[ \t]+"([^"]+)"[^\n]*$/gm,(m,p)=>{
+  const q=p.startsWith('/')?p.slice(1):dir+p,parts=[];
+  for(const s of q.split('/')){if(s==='..')parts.pop();else if(s!=='.'&&s!=='')parts.push(s)}
+  return shExpand(files,parts.join('/'),depth+1);
+ });
+}
+function shDB(src,NT){
+ const m=src.match(/(?:DRAWBUFFERS|RENDERTARGETS)[ \t]*:[ \t]*([0-9A-Fa-f, ]+)/);let a=[0];
+ if(m){const t=m[1].trim();a=t.includes(',')?t.split(',').map(x=>parseInt(x,10)):t.replace(/\s/g,'').split('').map(c=>parseInt(c,16))}
+ return a.map(T=>T>=0&&T<NT?T:null);
+}
+const SH_DVS=`#version 300 es
+precision highp float;
+in vec2 sh_pos;out vec2 texcoord;out vec4 sh_TC0;
+void main(){texcoord=sh_pos*0.5+0.5;sh_TC0=vec4(texcoord,0.0,1.0);gl_Position=vec4(sh_pos,0.0,1.0);}`;
+const SH_BLIT=`#version 300 es
+precision highp float;uniform sampler2D colortex0;in vec2 texcoord;layout(location=0) out vec4 sh_o0;
+void main(){sh_o0=vec4(texture(colortex0,texcoord).rgb,1.0);}`;
+function shConv(src,fs,db){
+ let s=src.replace(/^[ \t]*#[ \t]*version[^\n]*$/gm,'').replace(/^[ \t]*#[ \t]*extension[^\n]*$/gm,'')
+  .replace(/^[ \t]*const[ \t]+(?:int|bool)[ \t]+\w*Format[ \t]*=[^;]*;[ \t]*$/gm,'');
+ const R=(a,b)=>{s=s.replace(a,b)};
+ R(/\btexture2DLod\b/g,'textureLod');R(/\btexture2DProj\b/g,'textureProj');R(/\btexture2DGrad\b/g,'textureGrad');R(/\btexture2D\b/g,'texture');R(/\btexture3D\b/g,'texture');R(/\btextureCube\b/g,'texture');
+ R(/\bgl_(?:ModelViewProjection|Projection|ModelView)Matrix(?:Inverse)?\b/g,'sh_I4');R(/\bgl_NormalMatrix\b/g,'sh_I3');R(/\bgl_TextureMatrix\s*\[\s*\d+\s*\]/g,'sh_I4');
+ R(/\bftransform\s*\(\s*\)/g,'sh_V4');R(/\bgl_Vertex\b/g,'sh_V4');R(/\bgl_Normal\b/g,'vec3(0.0,0.0,1.0)');R(/\bgl_Color\b/g,'vec4(1.0)');
+ R(/\bgl_MultiTexCoord0\b/g,'sh_T0');R(/\bgl_MultiTexCoord[1-7]\b/g,'vec4(0.0)');
+ R(/\bgl_TexCoord\s*\[\s*0\s*\]/g,'sh_TC0');R(/\bgl_TexCoord\s*\[\s*1\s*\]/g,'sh_TC1');
+ let hdr='';
+ if(fs){
+  R(/\bvarying\b/g,'in');
+  R(/layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*out\s+(?:(?:highp|mediump|lowp)\s+)?(\w+)\s+(\w+)\s*;/g,(m,k,ty,nm)=>{const T=db[+k];return T==null?`${ty} ${nm};`:`layout(location=${T}) out ${ty} ${nm};`});
+  const o=T=>T==null?'sh_dum':'sh_o'+T,use=/\bgl_Frag(?:Data|Color)\b/.test(s);
+  R(/\bgl_FragData\s*\[\s*(\d+)\s*\]/g,(m,k)=>o(db[+k]));R(/\bgl_FragColor\b/g,o(db[0]));
+  if(use)for(const T of new Set(db))if(T!=null)hdr+=`layout(location=${T}) out vec4 sh_o${T};\n`;
+  hdr+='vec4 sh_dum;\n';
+ }else{R(/\bvarying\b/g,'out');R(/\battribute\b/g,'in')}
+ const tc=(/\bsh_TC0\b/.test(s)?(fs?'in':'out')+' vec4 sh_TC0;\n':'')+(/\bsh_TC1\b/.test(s)?(fs?'in':'out')+' vec4 sh_TC1;\n':'');
+ const pre=`#version 300 es
+precision highp float;precision highp int;precision highp sampler2D;precision highp sampler3D;
+#define MC_VERSION 12100
+#define MC_GL_VERSION 330
+#define MC_GLSL_VERSION 330
+#define MC_RENDER_QUALITY 1.0
+#define MC_SHADOW_QUALITY 1.0
+#define MC_HAND_DEPTH 0.125
+const mat4 sh_I4=mat4(1.0);const mat3 sh_I3=mat3(1.0);
+`+(fs?'#define sh_V4 vec4(0.0,0.0,0.0,1.0)\n#define sh_T0 vec4(0.0,0.0,0.0,1.0)\n':'in vec2 sh_pos;\n#define sh_V4 vec4(sh_pos,0.0,1.0)\n#define sh_T0 vec4(sh_pos*0.5+0.5,0.0,1.0)\n')+tc+hdr;
+ return pre+s;
+}
+function shMake(vs,fs,label){
+ const mk=(t,src)=>{const o=gl.createShader(t);gl.shaderSource(o,src);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)){const l=(gl.getShaderInfoLog(o)||'').split('\n').filter(Boolean).slice(0,4).join('\n');gl.deleteShader(o);throw new Error(label+(t===gl.VERTEX_SHADER?'.vsh':'.fsh')+' 컴파일 실패\n'+l)}return o};
+ const a=mk(gl.VERTEX_SHADER,vs),b=mk(gl.FRAGMENT_SHADER,fs),p=gl.createProgram();
+ gl.attachShader(p,a);gl.attachShader(p,b);gl.bindAttribLocation(p,0,'sh_pos');gl.linkProgram(p);
+ gl.deleteShader(a);gl.deleteShader(b);
+ if(!gl.getProgramParameter(p,gl.LINK_STATUS)){const l=(gl.getProgramInfoLog(p)||'').split('\n').filter(Boolean).slice(0,3).join('\n');gl.deleteProgram(p);throw new Error(label+' 연결 실패\n'+l)}
+ const un=[],nu=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+ for(let i=0;i<nu;i++){const u=gl.getActiveUniform(p,i),loc=gl.getUniformLocation(p,u.name);if(loc)un.push({nm:u.name.replace(/\[0\]$/,''),loc,ty:u.type,sz:u.size})}
+ return {p,un};
+}
+const SH_ALIAS={gcolor:0,gdepth:1,gnormal:2,composite:3,gaux1:4,gaux2:5,gaux3:6,gaux4:7};
+function shTexIdx(nm){const m=/^colortex(\d+)$/.exec(nm);return m?+m[1]:(nm in SH_ALIAS?SH_ALIAS[nm]:null)}
+function shFreeProgs(){for(const ps of SH.passes)gl.deleteProgram(ps.p);SH.passes=[]}
+function shFreeTex(){
+ for(const t of SH.main)if(t)gl.deleteTexture(t);for(const t of SH.alt)if(t)gl.deleteTexture(t);
+ if(SH.depth)gl.deleteTexture(SH.depth);SH.main=[];SH.alt=[];SH.depth=null;SH.w=SH.h=0;
+}
+function shBuild(files){
+ const names=[];for(let i=0;i<16;i++)names.push('deferred'+(i||''));for(let i=0;i<16;i++)names.push('composite'+(i||''));names.push('final');
+ const find=n=>files['world0/'+n]!=null?'world0/'+n:(files[n]!=null?n:null);
+ const passes=[];let nu=1;
+ try{
+  for(const n of names){
+   const f=find(n+'.fsh');if(!f)continue;
+   const fr=shExpand(files,f,0);let db=n==='final'?[0]:shDB(fr,SH.NT);
+   if(!db.some(T=>T!=null))db=[0];
+   const v=find(n+'.vsh'),vs=v?shConv(shExpand(files,v,0),false,db):SH_DVS;
+   const m=shMake(vs,shConv(fr,true,db),n);
+   const T=[...new Set(db.filter(x=>x!=null))];
+   for(const x of T)nu=Math.max(nu,x+1);
+   for(const u of m.un){const i=shTexIdx(u.nm);if(i!=null&&i<SH.NT)nu=Math.max(nu,i+1)}
+   passes.push({n,p:m.p,un:m.un,db,T});
+  }
+  if(!passes.length||passes[passes.length-1].n!=='final'){
+   const m=shMake(SH_DVS,SH_BLIT,'final');passes.push({n:'final',p:m.p,un:m.un,db:[0],T:[0],blit:true});
+  }
+ }catch(e){for(const ps of passes)gl.deleteProgram(ps.p);throw e}
+ SH.passes=passes;SH.NU=Math.min(nu,SH.NT);SH.hasPack=passes.length>(passes[passes.length-1].blit?1:0);
+}
+function shInitRes(){
+ if(SH.vao)return;
+ SH.vao=gl.createVertexArray();gl.bindVertexArray(SH.vao);
+ const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+ gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.bindVertexArray(null);
+ const px=(d,w,h,rep)=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,d);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,rep?gl.REPEAT:gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,rep?gl.REPEAT:gl.CLAMP_TO_EDGE);return t};
+ SH.black=px(new Uint8Array([0,0,0,0]),1,1,false);SH.white=px(new Uint8Array([255,255,255,255]),1,1,false);
+ const nz=new Uint8Array(256*256*4);for(let i=0;i<nz.length;i++)nz[i]=Math.random()*256|0;
+ SH.noise=px(nz,256,256,true);SH.fboS=gl.createFramebuffer();SH.fboP=gl.createFramebuffer();
+ gl.bindTexture(gl.TEXTURE_2D,null);
+}
+function shAlloc(w,h){
+ if(SH.w===w&&SH.h===h&&SH.main.length>=SH.NU)return;
+ shFreeTex();
+ SH.hf=!!gl.getExtension('EXT_color_buffer_float');
+ const mk=()=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,SH.hf?gl.RGBA16F:gl.RGBA8,w,h,0,gl.RGBA,SH.hf?gl.HALF_FLOAT:gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t};
+ const wr=new Set();for(const ps of SH.passes)if(!ps.blit&&ps.n!=='final')for(const T of ps.T)wr.add(T);
+ for(let T=0;T<SH.NU;T++){SH.main[T]=mk();SH.alt[T]=(T===0||wr.has(T))?mk():null;SH.dirty[T]=false}
+ const d=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,d);gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,w,h,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+ SH.depth=d;SH.w=w;SH.h=h;
+ gl.bindFramebuffer(gl.FRAMEBUFFER,SH.fboS);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,SH.main[0],0);
+ gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,d,0);
+ const st=gl.checkFramebufferStatus(gl.FRAMEBUFFER);gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.bindTexture(gl.TEXTURE_2D,null);
+ if(st!==gl.FRAMEBUFFER_COMPLETE)throw new Error('화면 버퍼를 만들 수 없어요 (0x'+st.toString(16)+')');
+}
+function shFail(e){
+ console.warn('shader',e);SH.ok=false;SH.active=false;SH.err=String(e&&e.message||e);
+ try{gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.bindVertexArray(null)}catch(x){}
+ shFreeTex();shUi();
+}
+function shRebuild(){
+ shFreeProgs();shFreeTex();SH.ok=false;
+ if(!SH.on||!SH.files){shUi();return}
+ try{shInitRes();shBuild(SH.files);SH.ok=true;SH.err=SH.hasPack?'':'이 팩에는 composite / final 파일이 없어요 (gbuffers 전용 팩은 지원하지 않아요)'}
+ catch(e){SH.ok=false;SH.err=String(e&&e.message||e)}
+ shUi();
+}
+function shVals(w,h,tms){
+ const V=GB.V,iV=m4inv(V),iP=m4inv(GB.P),hr=curHour(),wt=Math.floor(((hr-6+24)%24)*1000),sa=wt/24000,th=sa*Math.PI*2,sk=skyState();
+ const mv=(x,y,z)=>[V[0]*x+V[4]*y+V[8]*z,V[1]*x+V[5]*y+V[9]*z,V[2]*x+V[6]*y+V[10]*z];
+ const sun=mv(Math.cos(th)*100,Math.sin(th)*100,0),moon=[-sun[0],-sun[1],-sun[2]],id=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+ let water=0;try{water=getBlock(Math.floor(rc.x),Math.floor(rc.y),Math.floor(rc.z))===B_WATER?1:0}catch(e){}
+ const eb=[Math.round(240*sk.light),0],fogFar=RD*CH*.92;
+ return {viewWidth:w,viewHeight:h,aspectRatio:w/h,near:.08,far:1200,frameTimeCounter:(tms-SH.t0)/1000,frameTime:Math.min(.25,(tms-SH.lastT)/1000)||.016,frameCounter:SH.fc,
+  worldTime:wt,worldDay:Math.floor(Date.now()/1000/DAY_LEN),sunAngle:sa,shadowAngle:sa<.5?sa:sa-.5,moonPhase:0,rainStrength:0,wetness:0,thunderStrength:0,
+  fogColor:sk.c,skyColor:sk.c,sunPosition:sun,moonPosition:moon,shadowLightPosition:sa<.5?sun:moon,upPosition:mv(0,100,0),
+  cameraPosition:[rc.x,rc.y,rc.z],previousCameraPosition:GB.pc,eyeAltitude:rc.y,isEyeInWater:water,blindness:0,nightVision:0,screenBrightness:.5,hideGUI:0,
+  eyeBrightness:eb,eyeBrightnessSmooth:eb,centerDepthSmooth:.5,fogStart:fogFar*.55,fogEnd:fogFar,fogDensity:.1,
+  gbufferModelView:V,gbufferModelViewInverse:iV,gbufferProjection:GB.P,gbufferProjectionInverse:iP,gbufferPreviousModelView:GB.pV,gbufferPreviousProjection:GB.pP,
+  shadowModelView:id,shadowModelViewInverse:id,shadowProjection:id,shadowProjectionInverse:id,noiseTextureResolution:256,
+  pixelSize:[1/w,1/h]};
+}
+function shTexFor(nm){
+ const i=shTexIdx(nm);if(i!=null)return SH.main[i]||SH.black;
+ if(/^depthtex\d$|^gdepthtex$/.test(nm))return SH.depth;
+ if(nm==='noisetex')return SH.noise;
+ if(/^shadowtex|^shadowcolor|^shadow$|^watershadow$/.test(nm))return SH.white;
+ return SH.black;
+}
+function shSet(u,v){
+ const num=typeof v==='number';
+ switch(u.ty){
+  case gl.FLOAT:if(num)gl.uniform1f(u.loc,v);break;
+  case gl.INT:case gl.BOOL:if(num)gl.uniform1i(u.loc,Math.round(v));break;
+  case gl.FLOAT_VEC2:if(!num&&v.length>=2)gl.uniform2fv(u.loc,v);break;
+  case gl.FLOAT_VEC3:if(!num&&v.length>=3)gl.uniform3fv(u.loc,v);break;
+  case gl.FLOAT_VEC4:if(!num&&v.length>=4)gl.uniform4fv(u.loc,v);break;
+  case gl.INT_VEC2:if(!num&&v.length>=2)gl.uniform2iv(u.loc,Int32Array.from(v));break;
+  case gl.FLOAT_MAT4:if(!num&&v.length>=16)gl.uniformMatrix4fv(u.loc,false,v);break;
+ }
+}
+function shBegin(w,h){
+ SH.active=false;
+ if(!SH.on||!SH.ok)return;
+ try{
+  shAlloc(w,h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,SH.fboP);
+  for(let T=1;T<SH.NU;T++)if(SH.dirty[T]){gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,SH.main[T],0);gl.drawBuffers([gl.COLOR_ATTACHMENT0]);gl.clearBufferfv(gl.COLOR,0,[0,0,0,0]);SH.dirty[T]=false}
+  gl.bindFramebuffer(gl.FRAMEBUFFER,SH.fboS);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,SH.main[0],0);gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  SH.active=true;
+ }catch(e){shFail(e)}
+}
+function shEnd(w,h,tms){
+ if(!SH.active)return;SH.active=false;
+ const cf=gl.isEnabled(gl.CULL_FACE);
+ try{
+  const V=shVals(w,h,tms);
+  gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.depthMask(false);gl.bindVertexArray(SH.vao);
+  for(const ps of SH.passes){
+   const fin=ps.n==='final';
+   if(fin)gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+   else{
+    gl.bindFramebuffer(gl.FRAMEBUFFER,SH.fboP);
+    const arr=[];for(let T=0;T<SH.NU;T++){const on=ps.T.includes(T)&&SH.alt[T];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0+T,gl.TEXTURE_2D,on?SH.alt[T]:null,0);arr.push(on?gl.COLOR_ATTACHMENT0+T:gl.NONE)}
+    gl.drawBuffers(arr);
+   }
+   gl.viewport(0,0,w,h);gl.useProgram(ps.p);
+   let unit=0;
+   for(const u of ps.un){
+    if(u.ty===gl.SAMPLER_2D||u.ty===gl.SAMPLER_2D_SHADOW||u.ty===gl.SAMPLER_3D||u.ty===gl.SAMPLER_CUBE||u.ty===gl.INT_SAMPLER_2D||u.ty===gl.UNSIGNED_INT_SAMPLER_2D){
+     if(unit>=SH.maxU)continue;
+     gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,u.ty===gl.SAMPLER_2D?shTexFor(u.nm):SH.black);gl.uniform1i(u.loc,unit++);
+    }else{const v=V[u.nm];if(v!==undefined)shSet(u,v)}
+   }
+   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+   if(!fin)for(const T of ps.T)if(SH.alt[T]){const t=SH.main[T];SH.main[T]=SH.alt[T];SH.alt[T]=t;SH.dirty[T]=true}
+  }
+  gl.activeTexture(gl.TEXTURE0);gl.bindVertexArray(null);
+  gl.enable(gl.DEPTH_TEST);gl.depthMask(true);if(cf)gl.enable(gl.CULL_FACE);
+  SH.fc++;SH.lastT=tms;GB.pV.set(GB.V);GB.pP.set(GB.P);GB.pc=[rc.x,rc.y,rc.z];
+ }catch(e){gl.enable(gl.DEPTH_TEST);gl.depthMask(true);if(cf)gl.enable(gl.CULL_FACE);shFail(e)}
+}
+
+/* ---- 설정 화면 ---- */
+function shUi(){
+ const b=$('bShTog');if(!b)return;
+ b.textContent='쉐이더: '+(SH.on?'켜짐':'꺼짐');b.style.background=SH.on?'#3a7a22':'';
+ $('shSt').textContent=SH.files?('팩 "'+SH.name+'"'+(SH.on?(SH.ok?' · 적용 중':' · 적용 안 됨'):'')):'불러온 팩 없음';
+ $('shErr').textContent=SH.err;$('bShDel').style.display=SH.files?'':'none';
+}
+function shSaveOn(){try{localStorage.setItem('wc_shader',SH.on?'1':'0')}catch(e){}}
+async function shLoadZip(buf,name){
+ try{
+  const files=await shUnzip(buf);
+  if(!Object.keys(files).length)throw new Error('zip 안에 shaders 폴더(.fsh/.vsh 파일)가 없어요');
+  SH.files=files;SH.name=name.slice(0,60);SH.on=true;shSaveOn();SH.err='';
+  if(!store.db)await store.open();
+  store.put('shpack',{name:SH.name,files});
+  shRebuild();
+ }catch(e){SH.err=String(e&&e.message||e);shUi()}
+}
+$('bShTog').onclick=()=>{
+ SH.on=!SH.on;shSaveOn();SH.err='';
+ if(SH.on&&!SH.files)SH.err='먼저 쉐이더팩(.zip)을 올려 주세요';
+ shRebuild();
+};
+$('bShLoad').onclick=()=>$('shFile').click();
+$('shFile').onchange=async e=>{
+ const f=e.target.files[0];e.target.value='';if(!f)return;
+ SH.err='불러오는 중…';shUi();
+ try{await shLoadZip(await f.arrayBuffer(),f.name.replace(/\.zip$/i,''))}catch(x){SH.err=String(x.message||x);shUi()}
+};
+$('bShDel').onclick=()=>{SH.files=null;SH.name='';SH.err='';shFreeProgs();shFreeTex();SH.ok=false;if(!store.db)store.open().then(()=>store.put('shpack',null));else store.put('shpack',null);shUi()};
+(async()=>{
+ try{if(!store.db)await store.open();const r=await store.get('shpack');if(r&&r.files){SH.files=r.files;SH.name=r.name||'';shRebuild()}}catch(e){}
+ shUi();
+})();
+window.__sh=SH;
+
 /* ===================== 메인 루프 ===================== */
 let last=performance.now(),sendT=0,saveT=0,fpsA=0,fpsN=0,fps=0;
 function resize(){const d=Math.min(devicePixelRatio||1,1.5),w=innerWidth,h=innerHeight;cv.width=Math.max(2,w*d|0);cv.height=Math.max(2,h*d|0)}
@@ -5170,6 +5480,7 @@ function frame(t){
  updateChunks(rc.x,rc.z,state==='play'?7:12);
  // ---- 렌더 ----
  const sk=skyState(),fogFar=RD*CH*.92,fogNear=fogFar*.55;
+ shBegin(w,h);
  gl.viewport(0,0,w,h);gl.clearColor(sk.c[0],sk.c[1],sk.c[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
  const f=buildVP(w,h);
  gl.useProgram(prog);gl.uniformMatrix4fv(U.vp,false,VP);gl.uniform1f(U.light,sk.light);gl.uniform3f(U.fog,sk.c[0],sk.c[1],sk.c[2]);gl.uniform2f(U.fd,fogNear,fogFar);
@@ -5188,6 +5499,7 @@ function frame(t){
  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
  for(const c of vis){if(!c.m.t)continue;gl.uniform3f(U.off,c.cx*CH-rc.x,-rc.y,c.cz*CH-rc.z);gl.bindVertexArray(c.m.t.vao);gl.drawElements(gl.TRIANGLES,c.m.t.n,gl.UNSIGNED_INT,0)}
  gl.depthMask(true);gl.disable(gl.BLEND);
+ shEnd(w,h,t);
  if(state==='play'){
   updateTags(innerWidth,innerHeight);updateAnimalTags(innerWidth,innerHeight);tvUpdate(innerWidth,innerHeight);
   if(showInfo)$('pos').textContent=`위치 ${P.x.toFixed(1)} / ${P.y.toFixed(1)} / ${P.z.toFixed(1)}   프레임 ${fps}   ${P.fly?'[비행]':''}${micOn?'[마이크]':''}`+'\n'+`월드 크기 ${WORLD}×${WORLD} · 내가 바꾼 블록 ${editCount}개 · ${Math.floor(curHour())}시${TLOCK!==null?'(고정)':''}`;
