@@ -1740,17 +1740,22 @@ function pushOutOfDoor(){ // 문을 여닫아 판자가 몸을 덮으면, 위로
  }
 }
 let lastSpace=0,SPDM=1; // SPDM: /speed 배율
+const myPose=()=>P.sit?(P.sit.t==='bed'?2:1):0; // 0 서기 · 1 앉기 · 2 눕기
 function standUp(){
  const s=P.sit;if(!s)return;P.sit=null;
- const fi=FURN[getBlock(s.x,s.y,s.z)],f=fi?fi.f:0,cx=s.x+.5,cz=s.z+.5;
- for(const d of [1,.9,1.2,0]){const nx=cx+DX[f]*d,nz=cz+DZ[f]*d;if(!boxHit(nx,s.y,nz)){P.x=nx;P.z=nz;P.y=s.y;return}}
+ const fi=FURN[getBlock(s.x,s.y,s.z)],f=s.f!=null?s.f:(fi?fi.f:0),cx=s.cx!=null?s.cx:s.x+.5,cz=s.cz!=null?s.cz:s.z+.5;
+ let c;
+ if(s.t==='bed'){const l=(f+1)&3,r=(f+3)&3; // 침대 옆(양쪽) → 발치 → 머리맡 순서로 내려설 자리를 찾음
+  c=[[DX[l]*1.1,DZ[l]*1.1],[DX[r]*1.1,DZ[r]*1.1],[-DX[f]*1.5,-DZ[f]*1.5],[DX[f]*1.5,DZ[f]*1.5]];
+ }else c=[1,.9,1.2,0].map(d=>[DX[f]*d,DZ[f]*d]);
+ for(const [dx,dz] of c){const nx=cx+dx,nz=cz+dz;if(!boxHit(nx,s.y,nz)){P.x=nx;P.z=nz;P.y=s.y;return}}
  P.x=cx;P.z=cz;P.y=s.y+1;
 }
 function stepPlayer(dt,mv){ // mv: {f,s,jump,down,sprint}
  if(SVMODE&&P.fly&&myRole()<3){P.fly=false;P.vy=0}
  if(P.sit){P.sneak=false; // 소파에 앉아 있는 동안: 이동 키를 누르면 일어남
   const sb=FURN[getBlock(P.sit.x,P.sit.y,P.sit.z)];
-  if(!sb||sb.t!=='sofa'||mv.f||mv.s||mv.jump||mv.down){standUp();return}
+  if(!sb||sb.t!==(P.sit.t||'sofa')||mv.f||mv.s||mv.jump||mv.down){standUp();return}
   P.vx=P.vy=P.vz=0;return;
  }
  if(!P.fly)pushOutOfDoor();
@@ -1903,7 +1908,7 @@ function useBlock(){ // 우클릭으로 상호작용 (문 등). 처리했으면 
  if(h.b===JUKE){openJuke(h.x,h.y,h.z);return true}
  const fi=FURN[h.b];
  if(fi){
-  if(fi.t==='bed')sleepIn();
+  if(fi.t==='bed')lieOn(h);
   else if(fi.t==='sofa')sitOn(h);
   else if(fi.t==='dresser')openDresser(h.x,h.y,h.z);
   else if(fi.t==='pc')openPC(h.x,h.y,h.z);
@@ -2502,7 +2507,7 @@ function peerMsg(p,s){
  switch(m.k){
   case 'st':
    if(fin(m.x)&&fin(m.y)&&fin(m.z)&&fin(m.r)&&fin(m.p)){
-    p.tx=clamp(m.x,0,WORLD);p.ty=clamp(m.y,-10,WH+50);p.tz=clamp(m.z,0,WORLD);p.tyaw=m.r;p.tpitch=clamp(m.p,-1.6,1.6);p.held=(m.b|0)>0&&(m.b|0)<=NB?m.b|0:1;p.sneak=!!m.sn;
+    p.tx=clamp(m.x,0,WORLD);p.ty=clamp(m.y,-10,WH+50);p.tz=clamp(m.z,0,WORLD);p.tyaw=m.r;p.tpitch=clamp(m.p,-1.6,1.6);p.held=(m.b|0)>0&&(m.b|0)<=NB?m.b|0:1;p.sneak=!!m.sn;p.pose=(m.po===1||m.po===2)?m.po:0;p.bf=(m.bf|0)&3;
     if(!p.has){p.rx_=p.tx;p.ry=p.ty;p.rz=p.tz;p.yaw=p.tyaw;p.pitch=p.tpitch;p.has=true}
    }break;
   case 'hi':p.name=cleanName(m.n)||'PLAYER';seenNames.add(String(p.name).toLowerCase());p.mt=fin(m.mt)?m.mt:0;
@@ -3944,6 +3949,7 @@ const SKFACE=[ // 앞, 뒤, 오른쪽(-x), 왼쪽(+x), 위, 아래
  [[1,-1,1,0,1],[1,-1,-1,1,1],[1,1,-1,1,0],[1,1,1,0,0]],
  [[-1,1,-1,0,0],[1,1,-1,1,0],[1,1,1,1,1],[-1,1,1,0,1]],
  [[-1,-1,1,0,0],[1,-1,1,1,0],[1,-1,-1,1,1],[-1,-1,-1,0,1]]];
+const SKT={c:1,s:0}; // 몸 전체 기울이기 (누운 자세: X축으로 -90°)
 function skinBox(B,ox,oy,oz,yaw,cx,cy,cz,hx,hy,hz,pvy,swing,u0,v0,pw,ph,pd){
  const cs=Math.cos(swing),sn=Math.sin(swing),cyw=Math.cos(yaw),syw=Math.sin(yaw);
  const reg=[[u0+pd,v0+pd,pw,ph],[u0+2*pd+pw,v0+pd,pw,ph],[u0,v0+pd,pd,ph],[u0+pd+pw,v0+pd,pd,ph],[u0+pd,v0,pw,pd],[u0+pd+pw,v0,pw,pd]];
@@ -3952,7 +3958,7 @@ function skinBox(B,ox,oy,oz,yaw,cx,cy,cz,hx,hy,hz,pvy,swing,u0,v0,pw,ph,pd){
   const r=reg[f],vi=B.nf*4;
   for(let k=0;k<4;k++){
    const q=SKFACE[f][k],x=cx+q[0]*hx,y=cy+q[1]*hy,z=cz+q[2]*hz;
-   const ry=(y-pvy)*cs-z*sn+pvy,rz=(y-pvy)*sn+z*cs,o=(vi+k)*SF,A=B.v;
+   const ry0=(y-pvy)*cs-z*sn+pvy,rz0=(y-pvy)*sn+z*cs,ry=ry0*SKT.c-rz0*SKT.s,rz=ry0*SKT.s+rz0*SKT.c,o=(vi+k)*SF,A=B.v;
    A[o]=(x*cyw+rz*syw)*KPX+ox;A[o+1]=ry*KPX+oy;A[o+2]=(-x*syw+rz*cyw)*KPX+oz;
    A[o+3]=(r[0]+.01+q[3]*(r[2]-.02))/64;A[o+4]=(r[1]+.01+q[4]*(r[3]-.02))/64;
    A[o+5]=A[o+6]=A[o+7]=SKSH[f];A[o+8]=SKGLOW;
@@ -3963,21 +3969,25 @@ function skinBox(B,ox,oy,oz,yaw,cx,cy,cz,hx,hy,hz,pvy,swing,u0,v0,pw,ph,pd){
 function skinPlayer(p,sw,ox,oy,oz){
  const B=SKB;B.nf=0;
  const t=p.skinTex||STEVE.tex;if(!t)return;
- const slim=p.skinTex?!!p.slim:false,aw=slim?3:4,ah=aw/2,ax=slim?5.5:6,yw=p.yaw+Math.PI,pit=-p.pitch*.9;
+ let slim=p.skinTex?!!p.slim:false,aw=slim?3:4,ah=aw/2,ax=slim?5.5:6,yw=p.yaw+Math.PI,pit=-p.pitch*.9;
+ const pose=p.pose|0;let a1=sw,a2=-sw,a3=-sw,a4=sw; // 팔다리 각도
+ if(pose===1){a1=a2=-1.45;a3=a4=-.4;oy-=.55} // 앉기: 다리를 앞으로, 엉덩이를 자리 높이로 낮춤
+ else if(pose===2){const bf=(p.bf|0)&3;a1=a2=a3=a4=0;pit=0;yw=Math.atan2(-DX[bf],-DZ[bf]);SKT.c=0;SKT.s=-1;ox-=.9*DX[bf];oz-=.9*DZ[bf];oy+=.115} // 눕기: 침대 머리 방향으로 뒤로 누움
  const bx=(cx,cy,cz,hx,hy,hz,pvy,sg,u,v,pw,ph,pd,inf)=>skinBox(B,ox,oy,oz,yw,cx,cy,cz,hx+inf,hy+inf,hz+inf,pvy,sg,u,v,pw,ph,pd);
- bx(-2,6,0,2,6,2,12,sw,0,16,4,12,4,0);
- bx(2,6,0,2,6,2,12,-sw,16,48,4,12,4,0);
+ bx(-2,6,0,2,6,2,12,a1,0,16,4,12,4,0);
+ bx(2,6,0,2,6,2,12,a2,16,48,4,12,4,0);
  bx(0,18,0,4,6,2,24,0,16,16,8,12,4,0);
- bx(-ax,18,0,ah,6,2,24,-sw,40,16,aw,12,4,0);
- bx(ax,18,0,ah,6,2,24,sw,32,48,aw,12,4,0);
+ bx(-ax,18,0,ah,6,2,24,a3,40,16,aw,12,4,0);
+ bx(ax,18,0,ah,6,2,24,a4,32,48,aw,12,4,0);
  bx(0,28,0,4,4,4,24,pit,0,0,8,8,8,0);
  // 겉옷(오버레이) 층
- bx(-2,6,0,2,6,2,12,sw,0,32,4,12,4,.25);
- bx(2,6,0,2,6,2,12,-sw,0,48,4,12,4,.25);
+ bx(-2,6,0,2,6,2,12,a1,0,32,4,12,4,.25);
+ bx(2,6,0,2,6,2,12,a2,0,48,4,12,4,.25);
  bx(0,18,0,4,6,2,24,0,16,32,8,12,4,.25);
- bx(-ax,18,0,ah,6,2,24,-sw,40,32,aw,12,4,.25);
- bx(ax,18,0,ah,6,2,24,sw,48,48,aw,12,4,.25);
+ bx(-ax,18,0,ah,6,2,24,a3,40,32,aw,12,4,.25);
+ bx(ax,18,0,ah,6,2,24,a4,48,48,aw,12,4,.25);
  bx(0,28,0,4,4,4,24,pit,32,0,8,8,8,.5);
+ SKT.c=1;SKT.s=0;
  skinMesh=updDyn(skinMesh,B.v,B.nf*4,B.i,B.nf*6);
  gl.bindTexture(gl.TEXTURE_2D,t);gl.uniform3f(U.off,0,0,0);
  gl.bindVertexArray(skinMesh.vao);gl.drawElements(gl.TRIANGLES,skinMesh.n,gl.UNSIGNED_INT,0);
@@ -4015,7 +4025,7 @@ function drawPlayers(dt){
  }
 if(view3&&state==='play'){ // 3인칭: 내 캐릭터도 그린다
   const spd=Math.hypot(P.vx,P.vz);
-  skinPlayer({yaw:cam.yaw,pitch:cam.pitch,skinTex:SKIN.tex||null,slim:SKIN.slim},Math.sin(P.walk*2.2)*Math.min(1,spd/3)*.8,P.x-rc.x,P.y-(P.sneak?.15:0)-rc.y,P.z-rc.z);
+  skinPlayer({yaw:cam.yaw,pitch:cam.pitch,skinTex:SKIN.tex||null,slim:SKIN.slim,pose:myPose(),bf:P.sit?P.sit.f:0},Math.sin(P.walk*2.2)*Math.min(1,spd/3)*.8,P.x-rc.x,P.y-(P.sneak?.15:0)-rc.y,P.z-rc.z);
  }
  gl.bindTexture(gl.TEXTURE_2D,tex);
  drawAnimals(dt);drawDrops();if(!eb.nf)return;
@@ -4029,7 +4039,7 @@ function updateTags(w,h){
   let e=tagEls.get(p.id);
   if(!p.open||!p.has||p.sneak){if(e)e.style.display='none';continue}
   if(!e){e=document.createElement('div');e.className='tag';box.appendChild(e);tagEls.set(p.id,e)}
-  const x=p.rx_-rc.x,y=p.ry+2.15-rc.y,z=p.rz-rc.z;
+  const x=p.rx_-rc.x,y=p.ry+(p.pose===2?.9:p.pose===1?1.6:2.15)-rc.y,z=p.rz-rc.z;
   const cx=VP[0]*x+VP[4]*y+VP[8]*z,cy=VP[1]*x+VP[5]*y+VP[9]*z,cw=VP[3]*x+VP[7]*y+VP[11]*z;
   if(cw<=.1||Math.hypot(x,y,z)>80){e.style.display='none';continue}
   e.style.display='block';e.textContent=p.name;e.style.left=((cx/cw*.5+.5)*w)+'px';e.style.top=((1-(cy/cw*.5+.5))*h)+'px';
@@ -4994,16 +5004,18 @@ function tvMatrix(g,pw,ph,W,H){ // iframe 픽셀 -> 화면: 월드 좌표를 거
  const ux=cv((c1[0]-c0[0])/pw,(c1[1]-c0[1])/pw,(c1[2]-c0[2])/pw),uy=cv((c3[0]-c0[0])/ph,(c3[1]-c0[1])/ph,(c3[2]-c0[2])/ph),o=cv(c0[0]-rc.x,c0[1]-rc.y,c0[2]-rc.z);
  return 'matrix3d('+[ux[0],ux[1],0,ux[2],uy[0],uy[1],0,uy[2],0,0,1,0,o[0],o[1],0,o[2]].join(',')+')';
 }
-function tvLos1(cx,cy,cz){ // 카메라에서 (cx,cy,cz) 까지 벽에 가려지지 않았는지
- const dx=rc.x-cx,dy=rc.y-cy,dz=rc.z-cz,L=Math.hypot(dx,dy,dz),n=Math.max(1,Math.ceil(L/.35));
- for(let i=1;i<n;i++){const t=i/n,b=getBlock(Math.floor(cx+dx*t),Math.floor(cy+dy*t),Math.floor(cz+dz*t));if(b&&OPQ[b]&&!isTv(b))return false} // TV 블록 칸은 벽으로 치지 않음
+function tvLos1(cx,cy,cz){ // 카메라에서 (cx,cy,cz) 까지 블록에 가려지지 않았는지 (꽉 찬 블록 · 반쪽 블록 · 가구 등 모두 가림 처리, 유리/물은 제외)
+ const dx=rc.x-cx,dy=rc.y-cy,dz=rc.z-cz,L=Math.hypot(dx,dy,dz),n=Math.max(2,Math.ceil(L/.2));
+ for(let i=1;i<n;i++){const t=i/n,b=getBlock(Math.floor(cx+dx*t),Math.floor(cy+dy*t),Math.floor(cz+dz*t));if(b&&!isTv(b)&&(OPQ[b]||PART[b]||SOLID[b]))return false} // TV 블록 칸은 벽으로 치지 않음
  return true;
 }
-function tvLos(g){ // 화면 중앙 또는 카메라에 가장 가까운 지점 중 하나라도 보이면 보임
+function tvLos(g){ // 화면 중앙 또는 네 귀퉁이 중 하나라도 보이면 보임
+ const c0=g.cs[0],c1=g.cs[1],c3=g.cs[3];
  if(tvLos1(g.center[0],g.center[1],g.center[2]))return true;
- const c0=g.cs[0],c1=g.cs[1],c3=g.cs[3],u=[c1[0]-c0[0],c1[1]-c0[1],c1[2]-c0[2]],v=[c3[0]-c0[0],c3[1]-c0[1],c3[2]-c0[2]],r=[rc.x-c0[0],rc.y-c0[1],rc.z-c0[2]];
- const tu=clamp((r[0]*u[0]+r[1]*u[1]+r[2]*u[2])/(u[0]*u[0]+u[1]*u[1]+u[2]*u[2]),0,1),tv=clamp(r[1]/v[1],0,1);
- return tvLos1(c0[0]+u[0]*tu+v[0]*tv,c0[1]+u[1]*tu+v[1]*tv,c0[2]+u[2]*tu+v[2]*tv);
+ for(const [a,b] of [[.1,.1],[.9,.1],[.1,.9],[.9,.9]]){
+  if(tvLos1(c0[0]+(c1[0]-c0[0])*a+(c3[0]-c0[0])*b,c0[1]+(c1[1]-c0[1])*a+(c3[1]-c0[1])*b,c0[2]+(c1[2]-c0[2])*a+(c3[2]-c0[2])*b))return true;
+ }
+ return false;
 }
 function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
 /* ---- 직접 영상 플레이어 (.m3u8 / .mp4 …): TV 안에 작은 플레이어 페이지를 넣고, 유튜브 플레이어와 똑같은 신호(재생 위치 · 길이 · 상태 / 이동 · 재생 · 일시정지 · 음량 명령)를 주고받는다 ---- */
@@ -5316,12 +5328,24 @@ function sleepIn(){
  },900);
 }
 
+/* ---- 침대: 누르면 침대 위에 눕고(몸이 눕는 자세), 밤이면 곧 잠들어 아침이 됨. 이동 키를 누르면 일어남 ---- */
+function lieOn(h){
+ if(state!=='play'||ui)return;
+ if(P.sit){standUp();return}
+ const fi=FURN[h.b];if(!fi||fi.t!=='bed')return;
+ const sg=fi.part?-1:1,fx=h.x-(fi.part?DX[fi.f]:0),fz=h.z-(fi.part?DZ[fi.f]:0); // 발쪽 칸
+ const cx=fx+DX[fi.f]*.5+.5,cz=fz+DZ[fi.f]*.5+.5;
+ P.sit={x:h.x,y:h.y,z:h.z,t:'bed',f:fi.f,cx,cz};P.x=cx;P.z=cz;P.y=h.y+.5;P.vx=P.vy=P.vz=0;P.sneak=false;
+ cam.yaw=Math.atan2(-DX[fi.f],-DZ[fi.f]);cam.pitch=.7; // 머리 방향을 보며 천장을 올려다봄
+ setTimeout(()=>{if(P.sit&&P.sit.t==='bed')sleepIn()},700);
+}
+
 /* ---- 소파: 누르면 앉고, 이동 키를 누르면 일어남 ---- */
 function sitOn(h){
  if(state!=='play'||ui)return;
  if(P.sit){standUp();return}
  const fi=FURN[h.b];if(!fi||fi.t!=='sofa')return;
- P.sit={x:h.x,y:h.y,z:h.z};P.x=h.x+.5;P.z=h.z+.5;P.y=h.y+.5;P.vx=P.vy=P.vz=0;P.sneak=false;
+ P.sit={x:h.x,y:h.y,z:h.z,t:'sofa',f:fi.f};P.x=h.x+.5;P.z=h.z+.5;P.y=h.y+.5;P.vx=P.vy=P.vz=0;P.sneak=false;
  cam.yaw=Math.atan2(-DX[fi.f],-DZ[fi.f]); // 소파 앞면 방향을 보게
 }
 
@@ -5676,8 +5700,8 @@ function frame(t){
    hold.t-=dt;if(hold.t<=0){if(hold.b){hitOrBreak();hold.t=heldEnc()==='효율'?.07:.17}else if(hold.p){if(!usableAt()&&!animalTarget(4.5))placeBlock(true);hold.t=.2}}
   }
   let rem=dt;while(rem>0){const s=Math.min(rem,.016);stepPlayer(s,mv);rem-=s}
-  cam.x=P.x;cam.y=P.y+(P.sit?EYE-.45:(P.sneak?EYE-.3:EYE));cam.z=P.z;
-  sendT-=dt;if(sendT<=0&&peers.size){sendT=.1;netBroadcast({k:'st',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2),r:+cam.yaw.toFixed(2),p:+cam.pitch.toFixed(2),b:hotbar[P.sel],sn:P.sneak?1:0},false)}
+  cam.x=P.x;cam.y=P.y+(P.sit?(P.sit.t==='bed'?.4:EYE-.45):(P.sneak?EYE-.3:EYE));cam.z=P.z;
+  sendT-=dt;if(sendT<=0&&peers.size){sendT=.1;netBroadcast({k:'st',x:+P.x.toFixed(2),y:+P.y.toFixed(2),z:+P.z.toFixed(2),r:+cam.yaw.toFixed(2),p:+cam.pitch.toFixed(2),b:hotbar[P.sel],sn:P.sneak?1:0,po:myPose(),bf:P.sit?P.sit.f:0},false)}
   saveT-=dt;if(saveT<=0){saveT=30;savePos()}
  }else{ // 타이틀 배경: 스폰 위를 천천히 돌며 둘러본다
   const a=t/9000;cam.x=5000+Math.cos(a)*28;cam.z=5000+Math.sin(a)*28;cam.y=46;cam.pitch=-.35;
