@@ -5116,6 +5116,7 @@ function tvStreamMain(C){
  const info=()=>post({event:'infoDelivery',info:{currentTime:v.currentTime||0,duration:isFinite(v.duration)?v.duration:0,playerState:ps,videoData:{video_id:'stream'}}});
  const setPs=n=>{ps=n;info()};
  v.loop=!!C.l;
+ const px=u=>(C.p&&typeof u==='string'&&/^https?:\/\//i.test(u)&&u.indexOf(C.p)!==0)?C.p+u:u; // 모든 요청(목록·조각·영상)을 프록시로
  v.addEventListener('playing',()=>{m.textContent='';setPs(1)});
  v.addEventListener('pause',()=>{if(!v.ended)setPs(2)});
  v.addEventListener('waiting',()=>setPs(3));
@@ -5127,12 +5128,14 @@ function tvStreamMain(C){
   if(window.dashjs){
    const dp=dashjs.MediaPlayer().create();
    dp.on(dashjs.MediaPlayer.events.ERROR,e=>{if(e&&e.error)fail('방송을 불러오지 못했어요 (주소가 막혀 있거나 지원하지 않는 방송일 수 있어요)')});
+   dp.extend('RequestModifier',function(){return{modifyRequestURL:px,modifyRequestHeader:function(x){return x}}},true);
    dp.initialize(v,C.u,true);
   }else fail('재생 도구를 불러오지 못했어요 (인터넷 연결을 확인해 주세요)');
  }else if(/m3u8/i.test(C.u)&&!v.canPlayType('application/vnd.apple.mpegurl')){
   if(window.Hls&&Hls.isSupported()){
    // 화면 크기에 맞는 화질만 받고(capLevelToPlayerSize) 버퍼를 작게 유지 → 3D 화면 안에서 덜 버벅임
-   hls=new Hls({lowLatencyMode:false,capLevelToPlayerSize:true,maxBufferLength:20,maxMaxBufferLength:40,backBufferLength:10,enableWorker:true});
+   const Base=Hls.DefaultConfig.loader;class PL extends Base{load(c,cf,cb){c.url=px(c.url);super.load(c,cf,cb)}}
+   hls=new Hls({loader:PL,lowLatencyMode:false,capLevelToPlayerSize:true,maxBufferLength:20,maxMaxBufferLength:40,backBufferLength:10,enableWorker:true});
    hls.on(Hls.Events.MANIFEST_PARSED,()=>{v.play().catch(()=>{})});
    hls.on(Hls.Events.ERROR,(e,d)=>{if(d&&d.fatal){
     if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&(hls._r||0)<3){hls._r=(hls._r||0)+1;hls.startLoad()}
@@ -5140,7 +5143,7 @@ function tvStreamMain(C){
     else fail('방송을 불러오지 못했어요 (주소가 막혀 있거나 지원하지 않는 방송일 수 있어요)')}});
    hls.loadSource(C.u);hls.attachMedia(v);
   }else fail(window.Hls?'이 기기는 m3u8 방송을 지원하지 않아요':'재생 도구를 불러오지 못했어요 (인터넷 연결을 확인해 주세요)');
- }else v.src=C.u;
+ }else v.src=px(C.u);
  v.play().catch(()=>{});
  addEventListener('message',ev=>{
   let d=ev.data;if(typeof d==='string'){try{d=JSON.parse(d)}catch(e){return}}
@@ -5159,8 +5162,13 @@ function tvStreamMain(C){
  });
  setInterval(info,400);
 }
+const TV_PROXY='https://35.79.165.74/';
+function tvProxify(u){
+ if(!TV_PROXY||typeof u!=='string'||!/^https?:\/\//i.test(u)||u.indexOf(TV_PROXY)===0)return u;
+ return TV_PROXY+u;
+}
 function tvStreamDoc(url,start,loop){
- const cfg=JSON.stringify({u:url,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
+ const cfg=JSON.stringify({u:url,p:TV_PROXY,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
  return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;background:#000}#m{position:absolute;left:0;right:0;top:45%;text-align:center;color:#bbb;font:14px sans-serif;padding:0 12px}</style></head><body><video id="v" playsinline autoplay muted controls></video><div id="m"></div>'
   +'<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script><script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"><\/script><script>('+tvStreamMain.toString()+')('+cfg+');<\/script></body></html>';
 }
@@ -5192,7 +5200,7 @@ function tvFrame(c,W,H){
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
   e={el,key,sig,pw,ph,dk:0,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0,lis:0,fz:0};
   el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
-  if(st.u&&/^https:\/\/vod\.sooplive\.com\/player\//i.test(st.u))el.src=st.u; // SOOP 임베드는 그대로 연결
+  if(st.u&&/^https:\/\/vod\.sooplive\.com\/player\//i.test(st.u))el.src=tvProxify(st.u); // SOOP 임베드도 프록시 경유
   else if(st.u)el.srcdoc=tvStreamDoc(st.u,tvStart(st),st.l);else el.src=src+p.toString();
   tvLayer.appendChild(el);tvFr.set(key,e);
  }
