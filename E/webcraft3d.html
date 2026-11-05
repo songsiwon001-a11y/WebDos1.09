@@ -5116,7 +5116,7 @@ function tvStreamMain(C){
  const info=()=>post({event:'infoDelivery',info:{currentTime:v.currentTime||0,duration:isFinite(v.duration)?v.duration:0,playerState:ps,videoData:{video_id:'stream'}}});
  const setPs=n=>{ps=n;info()};
  v.loop=!!C.l;
- const px=u=>(C.p&&typeof u==='string'&&/^https?:\/\//i.test(u)&&u.indexOf(C.p)!==0)?C.p+u:u; // 모든 요청(목록·조각·영상)을 프록시로
+ const px=u=>(C.p&&typeof u==='string'&&/^https?:\/\//i.test(u)&&u.indexOf(C.p)!==0)?C.p+'?url='+encodeURIComponent(u):u; // 모든 요청(목록·조각·영상)을 프록시로
  v.addEventListener('playing',()=>{m.textContent='';setPs(1)});
  v.addEventListener('pause',()=>{if(!v.ended)setPs(2)});
  v.addEventListener('waiting',()=>setPs(3));
@@ -5162,10 +5162,10 @@ function tvStreamMain(C){
  });
  setInterval(info,400);
 }
-const TV_PROXY='https://35.79.165.74/';
+const TV_PROXY='https://dawn-cloud-99bc.songsiwon002.workers.dev/'; // 예: 'https://내워커.내계정.workers.dev/' (비우면 프록시 없이 직접 재생)
 function tvProxify(u){
  if(!TV_PROXY||typeof u!=='string'||!/^https?:\/\//i.test(u)||u.indexOf(TV_PROXY)===0)return u;
- return TV_PROXY+u;
+ return TV_PROXY+'?url='+encodeURIComponent(u);
 }
 function tvStreamDoc(url,start,loop){
  const cfg=JSON.stringify({u:url,p:TV_PROXY,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
