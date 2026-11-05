@@ -4906,7 +4906,7 @@ function ytParse(s){
 function tvLinkParse(s){
  const y=ytParse(s);if(y)return {v:y.v,pl:y.pl,u:''};
  s=String(s||'').trim();
- const MEDIA=/\.(m3u8|mp4|webm|m4v|mov|ogv|mkv|ts)(?=$|[?#\/])|m3u8/i;
+ const MEDIA=/\.(m3u8|mpd|mp4|webm|m4v|mov|ogv|mkv|ts)(?=$|[?#\/])|m3u8|mpd/i;
  if(/^\/\//.test(s))s='https:'+s; // //host/a.m3u8 형태
  else if(!/^https?:\/\//i.test(s)){ // 주소창에서 복사하다 https:// 가 빠진 경우: 도메인/경로 + 영상 확장자면 https:// 를 붙여 줌
   if(/\s/.test(s)||!/^[\w-]+(\.[\w-]+)+(:\d+)?\//.test(s)||!MEDIA.test(s))return null;
@@ -5119,7 +5119,13 @@ function tvStreamMain(C){
  v.addEventListener('loadedmetadata',()=>{if(!sought){sought=true;if(C.s>0&&isFinite(v.duration)&&C.s<v.duration){try{v.currentTime=C.s}catch(e){}}}});
  const fail=t=>{m.textContent=t;post({event:'onError',info:1000})};
  v.addEventListener('error',()=>fail('영상을 불러오지 못했어요 (주소를 확인해 주세요)'));
- if(/m3u8/i.test(C.u)&&!v.canPlayType('application/vnd.apple.mpegurl')){
+ if(/\.mpd(?=$|[?#\/])/i.test(C.u)){ // DASH (.mpd)
+  if(window.dashjs){
+   const dp=dashjs.MediaPlayer().create();
+   dp.on(dashjs.MediaPlayer.events.ERROR,e=>{if(e&&e.error)fail('방송을 불러오지 못했어요 (주소가 막혀 있거나 지원하지 않는 방송일 수 있어요)')});
+   dp.initialize(v,C.u,true);
+  }else fail('재생 도구를 불러오지 못했어요 (인터넷 연결을 확인해 주세요)');
+ }else if(/m3u8/i.test(C.u)&&!v.canPlayType('application/vnd.apple.mpegurl')){
   if(window.Hls&&Hls.isSupported()){
    // 화면 크기에 맞는 화질만 받고(capLevelToPlayerSize) 버퍼를 작게 유지 → 3D 화면 안에서 덜 버벅임
    hls=new Hls({lowLatencyMode:false,capLevelToPlayerSize:true,maxBufferLength:20,maxMaxBufferLength:40,backBufferLength:10,enableWorker:true});
@@ -5152,7 +5158,7 @@ function tvStreamMain(C){
 function tvStreamDoc(url,start,loop){
  const cfg=JSON.stringify({u:url,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
  return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;background:#000}#m{position:absolute;left:0;right:0;top:45%;text-align:center;color:#bbb;font:14px sans-serif;padding:0 12px}</style></head><body><video id="v" playsinline autoplay muted controls></video><div id="m"></div>'
-  +'<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script><script>('+tvStreamMain.toString()+')('+cfg+');<\/script></body></html>';
+  +'<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script><script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"><\/script><script>('+tvStreamMain.toString()+')('+cfg+');<\/script></body></html>';
 }
 /* 늦게 들어온 사람: 접속자 공유 시계(sNow)가 아직 안 맞은 상태에서 시작 위치를 계산하면 어긋나므로(음수면 0초 = 처음부터),
    시계가 맞춰질 때까지(최대 6초) TV 화면 만들기를 잠깐 기다린다 */
