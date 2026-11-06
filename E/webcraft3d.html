@@ -4905,7 +4905,7 @@ function ytParse(s){
 /* 유튜브 말고도 .m3u8(실시간 방송/HLS) · .mp4 · .webm 같은 직접 영상 주소를 TV 에 틀 수 있다 (주소는 2000자까지) */
 /* SOOP VOD 플레이어 주소(vod.sooplive.com/player/번호) → 채팅 없는 임베드 주소 */
 function soopEmbed(s){const m=/^https?:\/\/vod\.sooplive\.com\/player\/(\d+)/i.exec(s);
- return m?'https://vod.sooplive.com/player/'+m[1]+'/embed?autoPlay=true&showChat=false&mutePlay=true':null}
+ return m?'https://vod.sooplive.com/player/'+m[1]+'/embed?autoPlay=true&showChat=false&mutePlay=false':null}
 function tvLinkParse(s){
  const y=ytParse(s);if(y)return {v:y.v,pl:y.pl,u:''};
  s=String(s||'').trim();
@@ -5203,7 +5203,7 @@ function tvFrame(c,W,H){
   el.style.cssText='position:absolute;left:0;top:0;border:0;background:#000;transform-origin:0 0;visibility:hidden;pointer-events:none;will-change:transform;width:'+pw+'px;height:'+ph+'px';
   e={el,key,sig,pw,ph,dk:0,vol:-1,vt:0,vis:false,los:true,lt:0,tA:st.t,sv:tvSv(st),psT:0,dc:0,born:Date.now(),ls:0,pl:0,lis:0,fz:0};
   el.onload=()=>{e.vol=-1;try{el.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*')}catch(x){}};
-  if(st.u&&/^https:\/\/vod\.sooplive\.com\/player\//i.test(st.u))el.src=tvProxify(st.u); // SOOP 임베드도 프록시 경유
+  if(st.u&&/^https:\/\/vod\.sooplive\.com\/player\//i.test(st.u))el.src=tvProxify(st.u.replace(/mutePlay=true/i,'mutePlay=false')); // SOOP 임베드도 프록시 경유 (이미 저장된 예전 주소의 음소거 시작도 해제)
   else if(st.u)el.srcdoc=tvStreamDoc(st.u,tvStart(st),st.l);else el.src=src+p.toString();
   tvLayer.appendChild(el);tvFr.set(key,e);
  }
