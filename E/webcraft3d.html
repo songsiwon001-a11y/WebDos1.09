@@ -5163,12 +5163,15 @@ function tvStreamMain(C){
  setInterval(info,400);
 }
 const TV_PROXY='https://dawn-cloud-99bc.songsiwon002.workers.dev/'; // 예: 'https://내워커.내계정.workers.dev/' (비우면 프록시 없이 직접 재생)
+function tvNeedProxy(u){ // SOOP(숲) 주소일 때만 워커 프록시를 쓴다 — 유튜브 · 그 밖의 영상 주소는 프록시 없이 바로 재생
+ try{return /(^|\.)(sooplive|afreecatv)\./i.test(new URL(u).hostname)}catch(e){return false}
+}
 function tvProxify(u){
- if(!TV_PROXY||typeof u!=='string'||!/^https?:\/\//i.test(u)||u.indexOf(TV_PROXY)===0)return u;
+ if(!TV_PROXY||typeof u!=='string'||!/^https?:\/\//i.test(u)||u.indexOf(TV_PROXY)===0||!tvNeedProxy(u))return u;
  return TV_PROXY+'?url='+encodeURIComponent(u);
 }
 function tvStreamDoc(url,start,loop){
- const cfg=JSON.stringify({u:url,p:TV_PROXY,s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
+ const cfg=JSON.stringify({u:url,p:tvNeedProxy(url)?TV_PROXY:'',s:start|0,l:loop?1:0}).replace(/</g,'\\u003c');
  return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;background:#000}#m{position:absolute;left:0;right:0;top:45%;text-align:center;color:#bbb;font:14px sans-serif;padding:0 12px}</style></head><body><video id="v" playsinline autoplay muted controls></video><div id="m"></div>'
   +'<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script><script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"><\/script><script>('+tvStreamMain.toString()+')('+cfg+');<\/script></body></html>';
 }
