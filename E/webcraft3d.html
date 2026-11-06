@@ -5116,6 +5116,26 @@ function tvLos(g){ // 화면 중앙 또는 네 귀퉁이 중 하나라도 보이
  }
  return false;
 }
+function tvClip(g,pw,ph){ // 화면을 격자로 나눠 블록에 가려진 칸만 잘라 낸다 → 벽·기둥이 화면 앞에 있으면 화면이 그 뒤로 가려져 보인다. ''=전부 가려짐, 'none'=전부 보임
+ const NX=20,NY=12,c0=g.cs[0],c1=g.cs[1],c3=g.cs[3];
+ const ex=[c1[0]-c0[0],c1[1]-c0[1],c1[2]-c0[2]],ey=[c3[0]-c0[0],c3[1]-c0[1],c3[2]-c0[2]];
+ let vis=0,d='';
+ for(let j=0;j<NY;j++){
+  let run=-1;
+  for(let i=0;i<=NX;i++){
+   let ok=false;
+   if(i<NX){const a=(i+.5)/NX,b=(j+.5)/NY;ok=tvLos1(c0[0]+ex[0]*a+ey[0]*b,c0[1]+ex[1]*a+ey[1]*b,c0[2]+ex[2]*a+ey[2]*b)}
+   if(ok){vis++;if(run<0)run=i}
+   else if(run>=0){
+    const x0=Math.round(run*pw/NX),x1=Math.round(i*pw/NX),y0=Math.round(j*ph/NY),y1=Math.min(ph,Math.round((j+1)*ph/NY)+1); // 아래로 1px 겹쳐서 줄 사이 틈이 안 보이게
+    d+='M'+x0+' '+y0+'H'+x1+'V'+y1+'H'+x0+'Z';run=-1;
+   }
+  }
+ }
+ if(!vis)return '';
+ if(vis===NX*NY)return 'none';
+ return 'path("'+d+'")';
+}
 function tvCmd(el,func,args){try{el.contentWindow.postMessage(JSON.stringify({event:'command',func,args:args||[]}),'*')}catch(x){}}
 /* ---- 직접 영상 플레이어 (.m3u8 / .mp4 …): TV 안에 작은 플레이어 페이지를 넣고, 유튜브 플레이어와 똑같은 신호(재생 위치 · 길이 · 상태 / 이동 · 재생 · 일시정지 · 음량 명령)를 주고받는다 ---- */
 function tvStreamMain(C){
@@ -5216,7 +5236,7 @@ function tvFrame(c,W,H){
   tvLayer.appendChild(el);tvFr.set(key,e);
  }
  const el=e.el,now=performance.now();
- if(now-e.lt>120){e.lt=now;e.los=tvLos(g)}
+ if(now-e.lt>120){e.lt=now;e.los=tvLos(g);e.clip=e.los?tvClip(g,e.pw,e.ph):'';if(e.clip==='')e.los=false}
  const n=g.nrm;
  let show=e.los&&((rc.x-g.center[0])*n[0]+(rc.z-g.center[2])*n[2])>.05;
  if(show){let any=false;for(const q of g.cs){if(VP[3]*(q[0]-rc.x)+VP[7]*(q[1]-rc.y)+VP[11]*(q[2]-rc.z)>.05){any=true;break}}show=any}
@@ -5224,11 +5244,11 @@ function tvFrame(c,W,H){
  if(dock){ // 조작창이 열려 있으면 이 플레이어를 조작창 화면 자리에 크게 보여준다
   const r=$('tvBox').getBoundingClientRect();
   el.style.transform='none';el.style.left=r.left+'px';el.style.top=r.top+'px';el.style.width=r.width+'px';el.style.height=r.height+'px';
-  el.style.pointerEvents='auto';el.style.visibility='visible';e.vis=true;e.dk=1;
+  el.style.pointerEvents='auto';el.style.visibility='visible';e.vis=true;e.dk=1;if(e.cp!=='none'){el.style.clipPath='none';e.cp='none'}
  }else{
   if(e.dk){e.dk=0;el.style.left='0px';el.style.top='0px';el.style.width=e.pw+'px';el.style.height=e.ph+'px';el.style.pointerEvents='none';e.vis=!e.vis;el.style.visibility='hidden';e.vis=false}
   const m=(show&&ui!=='tv')?tvMatrix(g,e.pw,e.ph,W,H):null;
-  if(m){el.style.transform=m;if(!e.vis){el.style.visibility='visible';e.vis=true}}
+  if(m){el.style.transform=m;const cp=e.clip||'none';if(e.cp!==cp){e.cp=cp;el.style.clipPath=cp}if(!e.vis){el.style.visibility='visible';e.vis=true}}
   else if(e.vis){el.style.visibility='hidden';e.vis=false}
  }
  if(now-e.vt>250){ // 거리에 따른 음량: 25칸 밖 0 → 가까울수록 커짐 (조작창에 띄운 TV 는 크게)
