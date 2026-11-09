@@ -15,7 +15,7 @@ canvas{image-rendering:pixelated;width:min(100vw,177.78vh);height:min(56.25vw,10
 <script>
 'use strict';
 /* =========================================================
-   STREET FIGHTER II  -  단일 파일 2D 대전 격투 게임 (외부 파일 없음)
+   STREET FIGHTER   -  단일 파일 2D 대전 격투 게임 (외부 파일 없음)
    1P : I J K L 이동(점프/왼쪽/앉기/오른쪽)  A 펀치  S 킥  D 필살기
    2P : 방향키 이동                           [ 펀치  ] 킥  \(₩) 필살기
    ========================================================= */
@@ -769,7 +769,6 @@ function drawTitle(){
   drawFighter(dummy(0,110,1));drawFighter(dummy(1,370,-1));
   ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
   T('STREET FIGHTER 2',W/2,52,36,'#ffd84a');
-  T('II',W/2,88,30,'#ff5a4a');
   T('스트리트 파이터 2',W/2,114,12,'#fff');
   const opts=IS_TOUCH?['1P vs CPU']:['1P vs CPU','1P vs 2P'];
   opts.forEach((o,i)=>T((menu===i?'▶ ':'   ')+o,W/2,150+i*22,16,menu===i?'#ffd84a':'#ccc'));
@@ -970,7 +969,7 @@ function stepOpening(){
 }
 function drawSplash(){
   ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-  T('STREET FIGHTER II',W/2,110,30,'#ffd84a');
+  T('STREET FIGHTER 2',W/2,110,30,'#ffd84a');
   if((frameN>>5)&1)T(IS_TOUCH?'화면을 터치하세요':'아무 키나 누르세요',W/2,170,12,'#fff');
   T('소리가 나옵니다',W/2,250,8,'#777',null,null);
 }
@@ -1016,7 +1015,6 @@ function drawOpening(){
     const a=Math.min(1,(t-OP_PAN1)/50);
     ctx.globalAlpha=a;
     T('STREET FIGHTER 2',W/2,96,40,'#ffd84a');
-    T('II',W/2,134,32,'#ff5a4a');
     ctx.globalAlpha=1;
   }
   // 페이드
