@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>STREET BRAWL II</title>
+<title>STREET FIGHTER II</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <style>
 html,body{margin:0;height:100%;background:#000;overflow:hidden;touch-action:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
@@ -15,7 +15,7 @@ canvas{image-rendering:pixelated;width:min(100vw,177.78vh);height:min(56.25vw,10
 <script>
 'use strict';
 /* =========================================================
-   STREET BRAWL II  -  단일 파일 2D 대전 격투 게임 (외부 파일 없음)
+   STREET FIGHTER II  -  단일 파일 2D 대전 격투 게임 (외부 파일 없음)
    1P : I J K L 이동(점프/왼쪽/앉기/오른쪽)  A 펀치  S 킥  D 필살기
    2P : 방향키 이동                           [ 펀치  ] 킥  \(₩) 필살기
    ========================================================= */
@@ -33,12 +33,13 @@ const KEYMAP={
  BracketLeft:[1,'a'],BracketRight:[1,'b'],Backslash:[1,'c'],IntlYen:[1,'c'],IntlBackslash:[1,'c']
 };
 const held=[{},{}];let press=[{},{}];
-let paused=false,phase='title';
+let paused=false,phase='splash',anyKey=false;
 addEventListener('keydown',e=>{
   const m=KEYMAP[e.code];
   if(m||['Space','Enter','Escape','KeyP','KeyM'].includes(e.code))e.preventDefault();
   ainit();
   if(e.repeat)return;
+  anyKey=true;
   if(m){held[m[0]][m[1]]=true;press[m[0]][m[1]]=true;}
   if(e.code==='Enter'&&phase!=='fight'&&phase!=='intro'&&phase!=='roundend')press[0].a=true;
   if(e.code==='KeyM')muted=!muted;
@@ -47,9 +48,10 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{const m=KEYMAP[e.code];if(m)held[m[0]][m[1]]=false;});
 addEventListener('blur',()=>{held[0]={};held[1]={};});
+addEventListener('pointerdown',()=>{anyKey=true;ainit();});
 
 /* ---------------- 사운드 (WebAudio 합성) ---------------- */
-let AC=null,master=null,muted=false,nbuf=null,bgmOn=false,bstep=0;
+let AC=null,master=null,muted=false,nbuf=null,bgmOn=false,bstep=0,musicMode='none';
 function ainit(){
   if(AC){if(AC.state==='suspended')AC.resume();return;}
   try{
@@ -97,7 +99,7 @@ function startBGM(){
   const bassP=[33,33,36,33,38,38,36,31];
   const leadP=[69,0,72,0,76,72,0,69,67,0,71,0,74,71,0,67];
   setInterval(()=>{
-    if(!AC||muted||paused)return;
+    if(!AC||muted||paused||musicMode!=='normal')return;
     const i=bstep++%16;
     if(i%2===0){const b=N(bassP[(i>>1)%8]+12);tone(b,b,.13,'triangle',.16);}
     const l=leadP[i];if(l)tone(N(l),N(l),.11,'square',.04);
@@ -482,15 +484,18 @@ function stepSelect(){
   }else selT=0;
 }
 function step(){
-  if(paused){press=[{},{}];return;}
+  if(paused){press=[{},{}];anyKey=false;return;}
   frameN++;
-  if(phase==='title')stepTitle();
+  if(phase==='splash'){if(anyKey)startOpening();}
+  else if(phase==='opening')stepOpening();
+  else if(phase==='title')stepTitle();
   else if(phase==='select')stepSelect();
   else if(phase==='matchend'){
     selT++;
     if(selT>110&&(press[0].a||press[0].b||press[0].c||press[1].a||press[1].b||press[1].c)){phase='select';sel[0]={c:0,ok:false};sel[1]={c:1,ok:false};selT=0;}
   }else stepGame();
-  press=[{},{}];
+  press=[{},{}];anyKey=false;
+  if(phase!=='opening'&&fade>0)fade=Math.max(0,fade-.04);
 }
 
 /* ---------------- 그리기: 파이터 ---------------- */
@@ -763,9 +768,9 @@ function drawTitle(){
   ctx.drawImage(STAGES[0],0,0);drawStageFx(0);
   drawFighter(dummy(0,110,1));drawFighter(dummy(1,370,-1));
   ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
-  T('STREET BRAWL',W/2,52,36,'#ffd84a');
+  T('STREET FIGHTER 2',W/2,52,36,'#ffd84a');
   T('II',W/2,88,30,'#ff5a4a');
-  T('스트리트 브롤 2',W/2,114,12,'#fff');
+  T('스트리트 파이터 2',W/2,114,12,'#fff');
   const opts=IS_TOUCH?['1P vs CPU']:['1P vs CPU','1P vs 2P'];
   opts.forEach((o,i)=>T((menu===i?'▶ ':'   ')+o,W/2,150+i*22,16,menu===i?'#ffd84a':'#ccc'));
   if((frameN>>5)&1)T(IS_TOUCH?'A 버튼을 눌러 시작':'PRESS  A  /  [',W/2,186,10,'#fff');
@@ -845,7 +850,9 @@ function drawMatchEnd(){
 function draw(){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.globalAlpha=1;
-  if(phase==='title')drawTitle();
+  if(phase==='splash')drawSplash();
+  else if(phase==='opening')drawOpening();
+  else if(phase==='title')drawTitle();
   else if(phase==='select')drawSelect();
   else if(phase==='matchend')drawMatchEnd();
   else{
@@ -857,7 +864,169 @@ function draw(){
   }
   if(paused){ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);T('PAUSED',W/2,H/2,28,'#fff');T('P: 계속   ESC: 타이틀',W/2,H/2+30,10,'#ccc');}
   if(muted)T('MUTE',W-24,H-8,8,'#fff','center',null);
+  if(fade>0){ctx.fillStyle='rgba(0,0,0,'+fade+')';ctx.fillRect(0,0,W,H);}
 }
+/* ---------------- 오프닝: 두 남자의 격투 → 카메라가 하늘로 상승 ---------------- */
+let fade=0,ot=0,opFlash=0,opA=null,opB=null,opBall=null;
+const OP_FIGHT0=60,OP_BEAT=36,OP_PAN0=400,OP_PAN1=720,OP_END=900;
+// [공격자(0=A,1=B), 기술, 결과]
+const OSCR=[[0,'punch','block'],[1,'kick','hit'],[0,'kick','hit'],[1,'punch','block'],[0,'jk','hit'],[1,'special','block'],[0,'rise','down']];
+const OPW=(()=>{
+  const c=document.createElement('canvas');c.width=W;c.height=H*2;
+  const g=c.getContext('2d'),R=sr(5);
+  const gr=g.createLinearGradient(0,0,0,H);
+  gr.addColorStop(0,'#02020c');gr.addColorStop(.55,'#12103a');gr.addColorStop(1,'#2d2060');
+  g.fillStyle=gr;g.fillRect(0,0,W,H+2);
+  for(let i=0;i<140;i++){g.globalAlpha=.25+R()*.75;g.fillStyle='#fff';const s=R()<.12?2:1;g.fillRect(R()*W|0,(R()*H*.85)|0,s,s);}
+  g.globalAlpha=1;
+  g.fillStyle='rgba(255,240,200,.08)';g.beginPath();g.arc(380,72,40,0,6.28);g.fill();
+  g.fillStyle='rgba(255,240,200,.12)';g.beginPath();g.arc(380,72,30,0,6.28);g.fill();
+  g.fillStyle='#f4eec8';g.beginPath();g.arc(380,72,22,0,6.28);g.fill();
+  g.fillStyle='#d8d2a8';[[372,66,5],[388,78,4],[380,60,3],[370,82,3]].forEach(([x,y,r])=>{g.beginPath();g.arc(x,y,r,0,6.28);g.fill();});
+  g.drawImage(STAGES[0],0,H);
+  return c;
+})();
+function startOpening(){
+  phase='opening';ot=0;opFlash=0;sparks.length=0;shake=0;fade=0;
+  opA=dummy(0,190,1);opB=dummy(1,290,-1);opBall=null;
+  musicMode='opening';
+}
+function endOpening(){
+  phase='title';musicMode='normal';bstep=0;fade=1;sparks.length=0;shake=0;
+}
+const N_=n=>440*Math.pow(2,(n-69)/12);
+const OP_BASS=[45,45,52,45,48,48,55,48,43,43,50,43,47,47,54,47];
+const OP_LEAD=[69,0,72,0,76,0,74,72,71,0,74,0,79,0,76,74,72,0,76,0,81,0,79,76,74,0,77,0,81,0,79,77];
+function opMusic(t){
+  if(!AC||muted||t%10)return;
+  const i=t/10;
+  const b=N_(OP_BASS[i%16]);
+  tone(b,b,.13,'triangle',.17);
+  if(i%4===0){tone(130,38,.16,'sine',.45);noise(.05,.15,300);}
+  if(i%8===4){noise(.13,.32,5200);tone(200,120,.08,'triangle',.1);}
+  if(i&1)noise(.03,.06,8000);
+  if(t<OP_PAN0&&i%8===0){[69,72,76].forEach(n=>tone(N_(n),N_(n),.28,'sawtooth',.045));}
+  if(t>=OP_PAN0&&t<OP_PAN1&&i%2===0){
+    const n=OP_LEAD[(i/2|0)%32];
+    if(n){tone(N_(n),N_(n),.26,'square',.07);tone(N_(n-12),N_(n-12),.26,'triangle',.06);}
+  }
+  if(t===OP_PAN1){[57,60,64,69].forEach((n,k)=>tone(N_(n),N_(n),2.4,'triangle',.12,k*.04));tone(N_(81),N_(81),2.2,'square',.05);}
+}
+function stepOpening(){
+  const t=ot++;
+  if(t>10&&anyKey){endOpening();return;}
+  opMusic(t);
+  opA.anim=opB.anim=t;
+  for(const f of [opA,opB]){f.state='idle';f.mv=null;f.y=GY;f.t=0;f.cr=false;}
+  opA.x=190;opB.x=290;opA.face=1;opB.face=-1;
+  opBall=null;
+  const k=Math.floor((t-OP_FIGHT0)/OP_BEAT),p=(t-OP_FIGHT0)%OP_BEAT;
+  if(t>=OP_FIGHT0&&k>=0&&k<OSCR.length){
+    const [ai,mv,res]=OSCR[k],att=ai?opB:opA,def=ai?opA:opB,dir=ai?-1:1,m=MV[mv];
+    const rf=p<26?1:1-(p-26)/10;
+    if(p===0&&mv!=='special')sfx('swing');
+    let lunge=0,hf;
+    if(mv==='jk'){
+      att.state='jatk';att.mv=mv;att.t=Math.min(p,12);att.y=GY-48*Math.sin(Math.PI*Math.min(p,30)/30);
+      lunge=dir*(p<30?p*1.4:42);hf=14;
+    }else if(mv==='special'){
+      att.state='atk';att.mv=mv;att.t=p;hf=24;
+      if(p===12)sfx('fire');
+      if(p>=12&&p<24)opBall={x:att.x+dir*(24+(p-12)*5.5),y:GY-44,col:CH[att.ch].proj.col,r:CH[att.ch].proj.r};
+    }else{
+      att.state='atk';att.mv=mv;att.t=p;hf=m.su+1;
+      lunge=dir*Math.min(p,10)*(mv==='kick'||mv==='rise'?1.4:.9);
+      if(mv==='rise'){att.y=GY-(p>=m.su?60*Math.sin(Math.PI*Math.min(1,(p-m.su)/22)):0);att.vy=-1;}
+    }
+    att.x+=lunge*rf;
+    if(p>=hf){
+      const q=p-hf;
+      if(res==='hit'){def.state='hit';def.t=q;def.x+=dir*Math.min(q,8)*1.3*rf;}
+      else if(res==='block'){def.state='block';def.t=q;def.x+=dir*Math.min(q,6)*.8*rf;}
+      else{
+        def.state=q<20?'down':'lie';def.t=q;
+        def.y=q<20?GY-36*Math.sin(Math.PI*q/20):GY;
+        def.vy=-1;
+        def.x+=dir*Math.min(q,20)*1.7;
+      }
+    }
+    if(p===hf){
+      sfx(res==='block'?'block':(m.snd||'punch'));
+      spark(def.x-dir*8,GY-46,res==='block'?'#9df':'#ffe46b',res==='block'?6:9);
+      shake=res==='block'?2:5;
+    }
+  }else if(t>=OP_FIGHT0+OP_BEAT*OSCR.length&&t<OP_PAN0){
+    // 마지막: 두 주먹이 정면충돌
+    const q=t-(OP_FIGHT0+OP_BEAT*OSCR.length);
+    if(q<28){
+      for(const [f,d] of [[opA,1],[opB,-1]]){f.state='atk';f.mv='punch';f.t=Math.min(q,4);f.x+=d*Math.min(q,10)*1.5;}
+      if(q===4){sfx('kick');sfx('punch');spark(240,GY-52,'#fff',24);spark(240,GY-52,'#ffe46b',16);opFlash=1;shake=14;}
+    }
+  }
+  if(opFlash>0)opFlash=Math.max(0,opFlash-.06);
+  if(shake>0)shake--;
+  for(let i=sparks.length-1;i>=0;i--){const s=sparks[i];s.x+=s.vx;s.y+=s.vy;s.vy+=.1;if(--s.life<=0)sparks.splice(i,1);}
+  if(t>=OP_END)endOpening();
+}
+function drawSplash(){
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  T('STREET FIGHTER II',W/2,110,30,'#ffd84a');
+  if((frameN>>5)&1)T(IS_TOUCH?'화면을 터치하세요':'아무 키나 누르세요',W/2,170,12,'#fff');
+  T('소리가 나옵니다',W/2,250,8,'#777',null,null);
+}
+function drawOpening(){
+  const t=ot;
+  let cam=H;
+  if(t>=OP_PAN0){
+    const u=clamp((t-OP_PAN0)/(OP_PAN1-OP_PAN0),0,1);
+    cam=H*(1-(u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2));
+  }
+  ctx.save();
+  if(shake>0)ctx.translate((rnd()-.5)*shake*.7,(rnd()-.5)*shake*.5);
+  ctx.translate(0,-Math.round(cam));
+  ctx.drawImage(OPW,0,0);
+  // 구름(시차)
+  for(let i=0;i<7;i++){
+    const cx=((i*97+frameN*(.12+i*.03))%(W+120))-60,cy=40+i*28;
+    ctx.fillStyle='rgba(200,190,255,'+(.07+i*.012)+')';
+    ctx.beginPath();ctx.ellipse(cx,cy,48+i*5,8+i*1.5,0,0,6.28);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx+26,cy-5,30,7,0,0,6.28);ctx.fill();
+  }
+  // 유성
+  const ms=(frameN%260);
+  if(ms<22){ctx.strokeStyle='rgba(255,255,255,'+(1-ms/22)+')';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(60+ms*7,30+ms*2.5);ctx.lineTo(60+ms*7-26,30+ms*2.5-9);ctx.stroke();}
+  ctx.save();ctx.translate(0,H);
+  drawStageFx(0);
+  drawFighter(opB);drawFighter(opA);
+  if(opBall){
+    ctx.globalAlpha=.4;ctx.fillStyle=opBall.col;ctx.beginPath();ctx.arc(opBall.x,opBall.y,opBall.r*1.5,0,6.28);ctx.fill();
+    ctx.globalAlpha=1;ctx.fillStyle=opBall.col;ctx.beginPath();ctx.arc(opBall.x,opBall.y,opBall.r,0,6.28);ctx.fill();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(opBall.x,opBall.y,opBall.r*.5,0,6.28);ctx.fill();
+  }
+  for(const s of sparks){ctx.globalAlpha=Math.min(1,s.life/10);ctx.fillStyle=s.col;ctx.fillRect(s.x|0,s.y|0,2,2);}
+  ctx.globalAlpha=1;
+  ctx.restore();
+  ctx.restore();
+  if(opFlash>0){ctx.fillStyle='rgba(255,255,255,'+opFlash+')';ctx.fillRect(0,0,W,H);}
+  // 시네마 바
+  const bar=t<OP_PAN1?20:Math.max(0,20-(t-OP_PAN1)*.5);
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,bar);ctx.fillRect(0,H-bar,W,bar);
+  // 타이틀 로고
+  if(t>=OP_PAN1){
+    const a=Math.min(1,(t-OP_PAN1)/50);
+    ctx.globalAlpha=a;
+    T('STREET FIGHTER 2',W/2,96,40,'#ffd84a');
+    T('II',W/2,134,32,'#ff5a4a');
+    ctx.globalAlpha=1;
+  }
+  // 페이드
+  let fa=0;
+  if(t<40)fa=1-t/40;
+  if(t>OP_END-30)fa=(t-(OP_END-30))/30;
+  if(fa>0){ctx.fillStyle='rgba(0,0,0,'+clamp(fa,0,1)+')';ctx.fillRect(0,0,W,H);}
+  if(t>10&&((frameN>>5)&1))T('SKIP: 아무 키',W-36,H-8,8,'#aaa','center',null);
+}
+
 /* ---------------- 모바일 전용 조작 (터치 기기에서만 생성) ---------------- */
 if(IS_TOUCH){
   const st=document.createElement('style');
