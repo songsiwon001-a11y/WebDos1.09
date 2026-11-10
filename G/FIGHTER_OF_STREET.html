@@ -490,7 +490,7 @@ function stepGame(){
       const w=fighters.find(f=>f.wins>=2);
       if(w||round>=5){
         matchWinner=w||(A.wins>=B.wins?A:B);
-        phase='matchend';selT=0;banner=null;
+        phase='matchend';selT=0;banner=null;setMatchLines();
       }else{round++;startRound();}
     }
   }
@@ -512,6 +512,25 @@ function stepLoading(){
   ldT++;
   if(ldT%34===0)sfx('beep');
   if(ldT>=LD_LEN)startMatch(sel[0].c,sel[1].c);
+}
+/* 승패 장면 대사 (w: 이긴 쪽, l: 진 쪽) - 캐릭터 이름으로 찾는다 */
+const QUOTES={
+ '백균이':{w:'이게 바로 보스의 실력이다!',l:'내가... 지다니... 믿을 수 없어...'},
+ '최선율':{w:'불꽃처럼 타올랐지? 아직 시작도 안 했어!',l:'윽... 불꽃이 꺼지다니...'},
+ '가오니니':{w:'내 속도를 따라올 수 있겠어?',l:'너무 빨랐나... 아니, 네가 더 빨랐어...'},
+ '김하준':{w:'힘이 전부는 아니지만... 이번엔 전부였네.',l:'으윽... 다음엔 내가 이긴다...'},
+ '개코원숭이':{w:'우끼끼! 내가 이겼다!',l:'우끼... 바나나... 먹고 올게...'},
+ '권도짱':{w:'발차기는 거짓말을 하지 않는 법!',l:'도복이 찢어졌다... 다시 수련이다!'}
+};
+let mlines={w:'',l:'',t1:20,t2:90,tEnd:180};
+function setMatchLines(){
+  const w=matchWinner,l=fighters.find(f=>f!==w);
+  const qw=QUOTES[CH[w.ch].name],ql=QUOTES[CH[l.ch].name];
+  mlines.w=qw?qw.w:'내가 이겼다!';
+  mlines.l=ql?ql.l:'크윽... 내가 졌다...';
+  mlines.t1=24;
+  mlines.t2=mlines.t1+mlines.w.length*2+55;
+  mlines.tEnd=mlines.t2+mlines.l.length*2+65;
 }
 /* CPU 대전: 일반 캐릭터를 차례로 이기면 마지막에 보스들이 나온다 */
 let ladder=[],ladIdx=0;
@@ -553,7 +572,9 @@ function step(){
   else if(phase==='loading')stepLoading();
   else if(phase==='matchend'){
     selT++;
-    if(selT>110&&(press[0].a||press[0].b||press[0].c||press[1].a||press[1].b||press[1].c)){
+    const anyAtk=press[0].a||press[0].b||press[0].c||press[1].a||press[1].b||press[1].c;
+    if(anyAtk&&selT>30&&selT<=mlines.tEnd)selT=mlines.tEnd+1;
+    else if(selT>mlines.tEnd&&anyAtk){
       if(mode===0&&matchWinner&&matchWinner.side===0&&ladIdx+1<ladder.length){
         ladIdx++;sel[1].c=ladder[ladIdx];phase='vs';vsT=0;selT=0;sfx('go');
       }else{phase='select';sel[0]={c:0,ok:false};sel[1]={c:1,ok:false};selT=0;}
@@ -1000,11 +1021,42 @@ function drawFighterNoShadow(f){
   ctx.ellipse=orig;
   ctx.restore();
 }
+function drawInjury(f){
+  const c=cc(f),P=getPose(f);
+  ctx.save();
+  ctx.translate(Math.round(f.x),Math.round(f.y));ctx.scale(f.face*c.sc,c.sc);
+  if(f.state==='hit')ctx.translate(Math.sin(f.t*2.2)*1.2,0);
+  const hx=P.hd[0],hy=P.hd[1];
+  ctx.fillStyle='rgba(110,50,140,.8)';ctx.beginPath();ctx.arc(hx+3.6,hy+2.6,2.6,0,6.28);ctx.fill();   // 멍
+  ctx.fillStyle='rgba(110,50,140,.55)';ctx.beginPath();ctx.arc(hx-1.5,hy+5,1.8,0,6.28);ctx.fill();
+  ctx.save();ctx.translate(hx+.5,hy-2.5);ctx.rotate(-.5);                                              // 반창고
+  ctx.fillStyle='#f6e8d0';ctx.fillRect(-4,-1.3,8,2.6);ctx.fillStyle='#d8c19c';ctx.fillRect(-1,-1.3,2,2.6);ctx.restore();
+  const t=frameN*.12;                                                                                  // 빙글빙글 별
+  ctx.fillStyle='#ffd84a';
+  for(let i=0;i<3;i++){const an=t+i*2.09,sx=hx+Math.cos(an)*10,sy=hy-13+Math.sin(an)*3;ctx.fillRect(sx-.5,sy-2.5,1,5);ctx.fillRect(sx-2.5,sy-.5,5,1);}
+  ctx.restore();
+}
+function bubble(txt,cx,y,sz){
+  ctx.font=`bold ${sz}px 'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif`;
+  const tw=Math.max(40,ctx.measureText(txt).width)+16,h=sz+14;
+  const x=Math.max(6,Math.min(W-6-tw,cx-tw/2));
+  ctx.fillStyle='#fff';ctx.strokeStyle='#111';ctx.lineWidth=2;
+  ctx.beginPath();ctx.rect(x,y,tw,h);ctx.fill();ctx.stroke();
+  const tx=Math.max(x+10,Math.min(x+tw-10,cx));
+  ctx.beginPath();ctx.moveTo(tx-6,y+h);ctx.lineTo(tx,y+h+9);ctx.lineTo(tx+6,y+h);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='#fff';ctx.fillRect(tx-5,y+h-1,10,3);
+  T(txt,x+tw/2,y+h/2+1,sz,'#111',null,null);
+}
 function drawMatchEnd(){
-  drawWorld();
-  ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
-  const w=matchWinner;
-  T(CH[w.ch].name+(w.ai?' (CPU)':(w.side?' (2P)':' (1P)'))+' 승리!',W/2,100,26,'#ffd84a');
+  ctx.drawImage(STAGES[stage],0,0);drawStageFx(stage);
+  ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(0,0,W,H);
+  const w=matchWinner,l=fighters.find(f=>f!==w);
+  const fw=dummy(w.ch,W/2-70,1,{alt:w.alt,state:'win',t:selT});
+  const fl=dummy(l.ch,W/2+70,-1,{alt:l.alt,state:'hit',t:frameN*.35});
+  ctx.save();ctx.translate(W/2,GY);ctx.scale(1.35,1.35);ctx.translate(-W/2,-GY);   // 장면에서는 크게
+  drawFighter(fl);drawInjury(fl);drawFighter(fw);
+  ctx.restore();
+  T(CH[w.ch].name+(w.ai?' (CPU)':(w.side?' (2P)':' (1P)'))+' 승리!',W/2,20,20,'#ffd84a');
   let sub='YOU WIN',nxt='아무 공격 키를 누르면 캐릭터 선택';
   if(mode===0){
     if(w.side!==0){sub='GAME OVER';}
@@ -1014,8 +1066,16 @@ function drawMatchEnd(){
       nxt='아무 공격 키 → 다음 상대: '+nc.name+(nc.boss?'  (BOSS!)':'');
     }else{sub='ALL CLEAR!';}
   }
-  T(sub,W/2,135,16,'#fff');
-  if(selT>110&&((frameN>>5)&1))T(nxt,W/2,190,11,'#fff');
+  T(sub,W/2,40,11,'#fff');
+  const L=mlines;
+  if(selT>=L.t1&&selT<L.t2){
+    const n=Math.min(L.w.length,Math.floor((selT-L.t1)/2)+1);
+    bubble(L.w.slice(0,n),W/2-95,56,11);
+  }else if(selT>=L.t2){
+    const n=Math.min(L.l.length,Math.floor((selT-L.t2)/2)+1);
+    bubble(L.l.slice(0,n),W/2+95,56,11);
+  }
+  if(selT>L.tEnd&&((frameN>>5)&1))T(nxt,W/2,258,11,'#fff');
 }
 function draw(){
   ctx.setTransform(1,0,0,1,0,0);
