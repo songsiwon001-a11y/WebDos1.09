@@ -138,20 +138,22 @@ function startBGM(){
 }
 
 /* ---------------- 캐릭터 (모두 오리지널) ---------------- */
+/* 캐릭터 능력치: spd 이동속도, pow 공격력 배율, hp 체력 배율(x100), sc 크기, proj 장풍(속도 sp / 데미지 dmg / 크기 r) */
 const CH=[
- {name:'백균이',en:'Baek Gyun I',gi:'#2f6fe0',belt:'#f4f4f4',skin:'#f1c27d',hair:'#1a1a22',band:'#e33',glove:'#e33',shoe:'#222',spd:1.15,pow:1,hp:1,sc:1,
-  proj:{col:'#5cf',r:7,sp:3.6,dmg:11},alt:{gi:'#22b8a8',glove:'#fc3',band:'#fff'},desc:'균형형'},
  {name:'최선율',en:'Choi Seon Yul',gi:'#d23a2a',belt:'#222',skin:'#e2a273',hair:'#7a1b12',band:null,glove:'#fc3',shoe:'#3a1a10',spd:1.0,pow:1.15,hp:1,sc:1,
   proj:{col:'#fa3',r:8,sp:3.2,dmg:13},alt:{gi:'#e8e8e8',glove:'#d23',band:null},desc:'화염 장풍'},
  {name:'가오니니',en:'Gaonini',gi:'#2fa05a',belt:'#ffe88a',skin:'#f4d3a8',hair:'#f2d04a',band:'#fff',glove:'#fff',shoe:'#fff',spd:1.4,pow:.88,hp:.9,sc:.97,
   proj:{col:'#8f8',r:5,sp:5,dmg:9},alt:{gi:'#e060a0',glove:'#fff',band:'#fd5'},desc:'스피드형'},
  {name:'김하준',en:'Kim Ha Joon',gi:'#6a4a9a',belt:'#fc0',skin:'#8f5f3f',hair:'#111',band:null,glove:'#555',shoe:'#222',spd:.88,pow:1.3,hp:1.2,sc:1.1,
   proj:{col:'#c6f',r:10,sp:2.6,dmg:15},alt:{gi:'#555',glove:'#c33',band:null},desc:'파워형'},
- {name:'개코원숭이',en:'Baboon',gi:'#6a4a9a',belt:'#fc0',skin:'#8f5f3f',hair:'#111',band:null,glove:'#555',shoe:'#222',spd:.88,pow:1.3,hp:1.2,sc:1.1,
-  proj:{col:'#c6f',r:10,sp:2.6,dmg:15},alt:{gi:'#555',glove:'#c33',band:null},desc:'보스'},
- {name:'권도짱',en:'Kwon Do Jjang',gi:'#6a4a9a',belt:'#fc0',skin:'#8f5f3f',hair:'#111',band:null,glove:'#555',shoe:'#222',spd:.88,pow:1.3,hp:1.2,sc:1.1,
-  proj:{col:'#c6f',r:10,sp:2.6,dmg:15},alt:{gi:'#555',glove:'#c33',band:null},desc:'보스'}
+ {name:'백균이',en:'Baek Gyun I',gi:'#2f6fe0',belt:'#f4f4f4',skin:'#f1c27d',hair:'#1a1a22',band:'#e33',glove:'#e33',shoe:'#222',spd:1.5,pow:1.6,hp:2.2,sc:1.12,
+  proj:{col:'#5cf',r:12,sp:6,dmg:22},alt:{gi:'#22b8a8',glove:'#fc3',band:'#fff'},desc:'보스 · 최강',boss:1},
+ {name:'개코원숭이',en:'Baboon',gi:'#6b4a2a',belt:'#d22',skin:'#b0643a',hair:'#3a2616',band:'#d22',glove:'#d22',shoe:'#2a1a10',spd:1.5,pow:1.6,hp:2.2,sc:1.12,
+  proj:{col:'#f54',r:12,sp:6,dmg:22},alt:{gi:'#333',glove:'#fc3',band:'#fc3'},desc:'보스 · 최강',boss:1},
+ {name:'권도짱',en:'Kwon Do Jjang',gi:'#f6f6f6',belt:'#111',skin:'#f1c27d',hair:'#111',band:'#111',glove:'#222',shoe:'#111',spd:1.5,pow:1.6,hp:2.2,sc:1.12,
+  proj:{col:'#ffe040',r:12,sp:6,dmg:22},alt:{gi:'#222',glove:'#f33',band:'#f33'},desc:'보스 · 최강',boss:1}
 ];
+CH.sort((a,b)=>(a.boss?1:0)-(b.boss?1:0)); /* 보스(boss:1)는 항상 맨 뒤에, 적은 순서대로 */
 const MV={
  punch :{su:3,ac:3,re:8 ,dmg:6 ,reach:36,y:[-64,-42],stun:14,kb:1.6,snd:'punch'},
  kick  :{su:5,ac:4,re:12,dmg:10,reach:42,y:[-58,-28],stun:18,kb:2.6,snd:'kick'},
@@ -516,13 +518,16 @@ function stepSelect(){
   for(let p=0;p<n;p++){
     const s=sel[p];
     if(!s.ok){
-      if(press[p].l){s.c=(s.c+3)%4;sfx('sel');}
-      if(press[p].r){s.c=(s.c+1)%4;sfx('sel');}
+      const N=selN();
+      if(press[p].l){s.c=(s.c+N-1)%N;sfx('sel');}
+      if(press[p].r){s.c=(s.c+1)%N;sfx('sel');}
+      if(press[p].u){const t=selVert(s.c,-1);if(t!==s.c){s.c=t;sfx('sel');}}
+      if(press[p].d){const t=selVert(s.c,1);if(t!==s.c){s.c=t;sfx('sel');}}
       if(press[p].a||press[p].b||press[p].c){s.ok=true;sfx('ok');}
     }else if(press[p].u){s.ok=false;sfx('sel');}
   }
   if(mode===0&&sel[0].ok&&!sel[1].ok){
-    let c;do{c=Math.floor(rnd()*4);}while(c===sel[0].c);
+    let c;do{c=Math.floor(rnd()*selN());}while(c===sel[0].c&&selN()>1);
     sel[1].c=c;sel[1].ok=true;
   }
   if(sel[0].ok&&sel[1].ok){
@@ -836,44 +841,73 @@ function drawTitle(){
   T('던지기: 붙어서 →+펀치   뒤로 = 방어   M 소리   P 일시정지',W/2,236,8,'#ddd','center',null);
   T('(커맨드 방향은 캐릭터가 바라보는 쪽 기준)',W/2,258,7,'#999','center',null);
 }
+const SEL_MAX=8;
+function selN(){return Math.min(CH.length,SEL_MAX);}
+function selRects(){
+  const n=selN(),rects=[];
+  const chunk=(a)=>{const r=[];for(let i=0;i<a.length;i+=4)r.push(a.slice(i,i+4));return r;};
+  const rows=chunk([...Array(n).keys()]);
+  const big=rows.length===1;
+  rows.forEach((row,ri)=>{
+    const x0=(W-(row.length*110-10))/2;
+    row.forEach((idx,ci)=>{rects[idx]=big?{x:25+ci*110,y:48,w:100,h:170,big:1,row:0}:{x:x0+ci*110,y:36+ri*106,w:100,h:102,big:0,row:ri};});
+  });
+  return rects;
+}
+function selRect(i){return selRects()[i];}
+function selVert(i,dir){
+  const R=selRects(),c=R[i],cx=c.x+c.w/2;let best=-1,bd=1e9;
+  R.forEach((r,j)=>{if(r.row===c.row+dir){const d=Math.abs(r.x+r.w/2-cx);if(d<bd){bd=d;best=j;}}});
+  return best<0?i:best;
+}
 function drawSelect(){
   ctx.drawImage(STAGES[2],0,0);
   ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
   T('CHOOSE YOUR FIGHTER',W/2,24,18,'#ffd84a');
-  for(let i=0;i<4;i++){
-    const x=25+i*110,y=48,w=100,h=170,c=CH[i];
+  const N=selN();
+  for(let i=0;i<N;i++){
+    const r=selRect(i),x=r.x,y=r.y,w=r.w,h=r.h,c=CH[i];
     ctx.fillStyle='rgba(20,20,40,.85)';ctx.fillRect(x,y,w,h);
     ctx.strokeStyle='#445';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);
     ctx.save();ctx.beginPath();ctx.rect(x+1,y+1,w-2,h-2);ctx.clip();
-    ctx.translate(x+w/2-W/2*0,0);
-    const f=dummy(i,0,i%2?-1:1,{y:y+104});
-    ctx.save();ctx.translate(0,0);
-    // 개별 위치로 그리기 위해 임시 변환
-    ctx.setTransform(1,0,0,1,x+w/2,0);
-    const oy=GY;f.x=0;f.y=y+98;
+    const sc=r.big?1:.5;
+    const f=dummy(i,0,i%2?-1:1,{y:0});
+    ctx.setTransform(sc,0,0,sc,x+w/2,0);
+    f.x=0;f.y=(r.big?y+98:y+60)/sc;
     drawFighterNoShadow(f);
-    ctx.restore();ctx.restore();
-    T(c.name,x+w/2,y+110,13,'#fff');
-    T(c.desc,x+w/2,y+123,9,'#aaa',null,null);
-    const bars=[['SPD',c.spd/1.4],['POW',c.pow/1.3],['HP',c.hp/1.2]];
-    bars.forEach((b,k)=>{
-      T(b[0],x+8,y+146+k*8,7,'#ccc','left',null);
-      ctx.fillStyle='#333';ctx.fillRect(x+32,y+143+k*8,60,5);
-      ctx.fillStyle='#ffd84a';ctx.fillRect(x+32,y+143+k*8,60*clamp(b[1],0,1),5);
-    });
+    ctx.restore();
+    if(r.big){
+      T(c.name,x+w/2,y+110,13,'#fff');
+      T(c.desc,x+w/2,y+123,9,'#aaa',null,null);
+      const bars=[['SPD',c.spd/1.4],['POW',c.pow/1.3],['HP',c.hp/1.2]];
+      bars.forEach((b,k)=>{
+        T(b[0],x+8,y+146+k*8,7,'#ccc','left',null);
+        ctx.fillStyle='#333';ctx.fillRect(x+32,y+143+k*8,60,5);
+        ctx.fillStyle='#ffd84a';ctx.fillRect(x+32,y+143+k*8,60*clamp(b[1],0,1),5);
+      });
+    }else{
+      T(c.name,x+w/2,y+69,10,'#fff');
+      T(c.desc,x+w/2,y+78,7,'#aaa',null,null);
+      const bars=[['SPD',c.spd/1.4],['POW',c.pow/1.3],['HP',c.hp/1.2]];
+      bars.forEach((b,k)=>{
+        T(b[0],x+6,y+88+k*5,5,'#ccc','left',null);
+        ctx.fillStyle='#333';ctx.fillRect(x+28,y+86+k*5,66,3);
+        ctx.fillStyle='#ffd84a';ctx.fillRect(x+28,y+86+k*5,66*clamp(b[1],0,1),3);
+      });
+    }
   }
-  const n=mode===0?1:2;
   for(let p=0;p<2;p++){
-    const s=sel[p],x=25+s.c*110,col=p?'#ff5a4a':'#4aa8ff';
+    const s=sel[p],r=selRect(s.c),x=r.x,col=p?'#ff5a4a':'#4aa8ff';
     ctx.strokeStyle=col;ctx.lineWidth=s.ok?4:2;
-    const off=p?3:0;ctx.strokeRect(x-off,48-off,100+off*2,170+off*2);
+    const off=p?3:0;ctx.strokeRect(x-off,r.y-off,r.w+off*2,r.h+off*2);
     if(p===1&&mode===0&&!s.ok){continue;}
-    T(p?(mode===0?'CPU':'2P'):'1P',x+(p?80:20),p?232:38,11,col);
-    if(s.ok)T('OK',x+50,p?232:38,11,'#fff');
+    const ly=r.big?(p?232:38):r.y+9, sz=r.big?11:9;
+    T(p?(mode===0?'CPU':'2P'):'1P',x+(p?r.w-20:20),ly,sz,col);
+    if(s.ok)T('OK',x+r.w/2,ly,sz,'#fff');
   }
-  if(mode===0&&!sel[0].ok)T(IS_TOUCH?'조이스틱 ← → 로 선택, A 로 결정':'J / L 로 선택, A 로 결정',W/2,252,10,'#ccc');
-  else if(mode===1)T('1P: J / L + A      2P: ← / → + [      (위쪽 키: 취소)',W/2,252,9,'#ccc');
-  T('ESC: 타이틀',W-40,262,8,'#888',null,null);
+  if(mode===0&&!sel[0].ok)T(IS_TOUCH?'조이스틱 ← → ↑ ↓ 로 선택, A 로 결정':'J / L (I / K) 로 선택, A 로 결정',W/2,254,10,'#ccc');
+  else if(mode===1)T('1P: J / L + A      2P: ← / → + [      (위쪽 키: 취소)',W/2,254,9,'#ccc');
+  T('ESC: 타이틀',W-40,264,8,'#888',null,null);
 }
 function drawVS(){
   const t=vsT,ease=x=>1-Math.pow(1-clamp(x,0,1),3);
