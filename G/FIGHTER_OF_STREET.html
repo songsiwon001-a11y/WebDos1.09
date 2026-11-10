@@ -513,6 +513,14 @@ function stepLoading(){
   if(ldT%34===0)sfx('beep');
   if(ldT>=LD_LEN)startMatch(sel[0].c,sel[1].c);
 }
+/* CPU 대전: 일반 캐릭터를 차례로 이기면 마지막에 보스들이 나온다 */
+let ladder=[],ladIdx=0;
+function buildLadder(me){
+  const n=selN(),o=[];
+  for(let i=0;i<n;i++)if(i!==me&&!CH[i].boss)o.push(i);
+  for(let i=0;i<n;i++)if(i!==me&&CH[i].boss)o.push(i);
+  return o;
+}
 function stepSelect(){
   const n=mode===0?1:2;
   for(let p=0;p<n;p++){
@@ -527,8 +535,8 @@ function stepSelect(){
     }else if(press[p].u){s.ok=false;sfx('sel');}
   }
   if(mode===0&&sel[0].ok&&!sel[1].ok){
-    let c;do{c=Math.floor(rnd()*selN());}while(c===sel[0].c&&selN()>1);
-    sel[1].c=c;sel[1].ok=true;
+    ladder=buildLadder(sel[0].c);ladIdx=0;
+    sel[1].c=ladder.length?ladder[0]:sel[0].c;sel[1].ok=true;
   }
   if(sel[0].ok&&sel[1].ok){
     if(++selT>50){phase='vs';vsT=0;sfx('go');return;}
@@ -545,7 +553,11 @@ function step(){
   else if(phase==='loading')stepLoading();
   else if(phase==='matchend'){
     selT++;
-    if(selT>110&&(press[0].a||press[0].b||press[0].c||press[1].a||press[1].b||press[1].c)){phase='select';sel[0]={c:0,ok:false};sel[1]={c:1,ok:false};selT=0;}
+    if(selT>110&&(press[0].a||press[0].b||press[0].c||press[1].a||press[1].b||press[1].c)){
+      if(mode===0&&matchWinner&&matchWinner.side===0&&ladIdx+1<ladder.length){
+        ladIdx++;sel[1].c=ladder[ladIdx];phase='vs';vsT=0;selT=0;sfx('go');
+      }else{phase='select';sel[0]={c:0,ok:false};sel[1]={c:1,ok:false};selT=0;}
+    }
   }else stepGame();
   press=[{},{}];anyKey=false;
   if(phase!=='opening'&&fade>0)fade=Math.max(0,fade-.04);
@@ -929,6 +941,7 @@ function drawVS(){
     T(c.name,p?W-118:118,238,16,p?'#ff8a7a':'#7ac0ff');
     T(c.en,p?W-118:118,254,9,'#ccc',null,null);
     T(p?(mode===0?'CPU':'2P'):'1P',p?W-118:118,28,16,p?'#ff5a4a':'#4aa8ff');
+    if(p===1&&mode===0&&ladder.length)T((c.boss?'BOSS  ':'')+'STAGE '+(ladIdx+1)+'/'+ladder.length,W/2,12,11,c.boss?'#ff4a3a':'#ddd');
     ctx.globalAlpha=1;
   }
   // VS
@@ -992,8 +1005,17 @@ function drawMatchEnd(){
   ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
   const w=matchWinner;
   T(CH[w.ch].name+(w.ai?' (CPU)':(w.side?' (2P)':' (1P)'))+' 승리!',W/2,100,26,'#ffd84a');
-  T('YOU WIN',W/2,135,16,'#fff');
-  if(selT>110&&((frameN>>5)&1))T('아무 공격 키를 누르면 캐릭터 선택',W/2,190,11,'#fff');
+  let sub='YOU WIN',nxt='아무 공격 키를 누르면 캐릭터 선택';
+  if(mode===0){
+    if(w.side!==0){sub='GAME OVER';}
+    else if(ladIdx+1<ladder.length){
+      const nc=CH[ladder[ladIdx+1]];
+      sub='STAGE '+(ladIdx+1)+' / '+ladder.length+' CLEAR';
+      nxt='아무 공격 키 → 다음 상대: '+nc.name+(nc.boss?'  (BOSS!)':'');
+    }else{sub='ALL CLEAR!';}
+  }
+  T(sub,W/2,135,16,'#fff');
+  if(selT>110&&((frameN>>5)&1))T(nxt,W/2,190,11,'#fff');
 }
 function draw(){
   ctx.setTransform(1,0,0,1,0,0);
