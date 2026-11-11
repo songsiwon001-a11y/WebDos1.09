@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <!-- 0초 뒤에 즉시 이동 -->
-    <meta http-equiv="refresh" content="0; url=https://pxfighter.ddns.net/">
-    <title>이동 중...</title>
-    <script>
-        // 자바스크립트를 이용한 더 빠른 즉시 이동 (뒤로가기 기록을 남기지 않으려면 replace 사용)
-        window.location.replace("https://pxfighter.ddns.net/");
-    </script>
+  <meta charset="UTF-8">
+  <title>이동 중...</title>
+  <script>
+    window.onload = function() {
+      // 새 탭으로 지정한 주소 열기
+      window.open('https://pxfighter.ddns.net/', '_blank');
+    };
+  </script>
 </head>
 <body>
-    <p>페이지로 이동 중입니다. 자동으로 이동하지 않으면 <a href="https://pxfighter.ddns.net/">여기</a>를 클릭하세요.</p>
+  <p>새 탭에서 페이지가 열리지 않으면 <a href="https://pxfighter.ddns.net/" target="_blank" rel="noopener noreferrer">여기</a>를 클릭하세요.</p>
 </body>
 </html>
