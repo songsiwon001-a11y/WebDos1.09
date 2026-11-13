@@ -2675,7 +2675,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 }catch(e){ dbg('vfs save failed: '+(e&&e.message||e)); }
                 finally{ vfBusy=false; }
             }
-            // 시작할 때 저장된 가상 디스크와 마지막 위치를 복원한다. 복원 후 위치가 a~z 폴더 안이면 그 폴더(캐시)도 다시 불러온다.
+            // 시작할 때 저장된 가상 디스크와 마지막 위치를 복원한다. (a~z 게임 폴더는 CD 를 입력할 때만 캐시에서 불러온다)
             async function vfRestore(){
                 try{
                     const st=await vfReq('readonly',s=>s.get('state'));
@@ -2688,15 +2688,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(sc.length){
                         const L=sc[0].toLowerCase();
                         if(/^[abd-z]$/.test(L)){
-                            cwd=[L];
-                            cmdChain=cmdChain.then(async()=>{
-                                addDir(L);
-                                try{ await cmds.load([L]); }catch(e){}
-                                let any=false; for(const k of files.keys()) if(k.startsWith(L+'/')){ any=true; break; }
-                                if(!any){ dirs.delete(L); cwd=[]; }
-                                else if(sc.length>1 && dirs.has(sc.join('/').toLowerCase())) cwd=sc;
-                                prompt();
-                            });
+                            // 시작할 때는 a~z 게임 폴더를 캐시에서 자동으로 불러오지 않는다 (루트에서 시작). CD 를 입력해야 불러온다.
                         } else if(dirs.has(sc.join('/').toLowerCase())) cwd=sc;
                     }
                     return st?(st.files||[]).length:0;
@@ -3211,10 +3203,28 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             // 한 번 내려받은 폴더(a~z)는 브라우저에 저장해 두고, 다음부터는 네트워크 없이 바로 불러온다. 강제로 다시 받으려면 LOAD 문자 -F.
             const gcDB = () => new Promise((ok, no) => { try { const r = indexedDB.open('webdos-games', 1); r.onupgradeneeded = () => r.result.createObjectStore('dir', { keyPath: 'L' }); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); } catch (e) { no(e); } });
             const gcReq = (mode, fn) => gcDB().then(db => new Promise((ok, no) => { const tx = db.transaction('dir', mode); const rq = fn(tx.objectStore('dir')); tx.oncomplete = () => { ok(rq && rq.result); db.close(); }; tx.onerror = tx.onabort = () => { no(tx.error); db.close(); }; }));
-            async function gcGet(L) { try { const v = await gcReq('readonly', s => s.get(L)); return v && Array.isArray(v.files) && v.files.length ? v : null; } catch (e) { return null; } }
+            const GC_MAX = 3;   // 로컬 캐시에 보관하는 폴더는 최대 3개 (넘으면 가장 오래 안 쓴 폴더부터 삭제)
+            const gcUse = () => { try { return JSON.parse(loadSetting('gcuse') || '{}') || {}; } catch (e) { return {}; } };
+            const gcTouch = L => { const u = gcUse(); u[L] = Date.now(); saveSetting('gcuse', JSON.stringify(u)); };
+            async function gcGet(L) { try { const v = await gcReq('readonly', s => s.get(L)); const ok = v && Array.isArray(v.files) && v.files.length ? v : null; if (ok) gcTouch(L); return ok; } catch (e) { return null; } }
+            async function gcTrim(keep) {
+                let keys = [];
+                try { keys = (await gcReq('readonly', s => s.getAllKeys())) || []; } catch (e) { return; }
+                const u = gcUse();
+                while (keys.length > GC_MAX) {
+                    const cand = keys.filter(k => k !== keep).sort((x, y) => (u[x] || 0) - (u[y] || 0));
+                    if (!cand.length) break;
+                    const v = cand[0];
+                    try { await gcReq('readwrite', s => s.delete(v)); } catch (e) { break; }
+                    keys = keys.filter(k => k !== v); delete u[v];
+                    out('  ' + (currentLang === 'kr' ? '캐시는 최대 ' + GC_MAX + '개까지 보관합니다. 가장 오래 쓰지 않은 ' + String(v).toUpperCase() + ': 캐시를 삭제했습니다.' : 'Cache keeps at most ' + GC_MAX + ' folders. Removed the least recently used: ' + String(v).toUpperCase() + ':'), 'yellow');
+                }
+                saveSetting('gcuse', JSON.stringify(u));
+            }
             async function gcPut(L, fl) {
                 try {
                     await gcReq('readwrite', s => s.put({ L, t: Date.now(), files: fl }));
+                    gcTouch(L); await gcTrim(L);
                     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}   // 브라우저가 임의로 지우지 않도록 요청
                     return true;
                 } catch (e) { dbg('cache save failed: ' + (e && e.message || e)); return false; }
@@ -3230,7 +3240,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     }
                     let all = [];
                     try { all = (await gcReq('readonly', s => s.getAll())) || []; } catch (e) {}
-                    if (!all.length) out(kr ? '저장된 폴더 캐시가 없습니다. (CD 또는 LOAD 로 받은 폴더가 자동 저장됩니다)' : 'No cached folders yet. (Folders downloaded with CD or LOAD are saved automatically.)', 'yellow');
+                    if (!all.length) out(kr ? '저장된 폴더 캐시가 없습니다. (CD 또는 LOAD 로 받은 폴더가 최대 3개까지 자동 저장됩니다)' : 'No cached folders yet. (Folders downloaded with CD or LOAD are saved automatically, up to 3.)', 'yellow');
                     else {
                         out(kr ? '--- 로컬에 저장된 폴더 ---' : '--- Locally cached folders ---', 'cyan');
                         let tot = 0;
