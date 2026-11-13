@@ -436,7 +436,9 @@
                     TREE: "TREE - Graphically displays directory structure.",
                     TUNE: "TUNE [cpu=|cycles=|rate=|block=|pre=|worker=] - Adjusts emulator speed/audio settings (saved).",
                     TYPE: "TYPE filename - Displays text file contents.",
-                    LOAD: "LOAD A-Z [-v] [-f] - Loads files from a GitHub folder (a-z except c).",
+                    LOAD: "LOAD A-Z [-v] [-f] - Loads files from a GitHub folder (a-z except c). Saved locally after the first download; -f re-downloads.",
+                    CACHE: "CACHE [CLEAR [letter]] - Lists or clears folders saved in this browser (no re-download).",
+                    MT32: "MT32 ON|OFF|CLEAR - ON loads the MT-32 ROM zip next to this page and enables MT-32; OFF restores defaults.",
                     UPLOAD: "UPLOAD [-f] - Uploads files or directory zip.",
                     VER: "VER - Displays DOS version.",
                     VERIFY: "VERIFY - Verifies file writing.",
@@ -1814,7 +1816,45 @@
 
             cmds.mt32=function(a){
                 const have=Object.keys(mt32);
-                if(a[0]&&/^(clear|reset|off)$/i.test(a[0])){ return mtClear().then(()=>out('MT-32 ROMs removed from this browser.','ok')); }
+                if(a[0]&&/^(clear|reset)$/i.test(a[0])){ return mtClear().then(()=>out('MT-32 ROMs removed from this browser.','ok')); }
+                if(a[0]&&/^off$/i.test(a[0])){
+                    tune.midi='default'; saveSetting('tune',JSON.stringify(tune));
+                    return mtClear().then(()=>out('MT-32 OFF: back to defaults (midi=default, stored ROMs removed). MT32 ON loads them again.','ok'));
+                }
+                // MT32 ON : 페이지와 같은 폴더의 mt32.zip(MT32_CONTROL.ROM + MT32_PCM.ROM)을 자동으로 불러와 저장하고 midi=mt32 로 설정
+                if(a[0]&&/^on$/i.test(a[0])){
+                    return (async()=>{
+                        const NAMES=['MT-32_v1.07_legacy_ROM_files.zip','mt32.zip','MT32.zip','Mt32.zip','mt32rom.zip','MT32ROM.zip','mt32_rom.zip','MT32_ROM.zip'];
+                        if(!mtSet()){
+                            if(location.protocol==='file:') return out('Cannot auto-load from file://. Use UPLOAD instead.','err');
+                            out('  loading MT-32 ROM zip ...','yellow');
+                            const urls=[];
+                            for(const n of NAMES) urls.push(U(encodeURIComponent(n)));
+                            for(const rp of ghRepos()) for(const b of GH_BRANCHES.filter(x=>x!=='HEAD')) for(const n of NAMES.slice(0,3)) urls.push('https://raw.githubusercontent.com/'+rp+'/'+b+'/'+encodeURIComponent(n));
+                            let buf=null;
+                            for(const u of urls){
+                                try{
+                                    const r=await fetchT(u,15000,{cache:'no-cache'});
+                                    if(r.ok){ const d=new Uint8Array(await r.arrayBuffer()); if(d.length>4&&d[0]===0x50&&d[1]===0x4B){ buf=d; break; } }
+                                }catch(e){}
+                            }
+                            if(!buf) return out('MT-32 ROM zip not found. Put MT-32_v1.07_legacy_ROM_files.zip (or mt32.zip) in the same folder as this html file, or use UPLOAD.','err');
+                            let n=0;
+                            try{
+                                const z=await JSZip.loadAsync(buf);
+                                for(const e of Object.values(z.files)){
+                                    if(e.dir||!MT_RE.test(e.name)) continue;
+                                    mtTake(e.name, await e.async('uint8array')); n++;
+                                    out('  '+e.name.split('/').pop().toUpperCase()+' (MT-32 ROM)','ok');
+                                }
+                            }catch(e){ return out('mt32.zip could not be read as a zip.','err'); }
+                            if(!n) return out('No MT32/CM32L *_CONTROL.ROM / *_PCM.ROM found inside mt32.zip.','err');
+                        }
+                        if(!mtSet()) return out('Need both *_CONTROL.ROM and *_PCM.ROM of the same family.','err');
+                        tune.midi='mt32'; saveSetting('tune',JSON.stringify(tune));
+                        out('MT-32 ON (ROMs ready, midi=mt32). RUN a game and pick Roland + SoundBlaster in its sound menu.','ok');
+                    })();
+                }
                 out(have.length?'MT-32 ROMs: '+have.join(', '):'No MT-32 ROMs loaded. UPLOAD MT32_CONTROL.ROM + MT32_PCM.ROM (or the zip that contains them).', have.length?'cyan':'yellow');
                 out(mtSet()?'Ready. Type TUNE midi=mt32 to use it on the next RUN (TUNE midi=default turns it off). In-game: Core Options > MIDI > MT-32, and choose Roland MT-32 in the game setup.':'Not usable yet: both CONTROL and PCM ROM of the same family are needed.', mtSet()?'ok':'err');
                 out('MT32 CLEAR  removes the stored ROMs.');
@@ -2113,6 +2153,15 @@
                 }
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const isArcade=/\.zip$/i.test(path);
+                // DOS 코어(DOSBox Pure)는 스레드가 필수 → 교차 출처 격리가 안 되어 있으면 헛로딩하지 않고 원인을 바로 안내
+                if(!window.crossOriginIsolated && !isArcade){
+                    blurTerminal(); I.removeAttribute('inputmode');
+                    out('This DOS core needs threads (cross-origin isolation is OFF).','err');
+                    out('1) coi-serviceworker.js must be in the SAME folder as this html file (check it opens in the browser).','err');
+                    out('2) Open the page over https (GitHub Pages) and reload once or twice. file:// and the Claude preview do not work.','err');
+                    out('3) If it still fails: F12 > Application > Service Workers > Unregister, then hard reload (Ctrl+Shift+R).','err');
+                    return;
+                }
                 const top=path.includes('/')?path.split('/')[0]:null, tl=top&&top.toLowerCase()+'/';
                 gameTop=top?top.toLowerCase():null;
                 const sel=[...files.values()].filter(v=>top?v.p.toLowerCase().startsWith(tl):true);
@@ -2943,6 +2992,43 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     ask();
                 });
             }
+            // ===== 게임 폴더 로컬 캐시 (브라우저 IndexedDB) =====
+            // 한 번 내려받은 폴더(a~z)는 브라우저에 저장해 두고, 다음부터는 네트워크 없이 바로 불러온다. 강제로 다시 받으려면 LOAD 문자 -F.
+            const gcDB = () => new Promise((ok, no) => { try { const r = indexedDB.open('webdos-games', 1); r.onupgradeneeded = () => r.result.createObjectStore('dir', { keyPath: 'L' }); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); } catch (e) { no(e); } });
+            const gcReq = (mode, fn) => gcDB().then(db => new Promise((ok, no) => { const tx = db.transaction('dir', mode); const rq = fn(tx.objectStore('dir')); tx.oncomplete = () => { ok(rq && rq.result); db.close(); }; tx.onerror = tx.onabort = () => { no(tx.error); db.close(); }; }));
+            async function gcGet(L) { try { const v = await gcReq('readonly', s => s.get(L)); return v && Array.isArray(v.files) && v.files.length ? v : null; } catch (e) { return null; } }
+            async function gcPut(L, fl) {
+                try {
+                    await gcReq('readwrite', s => s.put({ L, t: Date.now(), files: fl }));
+                    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}   // 브라우저가 임의로 지우지 않도록 요청
+                    return true;
+                } catch (e) { dbg('cache save failed: ' + (e && e.message || e)); return false; }
+            }
+            cmds.cache = function (a) {
+                return (async () => {
+                    const kr = currentLang === 'kr';
+                    const sub = (a[0] || '').toLowerCase();
+                    if (sub === 'clear' || sub === 'del' || sub === 'delete') {
+                        const L = (a[1] || '').toLowerCase().replace(/[:\\\/]+$/, '');
+                        try { await gcReq('readwrite', s => L ? s.delete(L) : s.clear()); } catch (e) { return out('Error: ' + (e && e.message || e), 'err'); }
+                        return out(kr ? (L ? L.toUpperCase() + ' 폴더 캐시를 삭제했습니다.' : '모든 폴더 캐시를 삭제했습니다.') : (L ? 'Cache cleared for ' + L.toUpperCase() + '.' : 'All folder caches cleared.'), 'ok');
+                    }
+                    let all = [];
+                    try { all = (await gcReq('readonly', s => s.getAll())) || []; } catch (e) {}
+                    if (!all.length) out(kr ? '저장된 폴더 캐시가 없습니다. (CD 또는 LOAD 로 받은 폴더가 자동 저장됩니다)' : 'No cached folders yet. (Folders downloaded with CD or LOAD are saved automatically.)', 'yellow');
+                    else {
+                        out(kr ? '--- 로컬에 저장된 폴더 ---' : '--- Locally cached folders ---', 'cyan');
+                        let tot = 0;
+                        for (const v of all.sort((x, y) => x.L < y.L ? -1 : 1)) {
+                            const sz = v.files.reduce((n, f) => n + f[1].length, 0); tot += sz;
+                            out('  ' + v.L.toUpperCase() + ':\\  ' + v.files.length + (kr ? '개 파일  ' : ' file(s)  ') + (sz / 1048576).toFixed(1) + ' MB  ' + new Date(v.t).toLocaleDateString(), 'ok');
+                        }
+                        out('  ' + (kr ? '합계 ' : 'Total ') + (tot / 1048576).toFixed(1) + ' MB');
+                    }
+                    try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); out('  ' + (kr ? '브라우저 저장소: ' : 'Browser storage: ') + ((e.usage || 0) / 1048576).toFixed(0) + ' / ' + ((e.quota || 0) / 1048576).toFixed(0) + ' MB'); } } catch (e) {}
+                    out(kr ? '  CACHE CLEAR [문자]  캐시 삭제   |   LOAD 문자 -F  서버에서 다시 받기' : '  CACHE CLEAR [letter]  delete cache   |   LOAD letter -F  re-download from server');
+                })();
+            };
             cmds.load = async function (a) {
                 lastLoadCancelled = false;
                 verbose = a.some(x => /^[-\/]v$/i.test(x));
@@ -2954,6 +3040,22 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 if (location.protocol === 'file:') return out(lm('local'), 'err');
                 while (lockBusy()) await sleep(100);
                 if (!force) { for (const k of files.keys()) if (k.startsWith(L + '/')) return out(lm('already'), 'yellow'); }
+                // 로컬 캐시에 있으면 네트워크를 쓰지 않고 바로 불러온다 (데이터 절약, 오프라인 가능)
+                if (!force) {
+                    const cached = await gcGet(L);
+                    if (cached) {
+                        for (const [pp, d] of cached.files) addFile(L + '/' + pp, d);
+                        triedFolders.delete(L);
+                        const mb = cached.files.reduce((n, f) => n + f[1].length, 0) / 1048576;
+                        out('  ' + (currentLang === 'kr' ? L.toUpperCase() + ': 로컬 캐시에서 불러옴 (다운로드 없음, ' : L.toUpperCase() + ': loaded from local cache (no download, ') + mb.toFixed(1) + ' MB)', 'cyan');
+                        out(cached.files.length + tr('uploadComplete'), 'ok');
+                        out('');
+                        out(tr('uploadedHeader'), 'cyan');
+                        cached.files.forEach(f => out('  ' + (L + '/' + f[0]).replace(/\//g, '\\').toUpperCase(), 'ok'));
+                        out('');
+                        return;
+                    }
+                }
                 let myLock = loading = Date.now(); ghErr = null;
                 out('');
                 let bar = O.lastChild;
@@ -3057,6 +3159,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     for (const [pp, d] of fresh) addFile(L + '/' + pp, d);
                     triedFolders.delete(L);
                     rm();
+                    // 다음부터는 다운로드 없이 쓰도록 브라우저에 저장
+                    if (await gcPut(L, fresh)) out('  ' + (currentLang === 'kr' ? '로컬에 저장했습니다 (다음부터 다운로드 없음)' : 'Saved to local cache (no re-download next time)'), 'yellow');
 
                     out(total + tr('uploadComplete'), 'ok');
                     out('');
