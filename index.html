@@ -2197,16 +2197,37 @@
             const dtDB=()=>new Promise((ok,no)=>{ try{ const r=indexedDB.open('webdos-gamedata',1); r.onupgradeneeded=()=>r.result.createObjectStore('d',{keyPath:'id'}); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } });
             const dtReq=(mode,fn)=>dtDB().then(db=>new Promise((ok,no)=>{ const tx=db.transaction('d',mode); const rq=fn(tx.objectStore('d')); tx.oncomplete=()=>{ ok(rq&&rq.result); db.close(); }; tx.onerror=tx.onabort=()=>{ no(tx.error); db.close(); }; }));
             const dtGet=async id=>{ try{ const v=await dtReq('readonly',s=>s.get(id)); return v&&v.data&&v.data.length?v:null; }catch(e){ return null; } };
+            // 에뮬레이터에서 '게임이 디스크에 쓴 변경분'(DOSBox Pure 의 .save = zip)을 꺼낸다. 여러 경로를 순서대로 시도하고, 실패하면 이유(diag)를 돌려준다.
+            async function grabSaveZip(gm){
+                const diag=[]; const isZip=b=>b&&b.length>=4&&b[0]===0x50&&b[1]===0x4B;
+                const ejs=(()=>{ try{ return gameFrame.contentWindow.EJS_emulator; }catch(e){ return null; } })();
+                const FS=gm.FS||(ejs&&ejs.Module&&ejs.Module.FS)||null;
+                diag.push('getSaveFile='+typeof gm.getSaveFile+' FS='+(FS?'ok':'none'));
+                try{ if(typeof gm.saveSaveFiles==='function') await gm.saveSaveFiles(); }catch(e){ diag.push('saveSaveFiles: '+(e&&e.message||e)); }
+                // 1) 공식 경로
+                for(const f of [()=>gm.getSaveFile(true),()=>gm.getSaveFile(false),()=>gm.getSaveFile()]){
+                    try{ const r=await f(); if(r&&r.length){ const b=new Uint8Array(r); if(isZip(b)) return {bytes:b,diag}; diag.push('getSaveFile: '+b.length+' bytes, header '+[...b.slice(0,4)].map(x=>x.toString(16)).join(' ')+' (not zip)'); break; } else diag.push('getSaveFile: empty'); }catch(e){ diag.push('getSaveFile: '+(e&&e.message||e)); }
+                }
+                // 2) 파일 시스템에서 *.srm / *.sav / *.save 를 직접 찾는다
+                if(FS){
+                    const found=[];
+                    const walk=(d,depth)=>{ if(depth>5) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
+                        for(const n of ents){ if(n==='.'||n==='..') continue; const pth=(d==='/'?'':d)+'/'+n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
+                            if(FS.isDir(st.mode)) walk(pth,depth+1); else if(/\.(srm|sav|save)$/i.test(n)) found.push({pth,size:st.size}); } };
+                    ['/data','/home/web_user/retroarch/userdata','/home/web_user'].forEach(r=>walk(r,0));
+                    diag.push('fs: '+(found.length?found.map(f=>f.pth+' ('+f.size+')').join(', '):'no save files'));
+                    for(const f of found.sort((a,b)=>b.size-a.size)){ try{ const b=new Uint8Array(FS.readFile(f.pth)); if(isZip(b)) return {bytes:b,diag}; }catch(e){} }
+                }
+                return {bytes:null,diag};
+            }
             async function saveData(auto){
                 const gm=getGM(), id=curGameId;
                 if(!gm||!id||!curStart) return false;
                 try{
-                    let raw=null;
-                    for(const f of [()=>gm.getSaveFile(true),()=>gm.getSaveFile()]){ try{ const r=await f(); if(r&&r.length){ raw=r; break; } }catch(e){} }
-                    const none=()=>{ if(!auto) out('  '+bl('No game data changes to save yet.','아직 저장할 게임 데이터 변경이 없습니다.'),'yellow'); return false; };
-                    if(!raw) return none();
-                    const nu=new Uint8Array(raw);
-                    if(nu[0]!==0x50||nu[1]!==0x4B) throw new Error('unexpected save format');
+                    const g=await grabSaveZip(gm);
+                    const none=()=>{ if(!auto){ out('  '+bl('No game data changes to save yet.','아직 저장할 게임 데이터 변경이 없습니다.'),'yellow'); out('  [diag] '+g.diag.join(' | '),'yellow'); } return false; };
+                    if(!g.bytes) return none();
+                    const nu=g.bytes;
                     const ns=await JSZip.loadAsync(nu);
                     const names=Object.keys(ns.files).filter(n=>!ns.files[n].dir);
                     if(!names.length) return none();
@@ -2224,7 +2245,7 @@
                     const cnt=merged.file(/./).length;
                     await dtReq('readwrite',s=>s.put({id,t:Date.now(),data,n:cnt}));
                     try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
-                    out('  '+bl(auto?'Game data saved automatically':'Game data saved','게임 데이터를 '+(auto?'자동 ':'')+'저장했습니다')+' ('+cnt+bl(' file(s), ',' 파일, ')+(data.length/1024).toFixed(0)+' KB)','ok');
+                    out('  '+bl(auto?'Game data saved automatically':'Game data saved','게임 데이터를 '+(auto?'자동 ':'')+'저장했습니다')+' ('+cnt+bl(' file(s), ',' 파일, ')+(data.length/1024).toFixed(0)+' KB): '+names.slice(0,4).join(', ')+(names.length>4?' …':''),'ok');
                     return true;
                 }catch(e){ out('  '+bl('Game data save failed: ','게임 데이터 저장 실패: ')+(e&&e.message||e),'err'); return false; }
             }
