@@ -1816,7 +1816,7 @@
                 const have=Object.keys(mt32);
                 if(a[0]&&/^(clear|reset|off)$/i.test(a[0])){ return mtClear().then(()=>out('MT-32 ROMs removed from this browser.','ok')); }
                 out(have.length?'MT-32 ROMs: '+have.join(', '):'No MT-32 ROMs loaded. UPLOAD MT32_CONTROL.ROM + MT32_PCM.ROM (or the zip that contains them).', have.length?'cyan':'yellow');
-                out(mtSet()?'Ready. Applied automatically on RUN (TUNE midi=none disables). In-game: Core Options > MIDI > MT-32, and choose Roland MT-32 in the game setup.':'Not usable yet: both CONTROL and PCM ROM of the same family are needed.', mtSet()?'ok':'err');
+                out(mtSet()?'Ready. Type TUNE midi=mt32 to use it on the next RUN (TUNE midi=default turns it off). In-game: Core Options > MIDI > MT-32, and choose Roland MT-32 in the game setup.':'Not usable yet: both CONTROL and PCM ROM of the same family are needed.', mtSet()?'ok':'err');
                 out('MT32 CLEAR  removes the stored ROMs.');
             };
             cmds.tune=function(a){
@@ -1832,7 +1832,7 @@
                     out('TUNE rate=11025|22050|44100|48000  block=1024|2048|4096  pre=10..500  worker=on|off','hi');
                     out('TUNE arcade=auto|fba|cps1|cps2|neogeo|fbneo|mame   (core for arcade ROM .zip files; auto = tries compatible cores one by one and remembers the one that works)','hi');
                     out('TUNE plain=on   (DOSBox defaults only: no cpu/mixer/sound overrides - closest to dos.zone)','hi');
-                    out('TUNE midi=default|none (none = do not use MT-32 ROMs)  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
+                    out('TUNE midi=default|none|mt32 (mt32 = use uploaded MT-32 ROMs; default = off)  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
                     out('TUNE CALIBRATE (re-measure this device)   TUNE RESET (back to auto)   [applies on next RUN]','hi');
                     return;
                 }
@@ -1849,7 +1849,7 @@
                     worker:v=>/^(on|off)$/i.test(v),
                     arcade:v=>/^(auto|fba|fbneo|cps1|cps2|neogeo|mame)$/i.test(v),
                     coins:v=>/^\d{1,2}$/.test(v)&&+v<=30,
-                    midi:v=>/^(default|none)$/i.test(v),
+                    midi:v=>/^(default|none|mt32)$/i.test(v),
                     sb:v=>/^(sb16|sbpro2|sbpro1|sb2|sb1|none)$/i.test(v),
                     opl:v=>/^(auto|opl2|dualopl2|opl3|none)$/i.test(v),
                     oplemu:v=>/^(default|compat|fast|mame|nuked)$/i.test(v),
@@ -2168,7 +2168,7 @@ blocksize=${eff.block}
 prebuffer=${eff.pre}
 [midi]
 mpu401=intelligent
-mididevice=${(tune.midi!=='none'&&mtSet())?'mt32':tune.midi}
+mididevice=${tune.midi==='mt32'?'default':tune.midi}
 [sblaster]
 sbtype=${snd.sb}
 sbbase=220
@@ -2236,7 +2236,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         const bf=files.get(bk);
                         if(bf){ window.__arcBios=bf.d; out('  BIOS: neogeo.zip','yellow'); }
                     }
-                    window.__mt32=(!isArcade && tune.midi!=='none') ? mtSet() : null;
+                    window.__mt32=(!isArcade && tune.midi==='mt32') ? mtSet() : null;
                     window.__mt32msg=m=>out('  '+m,'cyan');
                     if(window.__mt32) out('MT-32 ROMs found: '+Object.keys(window.__mt32).join(', '),'cyan');
                     window.__arcLog=[];
@@ -2487,7 +2487,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             const mtEnts = ents.filter(e => MT_RE.test(e.name));
                             if (mtEnts.length) {
                                 for (const e of mtEnts) { mtTake(e.name, await e.async('uint8array')); out('  ' + e.name.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++; }
-                                out(mtSet() ? '  MT-32 ready. It is used automatically on the next RUN.' : '  Need both *_CONTROL.ROM and *_PCM.ROM.', mtSet() ? 'cyan' : 'yellow');
+                                out(mtSet() ? '  MT-32 ready. Type TUNE midi=mt32 to use it (off by default).' : '  Need both *_CONTROL.ROM and *_PCM.ROM.', mtSet() ? 'cyan' : 'yellow');
                                 if (mtEnts.length === ents.length) continue;
                             }
                             if (isRomZip(ents)) {
@@ -2520,7 +2520,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         if (MT_RE.test(finalPath)) {
                             mtTake(finalPath, new Uint8Array(await item.file.arrayBuffer()));
                             out('  ' + finalPath.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++;
-                            if (mtSet()) out('  MT-32 ready. It is used automatically on the next RUN.', 'cyan');
+                            if (mtSet()) out('  MT-32 ready. Type TUNE midi=mt32 to use it (off by default).', 'cyan');
                             continue;
                         }
                         const targetPath = pre + finalPath;
