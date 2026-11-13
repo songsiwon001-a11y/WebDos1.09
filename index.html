@@ -1113,6 +1113,22 @@
                 return bc>=2 ? best : nm;
             }
             const IMG_RE=/\.(img|ima|vfd|dsk|flp|iso|cue)$/i;
+            // ===== MT-32 / CM-32L ROM 보관 (업로드하면 브라우저 IndexedDB 에 저장되어 다음에도 유지) =====
+            const MT_RE=/(^|[\\\/])((mt32|cm32l)_(control|pcm)\.rom)$/i;
+            const mt32={};   // { 'MT32_CONTROL.ROM': Uint8Array, ... }
+            const mtDB=()=>new Promise((ok,no)=>{ try{ const r=indexedDB.open('webdos-mt32',1); r.onupgradeneeded=()=>r.result.createObjectStore('rom'); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } });
+            async function mtSave(name,data){ try{ const db=await mtDB(); db.transaction('rom','readwrite').objectStore('rom').put(data,name); }catch(e){} }
+            async function mtClear(){ for(const k of Object.keys(mt32)) delete mt32[k]; try{ const db=await mtDB(); db.transaction('rom','readwrite').objectStore('rom').clear(); }catch(e){} }
+            const mtReady=(async()=>{ try{ const db=await mtDB(); const st=db.transaction('rom').objectStore('rom'); await new Promise(res=>{ const c=st.openCursor(); c.onsuccess=()=>{ const cur=c.result; if(cur){ mt32[cur.key]=cur.value; cur.continue(); } else res(); }; c.onerror=()=>res(); }); }catch(e){} })();
+            // 제어 ROM + PCM ROM 이 같은 계열(MT32 또는 CM32L)로 모두 있어야 사용 가능
+            function mtSet(){
+                for(const fam of ['MT32','CM32L']){
+                    const c=mt32[fam+'_CONTROL.ROM'], pc=mt32[fam+'_PCM.ROM'];
+                    if(c&&pc) return {[fam+'_CONTROL.ROM']:c,[fam+'_PCM.ROM']:pc};
+                }
+                return null;
+            }
+            function mtTake(name,data){ const m=MT_RE.exec(name); if(!m) return false; const nm=m[2].toUpperCase(); mt32[nm]=data; mtSave(nm,data); return true; }
             const NUM_RE=/^(.*?)(\d+)(\D*)$/;
             // 같은 폴더에서 이름의 마지막 숫자만 다른 이미지 묶음(Disk1.img, Disk2.img ...)을 번호순으로 반환
             function diskSet(p){
@@ -1796,6 +1812,13 @@
                 }
             };
 
+            cmds.mt32=function(a){
+                const have=Object.keys(mt32);
+                if(a[0]&&/^(clear|reset|off)$/i.test(a[0])){ return mtClear().then(()=>out('MT-32 ROMs removed from this browser.','ok')); }
+                out(have.length?'MT-32 ROMs: '+have.join(', '):'No MT-32 ROMs loaded. UPLOAD MT32_CONTROL.ROM + MT32_PCM.ROM (or the zip that contains them).', have.length?'cyan':'yellow');
+                out(mtSet()?'Ready. Applied automatically on RUN (TUNE midi=none disables). In-game: Core Options > MIDI > MT-32, and choose Roland MT-32 in the game setup.':'Not usable yet: both CONTROL and PCM ROM of the same family are needed.', mtSet()?'ok':'err');
+                out('MT32 CLEAR  removes the stored ROMs.');
+            };
             cmds.tune=function(a){
                 const show=()=>{
                     try{ const c=JSON.parse(loadSetting('calib')||'null'); if(c){ const e=effective(c);
@@ -1809,7 +1832,7 @@
                     out('TUNE rate=11025|22050|44100|48000  block=1024|2048|4096  pre=10..500  worker=on|off','hi');
                     out('TUNE arcade=auto|fba|cps1|cps2|neogeo|fbneo|mame   (core for arcade ROM .zip files; auto = tries compatible cores one by one and remembers the one that works)','hi');
                     out('TUNE plain=on   (DOSBox defaults only: no cpu/mixer/sound overrides - closest to dos.zone)','hi');
-                    out('TUNE midi=default|none  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
+                    out('TUNE midi=default|none (none = do not use MT-32 ROMs)  sb=sb16|sbpro2|sb1|none  opl=auto|opl2|opl3|none  oplemu=default|compat|fast|mame|nuked  core=auto|normal|dynamic|simple','hi');
                     out('TUNE CALIBRATE (re-measure this device)   TUNE RESET (back to auto)   [applies on next RUN]','hi');
                     return;
                 }
@@ -2122,6 +2145,7 @@
                 const gd=(top&&GAME_DEFAULTS[top.toLowerCase()])||{};
                 const snd={};
                 for(const k of ['sb','opl','oplemu']) snd[k]=(tune[k]!==TUNE_DEF[k])?tune[k]:(gd[k]||tune[k]);
+                await mtReady;
                 const prof=await calibrate(false), eff=effective(prof);
                 // 폴더별 프로필: 사용자가 TUNE 으로 직접 지정하지 않은(auto) 항목만 게임 전용 값으로 덮어씀
                 for(const k of ['cpu','cycles']) if(tune[k]==='auto' && gd[k]) eff[k]=gd[k];
@@ -2144,7 +2168,7 @@ blocksize=${eff.block}
 prebuffer=${eff.pre}
 [midi]
 mpu401=intelligent
-mididevice=${tune.midi}
+mididevice=${(tune.midi!=='none'&&mtSet())?'mt32':tune.midi}
 [sblaster]
 sbtype=${snd.sb}
 sbbase=220
@@ -2212,12 +2236,16 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         const bf=files.get(bk);
                         if(bf){ window.__arcBios=bf.d; out('  BIOS: neogeo.zip','yellow'); }
                     }
+                    window.__mt32=(!isArcade && tune.midi!=='none') ? mtSet() : null;
+                    window.__mt32msg=m=>out('  '+m,'cyan');
+                    if(window.__mt32) out('MT-32 ROMs found: '+Object.keys(window.__mt32).join(', '),'cyan');
                     window.__arcLog=[];
                     if(isArcade) out('Arcade ROM: '+romName+'  core='+emuCore,'cyan');
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+((exitWatch||isArcade)?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
                         // 아케이드: 코어가 찍는 로그를 부모 쪽에 모아 둔다 (롬을 못 열었을 때 원인을 알려주고 다음 코어로 넘어가기 위함)
                         +(isArcade?'(function(){var L=parent.__arcLog;if(!L)return;["log","info","warn","error"].forEach(function(k){var o=console[k];console[k]=function(){try{L.push(Array.prototype.slice.call(arguments).join(" "));if(L.length>300)L.shift();}catch(e){}return o.apply(console,arguments);};});})();':'')
                         +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+(isArcade&&window.__arcBios?'EJS_biosUrl=new File([parent.__arcBios],"neogeo.zip",{type:"application/zip"});':'')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
+                        +(!isArcade?'EJS_onGameStart=function(){try{var R=parent.__mt32;if(!R)return;var em=EJS_emulator,FS=em.gameManager.FS,D=["/home/web_user/retroarch/system","/home/web_user/retroarch/userdata/system","/system","/home/web_user/retroarch/saves"],ok=[];D.forEach(function(d){try{if(!FS.analyzePath(d).exists)FS.mkdir(d);}catch(e){}Object.keys(R).forEach(function(n){try{FS.writeFile(d+"/"+n,R[n]);ok.push(d);}catch(e){}});});Object.keys(R).forEach(function(n){try{FS.writeFile("/"+n,R[n]);}catch(e){}});try{em.gameManager.restart();}catch(e){}parent.__mt32msg&&parent.__mt32msg("MT-32 ROM written to virtual system folder ("+ok.length+" copies). Pick MT-32 in Core Options > MIDI.");}catch(e){parent.__mt32msg&&parent.__mt32msg("MT-32 setup failed: "+(e&&e.message||e));}};':'')
                         +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(touchDev&&!isArcade?"EJS_defaultOptions={'virtual-gamepad':'disabled'};":'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
                     const EM={
@@ -2456,6 +2484,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         try {
                             const z = await JSZip.loadAsync(f);
                             const ents = Object.values(z.files).filter(e => !e.dir && !/^__MACOSX\/|(^|\/)\.DS_Store$/.test(e.name));
+                            const mtEnts = ents.filter(e => MT_RE.test(e.name));
+                            if (mtEnts.length) {
+                                for (const e of mtEnts) { mtTake(e.name, await e.async('uint8array')); out('  ' + e.name.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++; }
+                                out(mtSet() ? '  MT-32 ready. It is used automatically on the next RUN.' : '  Need both *_CONTROL.ROM and *_PCM.ROM.', mtSet() ? 'cyan' : 'yellow');
+                                if (mtEnts.length === ents.length) continue;
+                            }
                             if (isRomZip(ents)) {
                                 const tp = pre + f.name;
                                 addFile(tp, new Uint8Array(await f.arrayBuffer()));
@@ -2482,6 +2516,12 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         let finalPath = item.path;
                         if (rootFolderToStrip && finalPath.startsWith(rootFolderToStrip + '/')) {
                             finalPath = finalPath.slice(rootFolderToStrip.length + 1);
+                        }
+                        if (MT_RE.test(finalPath)) {
+                            mtTake(finalPath, new Uint8Array(await item.file.arrayBuffer()));
+                            out('  ' + finalPath.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++;
+                            if (mtSet()) out('  MT-32 ready. It is used automatically on the next RUN.', 'cyan');
+                            continue;
                         }
                         const targetPath = pre + finalPath;
                         addFile(targetPath, new Uint8Array(await item.file.arrayBuffer()));
