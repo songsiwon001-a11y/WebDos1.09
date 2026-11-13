@@ -443,7 +443,7 @@
                     TYPE: "TYPE filename - Displays text file contents.",
                     LOAD: "LOAD A-Z [-v] [-f] - Loads files from a GitHub folder (a-z except c). Saved locally after the first download; -f re-downloads.",
                     CACHE: "CACHE [CLEAR [letter]] - Lists or clears folders saved in this browser (no re-download).",
-                    SAVES: "SAVES [CLEAR [path]] - Lists or deletes saved game progress (auto-saved on END, resumed on next RUN).",
+                    SAVES: "SAVES [CLEAR [path]] - Lists or deletes saved game data (files the game wrote; auto-saved on END, restored on next RUN).",
                     VFS: "VFS [CLEAR] - Shows or clears the virtual disk saved in this browser (uploads, edits, current folder).",
                     MT32: "MT32 ON|OFF|CLEAR - ON loads the MT-32 ROM zip next to this page and enables MT-32; OFF restores defaults.",
                     UPLOAD: "UPLOAD [-f] - Uploads files or directory zip.",
@@ -1902,7 +1902,7 @@
                     oplemu:v=>/^(default|compat|fast|mame|nuked)$/i.test(v),
                     core:v=>/^(auto|normal|dynamic|simple)$/i.test(v),
                     plain:v=>/^(on|off)$/i.test(v),
-                    resume:v=>/^(on|off)$/i.test(v)
+                    resume:v=>/^(on|off|state)$/i.test(v)
                 };
                 for(const t of a){
                     const m=/^(\w+)=(\S+)$/.exec(t);
@@ -2157,7 +2157,7 @@
             // ===== 게임 진행 저장 / 이어하기 (EmulatorJS 세이브 스테이트를 브라우저 IndexedDB 에 게임별로 저장) =====
             // 종료(END/EXIT)·탭 이탈 시 자동 저장, 다음 RUN 때 자동으로 이어서 시작 (TUNE resume=off 로 끔). SAVE / LOAD 버튼으로 수동 저장·불러오기.
             const bl=(en,kr)=>currentLang==='kr'?kr:en;
-            let curGameId=null;
+            let curGameId=null, curIsData=false, lastLaunch=null;   // curIsData: DOS 게임 → 에뮬레이터 스냅샷 대신 '게임이 만든 파일(세이브/설정/점수)'을 저장
             const svDB=()=>new Promise((ok,no)=>{ try{ const r=indexedDB.open('webdos-saves',1); r.onupgradeneeded=()=>r.result.createObjectStore('g',{keyPath:'id'}); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } });
             const svReq=(mode,fn)=>svDB().then(db=>new Promise((ok,no)=>{ const tx=db.transaction('g',mode); const rq=fn(tx.objectStore('g')); tx.oncomplete=()=>{ ok(rq&&rq.result); db.close(); }; tx.onerror=tx.onabort=()=>{ no(tx.error); db.close(); }; }));
             const svGet=async id=>{ try{ const v=await svReq('readonly',s=>s.get(id)); return v&&v.state&&v.state.length?v:null; }catch(e){ return null; } };
@@ -2190,10 +2190,66 @@
                     return true;
                 }catch(e){ out('  '+bl('Load failed: ','불러오기 실패: ')+(e&&e.message||e),'err'); return false; }
             }
+
+            // ===== 게임 데이터 저장 (DOS) =====
+            // 스냅샷(그 순간으로 되감기)이 아니라, 게임이 디스크에 쓴 파일(세이브·설정·점수 등)만 꺼내서 저장하고,
+            // 다음 RUN 때 게임 파일 위에 그대로 덮어 넣어서 시작한다. 게임 안의 '이어하기/불러오기'를 그대로 쓸 수 있다.
+            const dtDB=()=>new Promise((ok,no)=>{ try{ const r=indexedDB.open('webdos-gamedata',1); r.onupgradeneeded=()=>r.result.createObjectStore('d',{keyPath:'id'}); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } });
+            const dtReq=(mode,fn)=>dtDB().then(db=>new Promise((ok,no)=>{ const tx=db.transaction('d',mode); const rq=fn(tx.objectStore('d')); tx.oncomplete=()=>{ ok(rq&&rq.result); db.close(); }; tx.onerror=tx.onabort=()=>{ no(tx.error); db.close(); }; }));
+            const dtGet=async id=>{ try{ const v=await dtReq('readonly',s=>s.get(id)); return v&&v.data&&v.data.length?v:null; }catch(e){ return null; } };
+            async function saveData(auto){
+                const gm=getGM(), id=curGameId;
+                if(!gm||!id||!curStart) return false;
+                try{
+                    let raw=null;
+                    for(const f of [()=>gm.getSaveFile(true),()=>gm.getSaveFile()]){ try{ const r=await f(); if(r&&r.length){ raw=r; break; } }catch(e){} }
+                    const none=()=>{ if(!auto) out('  '+bl('No game data changes to save yet.','아직 저장할 게임 데이터 변경이 없습니다.'),'yellow'); return false; };
+                    if(!raw) return none();
+                    const nu=new Uint8Array(raw);
+                    if(nu[0]!==0x50||nu[1]!==0x4B) throw new Error('unexpected save format');
+                    const ns=await JSZip.loadAsync(nu);
+                    const names=Object.keys(ns.files).filter(n=>!ns.files[n].dir);
+                    if(!names.length) return none();
+                    const old=await dtGet(id);
+                    let merged=ns;
+                    if(old){   // 이전에 저장한 데이터 위에 이번 변경분을 합친다 (같은 파일이면 새 것이 이긴다)
+                        merged=await JSZip.loadAsync(old.data);
+                        const low=new Map(); merged.forEach(pth=>low.set(pth.toLowerCase(),pth));
+                        for(const n of names){
+                            const k=n.toLowerCase(); if(low.has(k)) merged.remove(low.get(k));
+                            merged.file(n, await ns.file(n).async('uint8array'), {binary:true});
+                        }
+                    }
+                    const data=await merged.generateAsync({type:'uint8array',compression:'DEFLATE'});
+                    const cnt=merged.file(/./).length;
+                    await dtReq('readwrite',s=>s.put({id,t:Date.now(),data,n:cnt}));
+                    try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+                    out('  '+bl(auto?'Game data saved automatically':'Game data saved','게임 데이터를 '+(auto?'자동 ':'')+'저장했습니다')+' ('+cnt+bl(' file(s), ',' 파일, ')+(data.length/1024).toFixed(0)+' KB)','ok');
+                    return true;
+                }catch(e){ out('  '+bl('Game data save failed: ','게임 데이터 저장 실패: ')+(e&&e.message||e),'err'); return false; }
+            }
+            // 실행 직전: 저장해 둔 게임 데이터를 게임 zip 위에 덮어 넣는다
+            async function overlayData(zip,id){
+                const rec=await dtGet(id); if(!rec) return 0;
+                const sv=await JSZip.loadAsync(rec.data);
+                const low=new Map(); zip.forEach(pth=>low.set(pth.toLowerCase(),pth));
+                let n=0;
+                for(const [name,ent] of Object.entries(sv.files)){
+                    if(ent.dir) continue;
+                    const k=name.toLowerCase(); if(k==='dosbox.conf'||k==='wdexit.com') continue;
+                    const buf=await ent.async('uint8array');
+                    if(low.has(k)) zip.remove(low.get(k));
+                    zip.file(name,buf,{binary:true}); n++;
+                }
+                if(n) out('  '+bl('Restored saved game data ','저장된 게임 데이터를 불러왔습니다 ')+'('+n+bl(' file(s), ',' 파일, ')+new Date(rec.t).toLocaleString()+')','cyan');
+                return n;
+            }
+            const persistGame=auto=>curIsData?saveData(auto):saveGame(auto);
+
             // 게임이 시작된 뒤 저장된 진행 상황이 있으면 자동으로 이어서 시작
             async function autoResume(fr){
                 curStart=Date.now();
-                if(tune.resume==='off'||!curGameId) return;
+                if(tune.resume==='off'||!curGameId||curIsData) return;
                 const id=curGameId;
                 const rec=await svGet(id);
                 if(!rec) return;
@@ -2205,27 +2261,28 @@
                 return (async()=>{
                     const sub=(a[0]||'').toLowerCase();
                     if(sub==='clear'||sub==='del'||sub==='delete'){
-                        const q=a.slice(1).join(' ').trim().toLowerCase();
+                        const q=a.slice(1).join(' ').trim().toLowerCase().replace(/\\/g,'/');
                         try{
-                            if(!q) await svReq('readwrite',s=>s.clear());
-                            else await svReq('readwrite',s=>s.delete(q.replace(/\\/g,'/')));
+                            if(!q){ await svReq('readwrite',s=>s.clear()); await dtReq('readwrite',s=>s.clear()); }
+                            else { await svReq('readwrite',s=>s.delete(q)); await dtReq('readwrite',s=>s.delete(q)); }
                         }catch(e){ return out('Error: '+(e&&e.message||e),'err'); }
                         return out(bl(q?'Saved progress deleted.':'All saved progress deleted.',q?'저장된 진행 상황을 삭제했습니다.':'저장된 모든 진행 상황을 삭제했습니다.'),'ok');
                     }
-                    let all=[]; try{ all=(await svReq('readonly',s=>s.getAll()))||[]; }catch(e){}
-                    if(!all.length) return out(bl('No saved progress yet. (Progress is saved when you END a game, or with the SAVE button.)','저장된 진행 상황이 없습니다. (게임을 END 로 종료하거나 SAVE 버튼을 누르면 저장됩니다)'),'yellow');
+                    let all=[], dat=[]; try{ all=(await svReq('readonly',s=>s.getAll()))||[]; }catch(e){} try{ dat=(await dtReq('readonly',s=>s.getAll()))||[]; }catch(e){}
+                    if(!all.length&&!dat.length) return out(bl('No saved progress yet. (Game data is saved when you END a game, or with the SAVE button.)','저장된 진행 상황이 없습니다. (게임을 END 로 종료하거나 SAVE 버튼을 누르면 저장됩니다)'),'yellow');
                     out(bl('--- Saved game progress ---','--- 저장된 게임 진행 상황 ---'),'cyan');
-                    for(const v of all.sort((x,y)=>x.id<y.id?-1:1)) out('  '+v.id.replace(/\//g,'\\').toUpperCase()+'   '+(v.state.length/1048576).toFixed(1)+' MB   '+new Date(v.t).toLocaleString(),'ok');
-                    out(bl('  SAVES CLEAR [path]  delete   |   TUNE resume=off  disable auto-resume','  SAVES CLEAR [경로]  삭제   |   TUNE resume=off  자동 이어하기 끄기'));
+                    for(const v of dat.sort((x,y)=>x.id<y.id?-1:1)) out('  [DATA]  '+v.id.replace(/\//g,'\\').toUpperCase()+'   '+(v.n||'?')+bl(' file(s)  ',' 파일  ')+(v.data.length/1024).toFixed(0)+' KB   '+new Date(v.t).toLocaleString(),'ok');
+                    for(const v of all.sort((x,y)=>x.id<y.id?-1:1)) out('  [STATE] '+v.id.replace(/\//g,'\\').toUpperCase()+'   '+(v.state.length/1048576).toFixed(1)+' MB   '+new Date(v.t).toLocaleString(),'ok');
+                    out(bl('  SAVES CLEAR [path]  delete   |   TUNE resume=off  do not restore   |   TUNE resume=state  DOS uses snapshots instead','  SAVES CLEAR [경로]  삭제   |   TUNE resume=off  불러오지 않음   |   TUNE resume=state  DOS 도 스냅샷 방식 사용'));
                 })();
             };
             // 탭을 닫거나 다른 탭으로 넘어갈 때 자동 저장 (모바일에서 앱을 내려도 보존)
-            document.addEventListener('visibilitychange',()=>{ if(document.hidden && $('game').style.display==='block' && curGameId) saveGame(true); });
-            window.addEventListener('pagehide',()=>{ if($('game').style.display==='block' && curGameId) saveGame(true); });
+            document.addEventListener('visibilitychange',()=>{ if(document.hidden && $('game').style.display==='block' && curGameId) persistGame(true); });
+            window.addEventListener('pagehide',()=>{ if($('game').style.display==='block' && curGameId) persistGame(true); });
             $('sv').onmousedown=e=>e.preventDefault();
             $('ld').onmousedown=e=>e.preventDefault();
-            $('sv').onclick=async()=>{ await saveGame(false); refocusGame(); };
-            $('ld').onclick=async()=>{ await loadGame(false); refocusGame(); };
+            $('sv').onclick=async()=>{ await persistGame(false); refocusGame(); };
+            $('ld').onclick=async()=>{ if(curIsData&&lastLaunch){ const L=lastLaunch; await stopGame({noSave:true}); await launch(L.path,L.set); return; } await loadGame(false); refocusGame(); };   // DOS: 저장된 게임 데이터로 게임을 다시 시작
 
             async function launch(path, set){
                 try{ await ensureDos(); }catch(e){
@@ -2254,6 +2311,7 @@
                 const dirp=inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')).replace(/\//g,'\\'):'';
                 const mb=sel.reduce((n,v)=>n+v.d.length,0)/1048576;
                 const isImg=IMG_RE.test(inner);
+                curIsData=!isArcade&&!isImg&&tune.resume!=='state'; lastLaunch={path,set};
                 const dosPath=base(inner);
                 const q=p=>'"'+rel(p).replace(/\//g,'\\')+'"';
                 let pre='mount c .\nc:\n', runLine=dosPath, useCd=true, tail='', exitWatch=false;
@@ -2339,6 +2397,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     else {
                     const zip=new JSZip();
                     for(const v of sel) zip.file(rel(v.p), v.d, {binary:true});
+                    if(curIsData && tune.resume!=='off'){ try{ await overlayData(zip,curGameId); }catch(e){ out('  Game data restore failed: '+(e&&e.message||e),'err'); } }
                     zip.file('dosbox.conf', confFinal);
                     if(mtUse) for(const k of Object.keys(mtUse)) zip.file(k, mtUse[k], {binary:true});
                     // 게임이 끝나면 autoexec 의 다음 줄에서 실행되는 신호용 프로그램: 화면 전체를 마젠타(255,0,255)로 채우고 대기한다.
@@ -2383,7 +2442,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     const buildHtml=()=>'<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#game{width:100vw;height:100vh}</style></head><body><div id="game"></div><script>'+((exitWatch||isArcade)?'(function(){var g=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t,a){if(t&&/webgl/i.test(String(t)))a=Object.assign({},a||{},{preserveDrawingBuffer:true});return g.call(this,t,a);};})();':'')
                         // 아케이드: 코어가 찍는 로그를 부모 쪽에 모아 둔다 (롬을 못 열었을 때 원인을 알려주고 다음 코어로 넘어가기 위함)
                         +((isArcade||mtUse)?'(function(){var L=parent.__arcLog;if(!L)return;["log","info","warn","error"].forEach(function(k){var o=console[k];console[k]=function(){try{L.push(Array.prototype.slice.call(arguments).join(" "));if(L.length>300)L.shift();}catch(e){}return o.apply(console,arguments);};});})();':'')
-                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+(isArcade&&window.__arcBios?'EJS_biosUrl=new File([parent.__arcBios],"neogeo.zip",{type:"application/zip"});':'')+'EJS_gameName='+JSON.stringify(isArcade?romName:'game')+';'
+                        +'EJS_player="#game";EJS_core='+JSON.stringify(emuCore)+';EJS_pathtodata='+JSON.stringify(EJS_DATA)+';'+(isArcade?'EJS_gameUrl=new File([parent.__arcRom],'+JSON.stringify(romName+'.zip')+',{type:"application/zip"});':'EJS_gameUrl='+JSON.stringify(bundleURL)+';')+(isArcade&&window.__arcBios?'EJS_biosUrl=new File([parent.__arcBios],"neogeo.zip",{type:"application/zip"});':'')+'EJS_gameName='+JSON.stringify(isArcade?romName:('g_'+curGameId.replace(/[^a-z0-9]+/g,'_').slice(0,60)))+';'
                         +(!isArcade?'(function(){var R=parent.__mt32;if(!R)return;var t=setInterval(function(){var em=window.EJS_emulator;if(!em||!em.startGame)return;clearInterval(t);var o=em.startGame;em.startGame=function(){var n=0,err="";try{var FS=(em.Module&&em.Module.FS)||(em.gameManager&&em.gameManager.FS);if(!FS)throw new Error("FS not ready");var D=["/home/web_user/retroarch/system","/home/web_user/retroarch/userdata/system","/system",""];D.forEach(function(d){try{if(d&&!FS.analyzePath(d).exists){var q="";d.split("/").filter(Boolean).forEach(function(x){q+="/"+x;try{FS.mkdir(q);}catch(e){}});}}catch(e){}Object.keys(R).forEach(function(k){try{FS.writeFile(d+"/"+k,R[k]);n++;}catch(e){}});});}catch(e){err=e&&e.message||String(e);}try{parent.__mt32msg&&parent.__mt32msg(err?"MT-32 ROM install failed: "+err:"MT-32 ROM installed before core start ("+n+" copies). Core Options > MIDI > MT-32.");}catch(e){}var r=o.apply(this,arguments);setTimeout(function(){try{var c=em.gameManager.getCoreOptions();var l=String(c).split("\\n").filter(function(x){return x.indexOf("dosbox_pure_midi")>=0;})[0];parent.__mt32msg&&parent.__mt32msg("midi option: "+(l||"(not found)"));}catch(e){parent.__mt32msg&&parent.__mt32msg("core options unavailable: "+(e&&e.message||e));}},5000);setTimeout(function(){try{var L=parent.__arcLog||[];var f=L.filter(function(x){return /mt-?32|munt|midi|\\.rom|soundfont|control|pcm/i.test(x);}).slice(-12);parent.__mt32msg&&parent.__mt32msg(f.length?"core log:":"core log: (no MIDI/MT-32 lines; "+L.length+" lines total)");f.forEach(function(x){parent.__mt32msg&&parent.__mt32msg("  "+String(x).slice(0,180));});}catch(e){}},9000);return r;};},5);})();':'')
                         +'EJS_startOnLoaded=true;EJS_threads='+useThreads+';'+(isArcade?'EJS_defaultControls='+JSON.stringify(ARC_CONTROLS)+';':'')+(!isArcade&&(touchDev||midiOpt)?'EJS_defaultOptions='+JSON.stringify(Object.assign({},touchDev?{'virtual-gamepad':'disabled'}:{},midiOpt?{'dosbox_pure_midi':midiOpt}:{}))+';':'')+'EJS_language="en";EJS_volume='+vol+';EJS_color="#55ff55";'
                         +'<\/script><script src="'+EJS_DATA+'loader.js" onerror="window.__ejsFail=1"><\/script></body></html>';
@@ -2518,7 +2577,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         const d=x.getImageData(0,0,16,16).data; let m=0;
                         for(let i=0;i<d.length;i+=4) if(d[i]>235 && d[i+1]<20 && d[i+2]>235) m++;
                         hits = (m>=90) ? hits+1 : 0;          // 256칸 중 35% 이상이 마젠타
-                        if(hits>=2){ clearInterval(id); stopGame({noSave:true}); }   // 게임이 스스로 끝난 화면은 저장하지 않는다
+                        if(hits>=2){ clearInterval(id); stopGame({noSave:true,finished:true}); }   // 게임이 스스로 끝나면 스냅샷은 만들지 않지만, 게임이 쓴 데이터 파일은 저장한다
                     }catch(e){}
                 },100);
             }
@@ -2529,8 +2588,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 stopping=true; const endTop=gameTop; gameTop=null; launchSeq++; hideSplash(); hidePad();
                 try{
                     // 종료 직전에 진행 상황을 자동 저장 (END/EXIT 버튼). 게임이 스스로 끝났거나 에러로 닫힐 때는 저장하지 않는다.
-                    if(!(opts&&opts.noSave===true) && curGameId && getGM()){ try{ await saveGame(true); }catch(e){} }
-                    curGameId=null; curStart=0; $('sv').style.display='none'; $('ld').style.display='none';
+                    if(curGameId && getGM()){
+                        if(!(opts&&opts.noSave===true)){ try{ await persistGame(true); }catch(e){} }
+                        else if(opts&&opts.finished&&curIsData){ try{ await saveData(true); }catch(e){} }
+                    }
+                    curGameId=null; curIsData=false; curStart=0; $('sv').style.display='none'; $('ld').style.display='none';
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
                     closeAudio();
                     $('dos').innerHTML=''; player=null; curCI=null; gameFrame=null; padRemap=null; kbRemap=null; $('game').style.display='none'; $('sw').style.display='none'; diskCount=0; diskIdx=1;
