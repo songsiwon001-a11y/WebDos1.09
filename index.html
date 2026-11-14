@@ -2256,20 +2256,21 @@
                         find('/',0);
                         if(!root) diag.push('diff: game folder not found');
                         else{
-                            const IGN=/^(dosbox\.conf|wdexit\.com|dosbox\.run)$/i;
+                            const IGN=/^(dosbox\.conf|wdexit\.com|dosbox\.run|retroarch.*\.cfg|.*\.(state|srm|opt|pure\.zip))$/i;
+                            const SYSDIR=/^(home|data|tmp|proc|dev|sys|etc|usr|bin|lib|lib64|var|mnt|run|root|boot|opt|srv|system|saves|states|shaders|assets|bundle)$/i;   // 게임 폴더가 '/' 일 때 에뮬레이터 내부 폴더는 건너뛴다
                             const changed=[]; let total=0;
                             const same=(a,b)=>{ if(a.length!==b.length) return false; if(a.length>262144) return true; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; };
                             const scan=(d,relp,depth)=>{ if(depth>8) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
-                                for(const n of ents){ if(n==='.'||n==='..') continue; const pth=d+'/'+n, rp=relp?relp+'/'+n:n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
-                                    if(FS.isDir(st.mode)){ scan(pth,rp,depth+1); continue; }
-                                    if(IGN.test(n)||/\.pure\.zip$/i.test(n)) continue;
+                                for(const n of ents){ if(n==='.'||n==='..') continue; const pth=(d==='/'?'':d)+'/'+n, rp=relp?relp+'/'+n:n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
+                                    if(FS.isDir(st.mode)){ if(depth===0&&root==='/'&&SYSDIR.test(n)) continue; scan(pth,rp,depth+1); continue; }
+                                    if(IGN.test(n)) continue;
                                     total++;
                                     const o=orig.get(rp.toLowerCase());
                                     if(o&&o.length===st.size&&st.size>262144) continue;   // 큰 파일은 크기만 비교
-                                    let b; try{ b=FS.readFile(pth); }catch(e){ continue; }
+                                    let b; try{ b=new Uint8Array(FS.readFile(pth)); }catch(e){ continue; }
                                     if(!o||!same(o,b)) changed.push({rp,b}); } };
                             scan(root,'',0);
-                            diag.push('diff: root='+root+' files='+total+' changed='+changed.length);
+                            diag.push('diff: root='+root+' files='+total+' changed='+changed.length+(changed.length?' ('+changed.slice(0,6).map(c=>c.rp).join(', ')+')':''));
                             if(changed.length){
                                 const z=new JSZip(); for(const c of changed) z.file(c.rp,c.b,{binary:true});
                                 return {bytes:await z.generateAsync({type:'uint8array',compression:'DEFLATE'}),diag};
