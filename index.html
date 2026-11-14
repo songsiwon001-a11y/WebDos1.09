@@ -2228,7 +2228,7 @@
                 if(!gm||!id||!curStart) return false;
                 try{
                     const g=await grabSaveZip(gm);
-                    const none=()=>{ if(!auto){ sOut('  '+bl('No game data changes to save yet.','아직 저장할 게임 데이터 변경이 없습니다.'),'yellow'); sOut('  [diag] '+g.diag.join(' | '),'yellow'); } return false; };
+                    const none=()=>{ sOut('  '+bl('No game data changes to save.','저장할 게임 데이터 변경이 없습니다.'),'yellow'); sOut('  [diag] '+g.diag.join(' | '),'yellow'); return false; };   // 종료할 때도 이유가 보이도록 auto 여부와 관계없이 출력 (1분 주기 저장만 조용히)
                     if(!g.bytes) return none();
                     const nu=g.bytes;
                     const ns=await JSZip.loadAsync(nu);
