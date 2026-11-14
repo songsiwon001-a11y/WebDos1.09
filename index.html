@@ -2202,6 +2202,7 @@
             const dtGet=async id=>{ try{ const v=await dtReq('readonly',s=>s.get(id)); return v&&v.data&&v.data.length?v:null; }catch(e){ return null; } };
             // 에뮬레이터에서 '게임이 디스크에 쓴 변경분'(DOSBox Pure 의 .save = zip)을 꺼낸다. 여러 경로를 순서대로 시도하고, 실패하면 이유(diag)를 돌려준다.
             // flush=true(게임을 끝낼 때만): DOSBox Pure 는 콘텐츠를 닫을 때 저장 파일을 쓰는 경우가 있어서, 먼저 에뮬레이터 종료를 요청한다.
+            const logSave=m=>{ try{ const a=JSON.parse(loadSetting('savelog')||'[]'); a.push(new Date().toLocaleString()+'  '+m); while(a.length>16) a.shift(); saveSetting('savelog',JSON.stringify(a)); }catch(e){} };
             const saveSkip=new Set();   // 이미 확인한 '게임 번들' 같은 파일은 다시 읽지 않는다
             async function grabSaveZip(gm,flush){
                 const diag=[]; const isZip=b=>b&&b.length>=4&&b[0]===0x50&&b[1]===0x4B;
@@ -2283,7 +2284,7 @@
                 if(!gm||!id||!curStart) return false;
                 try{
                     const g=await grabSaveZip(gm,flush);
-                    const none=()=>{ sOut('  '+bl('No game data changes to save.','저장할 게임 데이터 변경이 없습니다.'),'yellow'); sOut('  [diag] '+g.diag.join(' | '),'yellow'); return false; };   // 종료할 때도 이유가 보이도록 auto 여부와 관계없이 출력 (1분 주기 저장만 조용히)
+                    const none=()=>{ if(!saveQuiet) logSave('SAVE '+id+' : nothing found | '+g.diag.join(' | ')); sOut('  '+bl('No game data changes to save.','저장할 게임 데이터 변경이 없습니다.'),'yellow'); sOut('  [diag] '+g.diag.join(' | '),'yellow'); return false; };   // 종료할 때도 이유가 보이도록 auto 여부와 관계없이 출력 (1분 주기 저장만 조용히)
                     if(!g.bytes) return none();
                     const nu=g.bytes;
                     const ns=await JSZip.loadAsync(nu);
@@ -2303,13 +2304,14 @@
                     const cnt=merged.file(/./).length;
                     await dtReq('readwrite',s=>s.put({id,t:Date.now(),data,n:cnt}));
                     try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+                    logSave('SAVE '+id+' : OK '+cnt+' file(s) '+(data.length/1024).toFixed(0)+' KB : '+names.slice(0,6).join(', ')+' | '+g.diag.join(' | '));
                     sOut('  '+bl(auto?'Game data saved automatically':'Game data saved','게임 데이터를 '+(auto?'자동 ':'')+'저장했습니다')+' ('+cnt+bl(' file(s), ',' 파일, ')+(data.length/1024).toFixed(0)+' KB): '+names.slice(0,4).join(', ')+(names.length>4?' …':''),'ok');
                     return true;
-                }catch(e){ sOut('  '+bl('Game data save failed: ','게임 데이터 저장 실패: ')+(e&&e.message||e),'err'); return false; }
+                }catch(e){ logSave('SAVE '+id+' : ERROR '+(e&&e.message||e)); sOut('  '+bl('Game data save failed: ','게임 데이터 저장 실패: ')+(e&&e.message||e),'err'); return false; }
             }
             // 실행 직전: 저장해 둔 게임 데이터를 게임 zip 위에 덮어 넣는다
             async function overlayData(zip,id,orig){
-                const rec=await dtGet(id); if(!rec) return 0;
+                const rec=await dtGet(id); if(!rec){ logSave('RESTORE '+id+' : no saved data'); return 0; }
                 const sv=await JSZip.loadAsync(rec.data);
                 const low=new Map(); zip.forEach(pth=>low.set(pth.toLowerCase(),pth));
                 let n=0;
@@ -2321,6 +2323,7 @@
                     if(low.has(k)) zip.remove(low.get(k));
                     zip.file(name,buf,{binary:true}); n++;
                 }
+                logSave('RESTORE '+id+' : '+n+' file(s) applied : '+Object.keys(sv.files).filter(x=>!sv.files[x].dir).slice(0,6).join(', '));
                 if(n) out('  '+bl('Restored saved game data ','저장된 게임 데이터를 불러왔습니다 ')+'('+n+bl(' file(s), ',' 파일, ')+new Date(rec.t).toLocaleString()+')','cyan');
                 return n;
             }
@@ -2348,12 +2351,19 @@
                         }catch(e){ return out('Error: '+(e&&e.message||e),'err'); }
                         return out(bl(q?'Saved progress deleted.':'All saved progress deleted.',q?'저장된 진행 상황을 삭제했습니다.':'저장된 모든 진행 상황을 삭제했습니다.'),'ok');
                     }
+                    if(sub==='log'){
+                        let a=[]; try{ a=JSON.parse(loadSetting('savelog')||'[]'); }catch(e){}
+                        if(!a.length) return out(bl('No save log yet.','저장 기록이 아직 없습니다.'),'yellow');
+                        out(bl('--- Recent save/restore log ---','--- 최근 저장/복원 기록 ---'),'cyan');
+                        for(const l of a) out('  '+l);
+                        return;
+                    }
                     let all=[], dat=[]; try{ all=(await svReq('readonly',s=>s.getAll()))||[]; }catch(e){} try{ dat=(await dtReq('readonly',s=>s.getAll()))||[]; }catch(e){}
                     if(!all.length&&!dat.length) return out(bl('No saved progress yet. (Game data is saved automatically when you END a game or the game exits.)','저장된 진행 상황이 없습니다. (게임을 END 로 종료하거나 게임이 끝나면 자동 저장됩니다)'),'yellow');
                     out(bl('--- Saved game progress ---','--- 저장된 게임 진행 상황 ---'),'cyan');
                     for(const v of dat.sort((x,y)=>x.id<y.id?-1:1)) out('  [DATA]  '+v.id.replace(/\//g,'\\').toUpperCase()+'   '+(v.n||'?')+bl(' file(s)  ',' 파일  ')+(v.data.length/1024).toFixed(0)+' KB   '+new Date(v.t).toLocaleString(),'ok');
                     for(const v of all.sort((x,y)=>x.id<y.id?-1:1)) out('  [STATE] '+v.id.replace(/\//g,'\\').toUpperCase()+'   '+(v.state.length/1048576).toFixed(1)+' MB   '+new Date(v.t).toLocaleString(),'ok');
-                    out(bl('  SAVES CLEAR [path]  delete   |   TUNE resume=off  do not restore   |   TUNE resume=state  DOS uses snapshots instead','  SAVES CLEAR [경로]  삭제   |   TUNE resume=off  불러오지 않음   |   TUNE resume=state  DOS 도 스냅샷 방식 사용'));
+                    out(bl('  SAVES LOG  recent save/restore log   |   SAVES CLEAR [path]  delete   |   TUNE resume=off  do not restore   |   TUNE resume=state  DOS uses snapshots instead','  SAVES LOG  저장/복원 기록   |   SAVES CLEAR [경로]  삭제   |   TUNE resume=off  불러오지 않음   |   TUNE resume=state  DOS 도 스냅샷 방식 사용'));
                 })();
             };
             // 탭을 닫거나 다른 탭으로 넘어갈 때 자동 저장 (모바일에서 앱을 내려도 보존)
