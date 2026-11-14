@@ -2201,33 +2201,88 @@
             const dtReq=(mode,fn)=>dtDB().then(db=>new Promise((ok,no)=>{ const tx=db.transaction('d',mode); const rq=fn(tx.objectStore('d')); tx.oncomplete=()=>{ ok(rq&&rq.result); db.close(); }; tx.onerror=tx.onabort=()=>{ no(tx.error); db.close(); }; }));
             const dtGet=async id=>{ try{ const v=await dtReq('readonly',s=>s.get(id)); return v&&v.data&&v.data.length?v:null; }catch(e){ return null; } };
             // 에뮬레이터에서 '게임이 디스크에 쓴 변경분'(DOSBox Pure 의 .save = zip)을 꺼낸다. 여러 경로를 순서대로 시도하고, 실패하면 이유(diag)를 돌려준다.
-            async function grabSaveZip(gm){
+            // flush=true(게임을 끝낼 때만): DOSBox Pure 는 콘텐츠를 닫을 때 저장 파일을 쓰는 경우가 있어서, 먼저 에뮬레이터 종료를 요청한다.
+            const saveSkip=new Set();   // 이미 확인한 '게임 번들' 같은 파일은 다시 읽지 않는다
+            async function grabSaveZip(gm,flush){
                 const diag=[]; const isZip=b=>b&&b.length>=4&&b[0]===0x50&&b[1]===0x4B;
                 const ejs=(()=>{ try{ return gameFrame.contentWindow.EJS_emulator; }catch(e){ return null; } })();
                 const FS=gm.FS||(ejs&&ejs.Module&&ejs.Module.FS)||null;
                 diag.push('getSaveFile='+typeof gm.getSaveFile+' FS='+(FS?'ok':'none'));
-                try{ if(typeof gm.saveSaveFiles==='function') await gm.saveSaveFiles(); }catch(e){ diag.push('saveSaveFiles: '+(e&&e.message||e)); }
-                // 1) 공식 경로
-                for(const f of [()=>gm.getSaveFile(true),()=>gm.getSaveFile(false),()=>gm.getSaveFile()]){
-                    try{ const r=await f(); if(r&&r.length){ const b=new Uint8Array(r); if(isZip(b)) return {bytes:b,diag}; diag.push('getSaveFile: '+b.length+' bytes, header '+[...b.slice(0,4)].map(x=>x.toString(16)).join(' ')+' (not zip)'); break; } else diag.push('getSaveFile: empty'); }catch(e){ diag.push('getSaveFile: '+(e&&e.message||e)); }
+                if(flush){
+                    try{
+                        const q=(gm.functions&&typeof gm.functions.quit==='function')?()=>gm.functions.quit():(typeof gm.quit==='function'?()=>gm.quit():null);
+                        diag.push('quit='+(q?'yes':'none'));
+                        if(q){ q(); await sleep(600); }
+                    }catch(e){ diag.push('quit: '+(e&&e.message||e)); }
                 }
-                // 2) 파일 시스템에서 *.srm / *.sav / *.save 를 직접 찾는다
+                try{ if(typeof gm.saveSaveFiles==='function') await gm.saveSaveFiles(); }catch(e){}
+                // 1) 공식 경로 (.srm)
+                for(const f of [()=>gm.getSaveFile(true),()=>gm.getSaveFile(false)]){
+                    try{ const r=await f(); if(r&&r.length){ const b=new Uint8Array(r); if(isZip(b)) return {bytes:b,diag}; diag.push('getSaveFile: '+b.length+' bytes, not zip'); break; } else { diag.push('getSaveFile: empty'); break; } }catch(e){ diag.push('getSaveFile: '+(e&&e.message||e)); break; }
+                }
+                // 2) 파일 시스템에서 저장 파일처럼 보이는 *.srm / *.sav / *.save / *.zip 을 찾는다 (게임 번들 zip 은 dosbox.conf 가 들어 있으므로 제외)
                 if(FS){
-                    const found=[];
-                    const walk=(d,depth)=>{ if(depth>5) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
+                    const found=[]; let nfiles=0;
+                    const SKIP=/\/(bundle|shaders?|autoconfig|assets|overlays|cores|cheats|database|info|thumbnails|playlists|states|screenshots)(\/|$)/i;
+                    const LIKE=/\.(srm|sav|save|zip)$/i;
+                    const walk=(d,depth)=>{ if(depth>6||SKIP.test(d)) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
                         for(const n of ents){ if(n==='.'||n==='..') continue; const pth=(d==='/'?'':d)+'/'+n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
-                            if(FS.isDir(st.mode)) walk(pth,depth+1); else if(/\.(srm|sav|save)$/i.test(n)) found.push({pth,size:st.size}); } };
-                    ['/data','/home/web_user/retroarch/userdata','/home/web_user'].forEach(r=>walk(r,0));
-                    diag.push('fs: '+(found.length?found.map(f=>f.pth+' ('+f.size+')').join(', '):'no save files'));
-                    for(const f of found.sort((a,b)=>b.size-a.size)){ try{ const b=new Uint8Array(FS.readFile(f.pth)); if(isZip(b)) return {bytes:b,diag}; }catch(e){} }
+                            if(FS.isDir(st.mode)) walk(pth,depth+1); else { nfiles++; if(LIKE.test(n)) found.push({pth,size:st.size}); } } };
+                    ['/data','/home','/saves','/tmp'].forEach(r=>walk(r,0));
+                    try{ for(const n of FS.readdir('/')){ if(n==='.'||n==='..') continue; const pth='/'+n; let st; try{ st=FS.stat(pth); }catch(e){ continue; } if(!FS.isDir(st.mode)&&LIKE.test(n)) found.push({pth,size:st.size}); } }catch(e){}
+                    diag.push('fs: '+(found.length?found.map(f=>f.pth+' ('+f.size+')').join(', '):'no save-like files')+' ['+nfiles+' files]');
+                    for(const f of found.sort((a,b)=>b.size-a.size)){
+                        const key=f.pth+':'+f.size; if(saveSkip.has(key)) continue;
+                        let b; try{ b=new Uint8Array(FS.readFile(f.pth)); }catch(e){ continue; }
+                        if(!isZip(b)){ saveSkip.add(key); continue; }
+                        try{
+                            const z=await JSZip.loadAsync(b);
+                            if(Object.keys(z.files).some(n=>/^dosbox\.conf$/i.test(n))){ saveSkip.add(key); diag.push(f.pth+' = game bundle'); continue; }
+                            return {bytes:b,diag};
+                        }catch(e){ saveSkip.add(key); }
+                    }
+                }
+                // 3) EmulatorJS 가 zip 을 풀어서 넘기면 DOSBox Pure 가 .pure.zip 을 만들지 않는다 (게임이 쓴 파일이 에뮬레이터 파일 시스템에 그대로 생김).
+                //    이때는 번들의 원본과 비교해서 바뀌거나 새로 생긴 파일만 모은다.
+                const orig=window.__bundleOrig;
+                if(FS&&orig){
+                    try{
+                        const NOSCAN=/^\/(proc|dev|sys)(\/|$)|\/(bundle|shaders?|autoconfig|assets|overlays|cores|cheats|database|info|thumbnails|playlists|states|screenshots)(\/|$)/i;
+                        let root=null;
+                        const find=(d,depth)=>{ if(root||depth>7||NOSCAN.test(d)) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
+                            for(const n of ents){ if(root) return; if(n==='.'||n==='..') continue; const pth=(d==='/'?'':d)+'/'+n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
+                                if(FS.isDir(st.mode)) find(pth,depth+1); else if(/^dosbox\.conf$/i.test(n)){ root=d; return; } } };
+                        find('/',0);
+                        if(!root) diag.push('diff: game folder not found');
+                        else{
+                            const IGN=/^(dosbox\.conf|wdexit\.com|dosbox\.run)$/i;
+                            const changed=[]; let total=0;
+                            const same=(a,b)=>{ if(a.length!==b.length) return false; if(a.length>262144) return true; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; };
+                            const scan=(d,relp,depth)=>{ if(depth>8) return; let ents; try{ ents=FS.readdir(d); }catch(e){ return; }
+                                for(const n of ents){ if(n==='.'||n==='..') continue; const pth=d+'/'+n, rp=relp?relp+'/'+n:n; let st; try{ st=FS.stat(pth); }catch(e){ continue; }
+                                    if(FS.isDir(st.mode)){ scan(pth,rp,depth+1); continue; }
+                                    if(IGN.test(n)||/\.pure\.zip$/i.test(n)) continue;
+                                    total++;
+                                    const o=orig.get(rp.toLowerCase());
+                                    if(o&&o.length===st.size&&st.size>262144) continue;   // 큰 파일은 크기만 비교
+                                    let b; try{ b=FS.readFile(pth); }catch(e){ continue; }
+                                    if(!o||!same(o,b)) changed.push({rp,b}); } };
+                            scan(root,'',0);
+                            diag.push('diff: root='+root+' files='+total+' changed='+changed.length);
+                            if(changed.length){
+                                const z=new JSZip(); for(const c of changed) z.file(c.rp,c.b,{binary:true});
+                                return {bytes:await z.generateAsync({type:'uint8array',compression:'DEFLATE'}),diag};
+                            }
+                        }
+                    }catch(e){ diag.push('diff: '+(e&&e.message||e)); }
                 }
                 return {bytes:null,diag};
             }
-            async function saveData(auto){
+            async function saveData(auto,flush){
                 const gm=getGM(), id=curGameId;
                 if(!gm||!id||!curStart) return false;
                 try{
-                    const g=await grabSaveZip(gm);
+                    const g=await grabSaveZip(gm,flush);
                     const none=()=>{ sOut('  '+bl('No game data changes to save.','저장할 게임 데이터 변경이 없습니다.'),'yellow'); sOut('  [diag] '+g.diag.join(' | '),'yellow'); return false; };   // 종료할 때도 이유가 보이도록 auto 여부와 관계없이 출력 (1분 주기 저장만 조용히)
                     if(!g.bytes) return none();
                     const nu=g.bytes;
@@ -2253,22 +2308,23 @@
                 }catch(e){ sOut('  '+bl('Game data save failed: ','게임 데이터 저장 실패: ')+(e&&e.message||e),'err'); return false; }
             }
             // 실행 직전: 저장해 둔 게임 데이터를 게임 zip 위에 덮어 넣는다
-            async function overlayData(zip,id){
+            async function overlayData(zip,id,orig){
                 const rec=await dtGet(id); if(!rec) return 0;
                 const sv=await JSZip.loadAsync(rec.data);
                 const low=new Map(); zip.forEach(pth=>low.set(pth.toLowerCase(),pth));
                 let n=0;
                 for(const [name,ent] of Object.entries(sv.files)){
                     if(ent.dir) continue;
-                    const k=name.toLowerCase(); if(k==='dosbox.conf'||k==='wdexit.com') continue;
+                    const k=name.toLowerCase(); if(k==='dosbox.conf'||k==='wdexit.com'||k==='dosbox.run') continue;
                     const buf=await ent.async('uint8array');
+                    if(orig) orig.set(k,buf);
                     if(low.has(k)) zip.remove(low.get(k));
                     zip.file(name,buf,{binary:true}); n++;
                 }
                 if(n) out('  '+bl('Restored saved game data ','저장된 게임 데이터를 불러왔습니다 ')+'('+n+bl(' file(s), ',' 파일, ')+new Date(rec.t).toLocaleString()+')','cyan');
                 return n;
             }
-            const persistGame=auto=>curIsData?saveData(auto):saveGame(auto);
+            const persistGame=(auto,flush)=>curIsData?saveData(auto,flush):saveGame(auto);
 
             // 게임이 시작된 뒤 저장된 진행 상황이 있으면 자동으로 이어서 시작
             async function autoResume(fr){
@@ -2422,10 +2478,11 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                     if(isArcade){ blob=new Blob([files.get(path.toLowerCase()).d],{type:'application/zip'}); }
                     else {
                     const zip=new JSZip();
-                    for(const v of sel) zip.file(rel(v.p), v.d, {binary:true});
-                    if(curIsData && tune.resume!=='off'){ try{ await overlayData(zip,curGameId); }catch(e){ out('  Game data restore failed: '+(e&&e.message||e),'err'); } }
+                    const orig=new Map(); window.__bundleOrig=orig;   // 번들에 넣은 원본 파일들 (게임이 바꾼 파일을 찾을 때 비교용)
+                    for(const v of sel){ zip.file(rel(v.p), v.d, {binary:true}); orig.set(rel(v.p).toLowerCase(), v.d); }
+                    if(curIsData && tune.resume!=='off'){ try{ await overlayData(zip,curGameId,orig); }catch(e){ out('  Game data restore failed: '+(e&&e.message||e),'err'); } }
                     zip.file('dosbox.conf', confFinal);
-                    if(mtUse) for(const k of Object.keys(mtUse)) zip.file(k, mtUse[k], {binary:true});
+                    if(mtUse) for(const k of Object.keys(mtUse)){ zip.file(k, mtUse[k], {binary:true}); orig.set(k.toLowerCase(), mtUse[k]); }
                     // 게임이 끝나면 autoexec 의 다음 줄에서 실행되는 신호용 프로그램: 화면 전체를 마젠타(255,0,255)로 채우고 대기한다.
                     // (게임 내 '종료'로 DOSBox Pure 시작 메뉴로 빠지지 않고, WEB-DOS 가 이 화면을 감지해 홈으로 돌아온다)
                     if(exitWatch) zip.file('WDEXIT.COM', new Uint8Array([0xB8,0x13,0x00,0xCD,0x10,0xBA,0xC8,0x03,0x30,0xC0,0xEE,0x42,0xB0,0x3F,0xEE,0x30,0xC0,0xEE,0xB0,0x3F,0xEE,0xFB,0xF4,0xEB,0xFD]), {binary:true});
@@ -2615,8 +2672,8 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                 try{
                     // 종료 직전에 진행 상황을 자동 저장 (END/EXIT 버튼). 게임이 스스로 끝났거나 에러로 닫힐 때는 저장하지 않는다.
                     if(curGameId && getGM()){
-                        if(!(opts&&opts.noSave===true)){ try{ await persistGame(true); }catch(e){} }
-                        else if(opts&&opts.finished&&curIsData){ try{ await saveData(true); }catch(e){} }
+                        if(!(opts&&opts.noSave===true)){ try{ await persistGame(true,true); }catch(e){} }
+                        else if(opts&&opts.finished&&curIsData){ try{ await saveData(true,true); }catch(e){} }
                     }
                     curGameId=null; curIsData=false; curStart=0; 
                     try{ if(player && typeof player.stop === 'function') await player.stop(); }catch(e){}
