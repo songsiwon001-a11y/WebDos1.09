@@ -68,7 +68,7 @@ html.is-mobile .wrap{display:none}
 </script>
 <div class="wrap">
   <main>
-    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="hint">⚙ 설정 버튼에서 게임 파일을 불러오고 실행하세요</div></div>
+    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="hint">화면을 클릭하고 명령어를 입력하세요 (HELP) · ⚙ 설정에서 게임 파일 불러오기</div></div>
   </main>
   <aside id="settings">
     <div class="head"><h1>DOS 에뮬레이터<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1><button id="settingsClose">닫기 ✕</button></div>
@@ -112,8 +112,8 @@ html.is-mobile .wrap{display:none}
     <div class="card">
       <h2>세이브 데이터</h2>
       <div class="dim" id="saveInfo">…</div>
-      <div class="bar"><button id="clearSaves">저장 데이터 삭제</button></div>
-      <div class="dim" style="margin-top:6px">게임이 만든/수정한 파일(세이브, 설정)은 이 브라우저에 자동 보관되고 다음 실행 때 복원됩니다.</div>
+      <div class="bar"><button id="clearSaves">진행상황만 삭제</button><button id="clearAll">모두 삭제</button></div>
+      <div class="dim" style="margin-top:6px">불러온 게임 파일과 게임이 만든/수정한 파일(세이브, 설정)은 이 브라우저에 보관됩니다. 프로그램이 끝날 때(중지·창 닫기 포함) 저장되고, 다시 열면 그대로 이어서 할 수 있어요.</div>
     </div>
     <div class="card">
       <h2>지원 범위</h2>
@@ -1839,7 +1839,12 @@ function make83(name, dir) {
   return up.slice(0, 8);
 }
 class VFS {
-  constructor() { this.root = new VNode('', true, null); this.dirty = new Set(); }
+  constructor() { this.root = new VNode('', true, null); this.dirty = new Set(); this.deleted = new Set(); }
+  realPath(n) { const a = []; while (n && n.parent) { a.unshift(n.name); n = n.parent; } return a.join('\\'); }
+  attached(n) { while (n && n.parent) { if (n.parent.children.get(n.name.toUpperCase()) !== n) return false; n = n.parent; } return true; }
+  tomb(n) { this.deleted.add(this.realPath(n) + (n.isDir ? '\\' : '')); this.dirty.delete(n); }
+  tombTree(n) { if (n.isDir) for (const c of n.children.values()) this.tombTree(c); this.tomb(n); }
+  touchTree(n) { this.dirty.add(n); if (n.isDir) for (const c of n.children.values()) this.touchTree(c); }
   childOf(dir, name) {
     const u = name.toUpperCase();
     return dir.children.get(u) || dir.aliases.get(u) || null;
@@ -2350,15 +2355,15 @@ class DOS {
       case 0x36: this.setAX(32); this.setReg16(3, 0x7FFF); this.setReg16(1, 512); this.setReg16(2, 0x7FFF); return;
       case 0x37: if (al === 0) { this.setAL(0); this.setReg16(2, 0x2F); } return;
       case 0x38: if (al === 0) { for (let i = 0; i < 34; i++) this.mem[(this.DS() << 4) + this.DX() + i] = 0; this.mem[(this.DS() << 4) + this.DX() + 2] = 0x24; this.setReg16(3, 1); this.ok(); } return;
-      case 0x39: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); if (!sp) return this.err(3); if (this.vfs.childOf(sp.dir, sp.name)) return this.err(5); this.vfs.add(sp.dir, sp.name, true); this.ok(); return; }
-      case 0x3A: { const n = this.lookup(this.rdz(this.DS(), this.DX())); if (!n || !n.isDir) return this.err(3); if (n.children.size) return this.err(5); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias); this.ok(); return; }
+      case 0x39: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); if (!sp) return this.err(3); if (this.vfs.childOf(sp.dir, sp.name)) return this.err(5); this.vfs.dirty.add(this.vfs.add(sp.dir, sp.name, true)); this.ok(); return; }
+      case 0x3A: { const n = this.lookup(this.rdz(this.DS(), this.DX())); if (!n || !n.isDir) return this.err(3); if (n.children.size) return this.err(5); this.vfs.tomb(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias); this.ok(); return; }
       case 0x3B: { const p = this.parsePath(this.rdz(this.DS(), this.DX())); const n = this.vfs.walk(p.parts); if (!n || !n.isDir) return this.err(3); this.cwd = this.resolveParts(n); this.ok(); return; }
       case 0x3C: case 0x5B: return this.createFile(ah === 0x5B);
       case 0x3D: return this.openFile();
       case 0x3E: { const h = this.BX(); if (h < 5) return this.ok(); const f = this.files.get(h); if (!f) return this.err(6); this.files.delete(h); this.ok(); return; }
       case 0x3F: return this.readFile();
       case 0x40: return this.writeFile();
-      case 0x41: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); const n = sp && this.vfs.childOf(sp.dir, sp.name); if (!n || n.isDir) return this.err(2); sp.dir.children.delete(n.name.toUpperCase()); sp.dir.aliases.delete(n.alias); this.vfs.dirty.add(n.name); this.ok(); return; }
+      case 0x41: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); const n = sp && this.vfs.childOf(sp.dir, sp.name); if (!n || n.isDir) return this.err(2); sp.dir.children.delete(n.name.toUpperCase()); sp.dir.aliases.delete(n.alias); this.vfs.tomb(n); this.ok(); return; }
       case 0x42: return this.seekFile();
       case 0x43: { const n = this.lookup(this.rdz(this.DS(), this.DX())); if (!n) return this.err(2); if (al === 0) { this.setReg16(1, n.attr); this.ok(); } else this.ok(); return; }
       case 0x44: return this.ioctl();
@@ -2377,7 +2382,7 @@ class DOS {
       case 0x51: case 0x62: this.setReg16(3, this.curPSP); return;
       case 0x52: c.setSeg(0, 0x0060); this.setReg16(3, 0); return;
       case 0x54: this.setAL(0); return;
-      case 0x56: { const a = this.splitParent(this.rdz(this.DS(), this.DX())); const n = a && this.vfs.childOf(a.dir, a.name); const b = this.splitParent(this.rdz(this.ES(), this.DI())); if (!n || !b) return this.err(2); a.dir.children.delete(n.name.toUpperCase()); a.dir.aliases.delete(n.alias); n.name = b.name; n.parent = b.dir; b.dir.children.set(b.name.toUpperCase(), n); n.alias = make83(b.name, b.dir); if (n.alias !== b.name.toUpperCase()) b.dir.aliases.set(n.alias, n); this.ok(); return; }
+      case 0x56: { const a = this.splitParent(this.rdz(this.DS(), this.DX())); const n = a && this.vfs.childOf(a.dir, a.name); const b = this.splitParent(this.rdz(this.ES(), this.DI())); if (!n || !b) return this.err(2); this.vfs.tombTree(n); a.dir.children.delete(n.name.toUpperCase()); a.dir.aliases.delete(n.alias); n.name = b.name; n.parent = b.dir; b.dir.children.set(b.name.toUpperCase(), n); n.alias = make83(b.name, b.dir); if (n.alias !== b.name.toUpperCase()) b.dir.aliases.set(n.alias, n); this.vfs.touchTree(n); this.ok(); return; }
       case 0x57: { const f = this.files.get(this.BX()); if (!f || !f.node) return this.err(6); if (al === 0) { this.setReg16(1, this.dosTime(f.node.mtime)); this.setReg16(2, this.dosDate(f.node.mtime)); } this.ok(); return; }
       case 0x58: if (al === 0) this.setAX(0); else if (al === 2) this.setAL(0); this.ok(); return;
       case 0x5D: case 0x5E: case 0x5F: this.miss('INT21 AH=' + ah.toString(16) + ' (미구현)'); return this.err(1);
@@ -2748,6 +2753,380 @@ class Machine {
  *  Browser UI: file loading (files / folders / drag&drop / ZIP), canvas, audio,
  *  keyboard, mouse (pointer lock), CP437 font generation, save persistence
  * =========================================================================== */
+/* ===========================================================================
+ *  Shell: COMMAND.COM 대신 쓰는 간단한 DOS 명령 처리기 (JS로 직접 구현)
+ *  - DIR CD MD RD DEL COPY REN MOVE TYPE CLS ECHO SET PATH VER DATE TIME MEM VOL HELP PAUSE CALL
+ *  - 프로그램 이름(.EXE/.COM/.BAT)을 치면 실행, 끝나면 프롬프트로 복귀
+ * =========================================================================== */
+const SHELL_CMDS = {
+  DIR: 'dir', CD: 'cd', CHDIR: 'cd', MD: 'md', MKDIR: 'md', RD: 'rd', RMDIR: 'rd', DEL: 'del', ERASE: 'del',
+  COPY: 'copy', REN: 'ren', RENAME: 'ren', MOVE: 'move', TYPE: 'type', CLS: 'cls', ECHO: 'echo', SET: 'set',
+  PATH: 'path', VER: 'ver', DATE: 'date', TIME: 'time', MEM: 'mem', VOL: 'vol', HELP: 'help', EXIT: 'exit',
+  PAUSE: 'pause', REM: 'rem', CALL: 'call', LH: 'call', LOADHIGH: 'call', TREE: 'tree', IF: 'unsup', GOTO: 'unsup', FOR: 'unsup',
+};
+class Shell {
+  constructor(machine, hooks) {
+    this.m = machine; this.dos = machine.dos; this.vfs = machine.dos.vfs; this.h = hooks;
+    this.line = ''; this.hist = []; this.hpos = 0; this.queue = [];
+    this.waiting = false; this.paused = false; this.echo = true; this.booted = false; this.cap = null;
+  }
+  /* ---------------- output ---------------- */
+  out(s) {
+    if (this.cap) { this.cap.push(s); return; }
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c === 10) { this.dos.teletype(13); this.dos.teletype(10); } else if (c !== 13) this.dos.teletype(c > 255 ? 63 : c);
+    }
+  }
+  say(s = '') { this.out(s + '\n'); }
+  col() { return this.dos.curPos()[0]; }
+  pathStr() { return 'C:\\' + this.dos.cwd.join('\\'); }
+  prompt() { this.out(this.pathStr() + '>'); }
+
+  /* ---------------- life cycle ---------------- */
+  reinit() { const cwd = this.dos.cwd.slice(); this.dos.initBIOS(); this.dos.cwd = cwd; this.m.resetDevices(); }
+  boot() {
+    this.restoreMeta(); this.reinit();
+    this.say('WEB DOS Emulator [Version 6.22]'); this.say('Type HELP for a list of commands.'); this.say();
+    this.booted = true; this.step();
+  }
+  step() {
+    while (!this.waiting && !this.paused && this.queue.length) { const q = this.queue.shift(); this.execOne(q.text, q.bat); }
+    if (!this.waiting && !this.paused && !this.queue.length) { this.echo = true; this.prompt(); }
+  }
+  notice(msg) {
+    if (!this.booted || this.waiting) return;
+    if (this.col() !== 0) this.out('\n');
+    this.say(msg); if (!this.paused) { this.prompt(); this.out(this.line); }
+  }
+  persist() {
+    try { localStorage.setItem('dosemu.meta', JSON.stringify({ cwd: this.dos.cwd, hist: this.hist.slice(-100), env: this.dos.env })); } catch (e) { }
+  }
+  restoreMeta() {
+    try {
+      const o = JSON.parse(localStorage.getItem('dosemu.meta') || 'null'); if (!o) return;
+      if (Array.isArray(o.hist)) this.hist = o.hist.filter(x => typeof x === 'string').slice(-100);
+      if (o.env && typeof o.env === 'object') for (const k of Object.keys(o.env)) if (typeof o.env[k] === 'string') this.dos.env[k] = o.env[k];
+      if (Array.isArray(o.cwd)) { const n = this.vfs.walk(o.cwd); if (n && n.isDir) this.dos.cwd = this.dos.resolveParts(n); }
+    } catch (e) { }
+  }
+  launch(node, tail) {
+    this.waiting = true; this.line = '';
+    try { this.h.launch(node, tail); } catch (e) { this.waiting = false; this.say('Cannot run program: ' + e.message); }
+  }
+  runFromUI(node, tail) {
+    this.queue = []; this.paused = false;
+    if (!this.waiting) { if (this.col() !== 0) this.out('\n'); this.line = ''; this.dos.cwd = this.dos.resolveParts(node.parent); this.prompt(); this.say(node.alias + tail); }
+    else this.dos.cwd = this.dos.resolveParts(node.parent);
+    this.launch(node, tail);
+    if (!this.waiting) this.step();
+  }
+  programExited(err) {
+    this.waiting = false; this.h.flush();
+    const v = this.m.vga, g = v.geometry();
+    if (!(g.text && v.mode === 3)) this.reinit(); else { this.m.resetDevices(); if (this.col() !== 0) this.out('\n'); }
+    // 프로그램이 폴더를 바꿨을 수 있으니 유효성 확인
+    const n = this.vfs.walk(this.dos.cwd); if (!n || !n.isDir) this.dos.cwd = [];
+    if (err) this.say('Program terminated abnormally. (see the settings panel for details)');
+    this.persist(); this.step();
+  }
+
+  /* ---------------- keyboard ---------------- */
+  eraseOne() {
+    let [c, r] = this.dos.curPos();
+    if (c > 0) c--; else if (r > 0) { r--; c = this.dos.cols() - 1; }
+    this.dos.tput(c, r, 0x20, -1); this.dos.setCurPos(c, r);
+  }
+  setLine(s) { while (this.line.length) { this.line = this.line.slice(0, -1); this.eraseOne(); } this.line = s; this.out(s); }
+  key(e) {
+    if (this.waiting) return false;
+    const k = e.key;
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      if (e.ctrlKey && !e.altKey && (k === 'c' || k === 'C')) { this.line = ''; this.queue = []; this.paused = false; this.say('^C'); this.step(); return true; }
+      return false;
+    }
+    if (this.paused) { if (k === 'Shift' || k === 'Control' || k === 'Alt') return true; this.paused = false; this.out('\n'); this.step(); return true; }
+    if (k === 'Enter') { const l = this.line; this.line = ''; this.out('\n'); this.submit(l); return true; }
+    if (k === 'Backspace') { if (this.line.length) { this.line = this.line.slice(0, -1); this.eraseOne(); } return true; }
+    if (k === 'Escape') { this.setLine(''); return true; }
+    if (k === 'ArrowUp') { if (this.hpos > 0) { this.hpos--; this.setLine(this.hist[this.hpos] || ''); } return true; }
+    if (k === 'ArrowDown') { if (this.hpos < this.hist.length) { this.hpos++; this.setLine(this.hist[this.hpos] || ''); } return true; }
+    if (k === 'Tab') { this.complete(); return true; }
+    if (k.length === 1) { const c = k.charCodeAt(0); if (c >= 32 && c < 127 && this.line.length < 126) { this.line += k; this.out(k); } return true; }
+    return false;
+  }
+  complete() {
+    const m = /(\S*)$/.exec(this.line), word = m ? m[1] : ''; const cut = Math.max(word.lastIndexOf('\\'), word.lastIndexOf(':'));
+    const dirPart = word.slice(0, cut + 1), pre = word.slice(cut + 1).toUpperCase();
+    const dir = this.vfs.walk(this.dos.parsePath(dirPart || '.').parts); if (!dir || !dir.isDir) return;
+    const hit = this.vfs.list(dir).filter(n => n.alias.startsWith(pre)).sort((a, b) => a.alias < b.alias ? -1 : 1);
+    if (!hit.length) return;
+    const add = hit[0].alias.slice(pre.length) + (hit[0].isDir ? '\\' : '');
+    for (const ch of add) { this.line += ch; this.out(ch); }
+  }
+  submit(text) {
+    const t = text.trim();
+    if (t) { if (this.hist[this.hist.length - 1] !== t) this.hist.push(t); if (this.hist.length > 100) this.hist.shift(); }
+    this.hpos = this.hist.length;
+    this.queue.unshift({ text: t, bat: false }); this.step();
+  }
+
+  /* ---------------- command execution ---------------- */
+  execOne(text, bat) {
+    let t = text.trim(), quiet = false;
+    if (t[0] === '@') { quiet = true; t = t.slice(1).trim(); }
+    if (bat && this.echo && !quiet && t && t[0] !== ':') { this.prompt(); this.say(t); }
+    if (!t || t[0] === ':') return;
+    try { this.dispatch(t); } catch (e) { this.cap = null; this.say('Error: ' + e.message); }
+    this.h.flush(); this.persist();
+  }
+  dispatch(t) {
+    if (/^[A-Za-z]:$/.test(t)) { if (t[0].toUpperCase() !== 'C') this.say('Invalid drive specification'); return; }
+    const mm = /^([A-Za-z]+)(?=$|[\s\/\\.])/.exec(t);
+    const name = mm && SHELL_CMDS[mm[1].toUpperCase()] ? mm[1].toUpperCase() : '';
+    if (name) {
+      let rest = t.slice(mm[1].length), cap = null;
+      if (SHELL_CMDS[name] !== 'echo' || true) {
+        const rm = /^(.*?)\s*(>>?)\s*([^\s<>|]+)\s*$/.exec(rest);
+        if (rm) { rest = rm[1]; cap = { append: rm[2] === '>>', path: rm[3] }; }
+      }
+      if (cap) this.cap = [];
+      try { this['c_' + SHELL_CMDS[name]](rest, name); } finally {
+        if (cap) { const text = this.cap.join(''); this.cap = null; this.writeText(cap.path, text, cap.append); }
+      }
+      return;
+    }
+    const sp = t.search(/\s/), tok = sp < 0 ? t : t.slice(0, sp), tail = sp < 0 ? '' : t.slice(sp);
+    if (/^[<>|]/.test(tok)) { this.say('Bad command or file name'); return; }
+    const node = this.findExec(tok);
+    if (!node) { this.say('Bad command or file name'); return; }
+    if (/\.BAT$/i.test(node.name)) { this.runBat(node, tail.trim()); return; }
+    this.launch(node, tail);
+  }
+  findExec(tok) {
+    const hasExt = /\.[A-Za-z0-9]{1,3}$/.test(tok);
+    const names = hasExt ? [tok] : [tok + '.COM', tok + '.EXE', tok + '.BAT'];
+    const dirs = /[\\\/:]/.test(tok) ? [''] : ['', ...String(this.dos.env.PATH || '').split(';').filter(Boolean)];
+    for (const d of dirs) for (const n of names) {
+      const p = d ? d.replace(/\\?$/, '\\') + n : n; const node = this.dos.lookup(p);
+      if (node && !node.isDir && /\.(EXE|COM|BAT)$/i.test(node.name)) return node;
+    }
+    return null;
+  }
+  runBat(node, args) {
+    const text = new TextDecoder('latin1').decode(node.data.subarray(0, node.size));
+    const argv = [node.name, ...args.split(/\s+/).filter(Boolean)], env = this.dos.env;
+    const lines = text.split(/\r?\n/).map(l => l.replace(/%(\d)/g, (_, d) => argv[+d] || '').replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, v) => env[v.toUpperCase()] || ''));
+    this.queue.unshift(...lines.map(x => ({ text: x, bat: true })));
+  }
+  writeText(path, text, append) {
+    if (/^nul$/i.test(path)) return;
+    const sp = this.dos.splitParent(path); if (!sp) { this.say('Invalid path'); return; }
+    let n = this.vfs.childOf(sp.dir, sp.name); if (n && n.isDir) { this.say('Access denied'); return; }
+    const bytes = Uint8Array.from(text.replace(/\n/g, '\r\n'), c => c.charCodeAt(0) & 0xFF);
+    if (!n) n = this.vfs.add(sp.dir, sp.name, false);
+    if (append && n.size) { const o = new Uint8Array(n.size + bytes.length); o.set(n.data.subarray(0, n.size)); o.set(bytes, n.size); n.data = o; } else n.data = bytes;
+    n.size = n.data.length; n.mtime = new Date(); this.vfs.dirty.add(n);
+  }
+
+  /* ---------------- helpers ---------------- */
+  expand(tok, wantDirs) {
+    const parts = this.dos.parsePath(tok).parts, last = parts[parts.length - 1] || '';
+    if (!/[*?]/.test(last)) { const n = this.vfs.walk(parts); return n ? [n] : []; }
+    const dir = this.vfs.walk(parts.slice(0, -1)); if (!dir || !dir.isDir) return [];
+    let pat = last.toUpperCase(); if (!pat.includes('.')) pat += '.*';
+    return this.vfs.list(dir).filter(n => wildMatch(pat, n.alias) && (wantDirs || !n.isDir));
+  }
+  detach(n) { this.vfs.tomb(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias); }
+  moveNode(n, dir, name) {
+    this.vfs.tombTree(n);
+    n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias);
+    n.name = name; n.parent = dir; dir.children.set(name.toUpperCase(), n); n.alias = make83(name, dir);
+    if (n.alias !== name.toUpperCase()) dir.aliases.set(n.alias, n);
+    this.vfs.touchTree(n);
+  }
+  args(a) { return a.replace(/\/[A-Za-z]\b/g, ' ').trim().split(/\s+/).filter(Boolean); }
+  inCwd(n) { for (let x = this.vfs.walk(this.dos.cwd); x; x = x.parent) if (x === n) return true; return false; }
+  fmtDate(d) { const p = x => String(x).padStart(2, '0'); return `${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getFullYear() % 100)}`; }
+  fmtTime(d) { const h = d.getHours(), p = x => String(x).padStart(2, '0'); return `${String(h % 12 || 12).padStart(2, ' ')}:${p(d.getMinutes())}${h < 12 ? 'a' : 'p'}`; }
+  num(n) { return n.toLocaleString('en-US'); }
+
+  /* ---------------- built-in commands ---------------- */
+  c_dir(a) {
+    const wide = /\/w/i.test(a), bare = /\/b/i.test(a); a = a.replace(/\/[A-Za-z]\w*/g, ' ').trim();
+    let dir, pat = '*.*', showDots = true;
+    if (!a) dir = this.vfs.walk(this.dos.cwd);
+    else {
+      const parts = this.dos.parsePath(a).parts, n = this.vfs.walk(parts);
+      if (n && n.isDir) dir = n;
+      else {
+        dir = this.vfs.walk(parts.slice(0, -1)); pat = (parts[parts.length - 1] || '*.*').toUpperCase(); showDots = pat === '*.*';
+        if (!dir || !dir.isDir) { this.say('File not found'); return; }
+        if (!pat.includes('.') && /[*?]/.test(pat)) pat += '.*';
+      }
+    }
+    let list = this.vfs.list(dir).filter(n => wildMatch(pat, n.alias));
+    list.sort((x, y) => (x.isDir !== y.isDir ? (x.isDir ? -1 : 1) : (x.alias < y.alias ? -1 : x.alias > y.alias ? 1 : 0)));
+    const dp = this.dos.resolveParts(dir).join('\\');
+    if (!list.length) { if (!bare) { this.say(' Volume in drive C is WEBDOS'); this.say(' Directory of C:\\' + dp); this.say(); } this.say('File not found'); return; }
+    if (bare) { for (const n of list) this.say(n.alias); return; }
+    this.say(' Volume in drive C is WEBDOS'); this.say(' Directory of C:\\' + dp); this.say();
+    const split = al => { const i = al.lastIndexOf('.'); return i > 0 ? [al.slice(0, i), al.slice(i + 1)] : [al, '']; };
+    let files = 0, bytes = 0, dirs = 0;
+    if (wide) {
+      let row = '';
+      for (const n of list) { const s = n.isDir ? '[' + n.alias + ']' : n.alias; if (n.isDir) dirs++; else { files++; bytes += n.size; } row += s.padEnd(16); if (row.length >= 64) { this.say(row.trimEnd()); row = ''; } }
+      if (row) this.say(row.trimEnd());
+    } else {
+      if (dir.parent && showDots) { const d = this.fmtDate(dir.mtime) + '  ' + this.fmtTime(dir.mtime); this.say('.            <DIR>         ' + d); this.say('..           <DIR>         ' + d); dirs += 2; }
+      for (const n of list) {
+        const [b, e] = split(n.alias), d = this.fmtDate(n.mtime) + '  ' + this.fmtTime(n.mtime);
+        if (n.isDir) { dirs++; this.say(b.padEnd(8) + ' ' + e.padEnd(3) + '  <DIR>         ' + d); }
+        else { files++; bytes += n.size; this.say(b.padEnd(8) + ' ' + e.padEnd(3) + ' ' + this.num(n.size).padStart(13) + '  ' + d); }
+      }
+    }
+    this.say(String(files).padStart(9) + ' file(s) ' + this.num(bytes).padStart(14) + ' bytes');
+    this.say(String(dirs).padStart(9) + ' dir(s)  ' + this.num(1073741824).padStart(14) + ' bytes free');
+  }
+  c_cd(a) {
+    a = a.trim().replace(/^\/d\s*/i, '');
+    if (!a) { this.say(this.pathStr()); return; }
+    const n = this.vfs.walk(this.dos.parsePath(a).parts);
+    if (!n || !n.isDir) { this.say('Invalid directory'); return; }
+    this.dos.cwd = this.dos.resolveParts(n);
+  }
+  c_md(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const sp = this.dos.splitParent(tok); if (!sp || sp.name === '.' || sp.name === '..') { this.say('Unable to create directory'); continue; }
+      if (this.vfs.childOf(sp.dir, sp.name)) { this.say('A subdirectory or file ' + tok + ' already exists'); continue; }
+      this.vfs.dirty.add(this.vfs.add(sp.dir, sp.name, true));
+    }
+  }
+  c_rd(a) {
+    const rec = /\/s/i.test(a), l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const n = this.vfs.walk(this.dos.parsePath(tok).parts);
+      if (!n || !n.isDir || !n.parent) { this.say('Invalid path, not directory,'); this.say('or directory not empty'); continue; }
+      if (n.children.size && !rec) { this.say('Invalid path, not directory,'); this.say('or directory not empty'); continue; }
+      if (this.inCwd(n)) { this.say('Attempt to remove current directory - ' + tok); continue; }
+      this.vfs.tombTree(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias);
+    }
+  }
+  c_del(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      let nodes = this.expand(tok, true); if (!nodes.length) { this.say('File not found - ' + tok); continue; }
+      for (const n of nodes) {
+        if (n.isDir) { for (const c of [...n.children.values()]) if (!c.isDir) this.detach(c); } else this.detach(n);
+      }
+    }
+  }
+  c_copy(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    const srcs = this.expand(l[0], false).filter(n => !n.isDir);
+    if (!srcs.length) { this.say('File not found - ' + l[0]); return; }
+    const dst = l[1] || '.', dn = this.vfs.walk(this.dos.parsePath(dst).parts);
+    let count = 0;
+    for (const s of srcs) {
+      let dir, name;
+      if (dn && dn.isDir) { dir = dn; name = s.name; }
+      else { if (srcs.length > 1) { this.say('Cannot copy several files into one file'); break; } const sp = this.dos.splitParent(dst); if (!sp) { this.say('Path not found'); return; } dir = sp.dir; name = sp.name; }
+      let t = this.vfs.childOf(dir, name);
+      if (t === s) { this.say('File cannot be copied onto itself'); continue; }
+      if (t && t.isDir) { this.say('Access denied'); continue; }
+      const data = s.data.slice(0, s.size);
+      if (!t) t = this.vfs.add(dir, name, false);
+      t.data = data; t.size = data.length; t.mtime = new Date(); this.vfs.dirty.add(t); count++;
+    }
+    this.say(String(count).padStart(9) + ' file(s) copied');
+  }
+  c_ren(a) {
+    const l = this.args(a); if (l.length < 2) { this.say('Required parameter missing'); return; }
+    const n = this.vfs.walk(this.dos.parsePath(l[0]).parts);
+    if (!n || !n.parent) { this.say('File not found - ' + l[0]); return; }
+    if (/[\\:\/]/.test(l[1])) { this.say('Invalid parameter'); return; }
+    if (this.vfs.childOf(n.parent, l[1])) { this.say('Duplicate file name or file not found'); return; }
+    this.moveNode(n, n.parent, l[1]);
+  }
+  c_move(a) {
+    const l = this.args(a); if (l.length < 2) { this.say('Required parameter missing'); return; }
+    const srcs = this.expand(l[0], true).filter(n => n.parent);
+    if (!srcs.length) { this.say('File not found - ' + l[0]); return; }
+    const dn = this.vfs.walk(this.dos.parsePath(l[1]).parts); let count = 0;
+    for (const s of srcs) {
+      let dir, name;
+      if (dn && dn.isDir) { dir = dn; name = s.name; } else { if (srcs.length > 1) { this.say('Cannot move several files into one file'); break; } const sp = this.dos.splitParent(l[1]); if (!sp) { this.say('Path not found'); return; } dir = sp.dir; name = sp.name; }
+      if (this.vfs.childOf(dir, name)) { this.say('Cannot move - ' + name + ' already exists'); continue; }
+      for (let x = dir; x; x = x.parent) if (x === s) { this.say('Cannot move a directory into itself'); return; }
+      this.moveNode(s, dir, name); count++;
+    }
+    this.say(String(count).padStart(9) + ' file(s) moved');
+  }
+  c_type(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const n = this.dos.lookup(tok); if (!n || n.isDir) { this.say('File not found - ' + tok); continue; }
+      const d = n.data, lim = Math.min(n.size, 65536); let s = '';
+      for (let i = 0; i < lim; i++) { const b = d[i]; if (b === 13 || b === 0x1A) continue; s += b === 10 ? '\n' : String.fromCharCode(b); }
+      this.out(s); if (n.size > lim) this.say('\n[truncated: ' + this.num(n.size) + ' bytes]');
+      else if (s.length && !s.endsWith('\n')) this.out('\n');
+    }
+  }
+  c_cls() { const d = this.dos; if (this.cap) return; d.scroll(0, 0, d.rows() - 1, d.cols() - 1, 0, 7, true); d.setCurPos(0, 0); }
+  c_echo(a) {
+    if (/^[.:;,\/\\]/.test(a)) { this.say(a.slice(1)); return; }
+    const t = a.replace(/^\s/, '');
+    if (!a.trim()) { this.say('ECHO is ' + (this.echo ? 'on' : 'off')); return; }
+    if (/^off$/i.test(t.trim())) { this.echo = false; return; }
+    if (/^on$/i.test(t.trim())) { this.echo = true; return; }
+    this.say(t);
+  }
+  c_set(a) {
+    const t = a.trim(), env = this.dos.env;
+    if (!t) { for (const k of Object.keys(env)) this.say(k + '=' + env[k]); return; }
+    const i = t.indexOf('='); if (i < 0) { const k = t.toUpperCase(); if (k in env) this.say(k + '=' + env[k]); else this.say('Environment variable ' + k + ' not defined'); return; }
+    const k = t.slice(0, i).trim().toUpperCase(), v = t.slice(i + 1);
+    if (!k) { this.say('Syntax error'); return; } if (v === '') delete env[k]; else env[k] = v;
+  }
+  c_path(a) { const t = a.trim().replace(/^=/, ''); if (!t) { this.say('PATH=' + (this.dos.env.PATH || '')); return; } this.dos.env.PATH = t.replace(/^PATH=/i, ''); }
+  c_ver() { this.say(); this.say('Web DOS Emulator [Version 6.22]'); this.say(); }
+  c_date() { const d = new Date(); this.say('Current date is ' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + this.fmtDate(d).replace(/-(\d\d)$/, '-' + d.getFullYear())); }
+  c_time() { const d = new Date(), p = x => String(x).padStart(2, '0'); this.say('Current time is ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())); }
+  c_vol() { this.say(' Volume in drive C is WEBDOS'); }
+  c_mem() {
+    const a = this.dos.arena, free = (a.top - a.first) * 16;
+    this.say(); this.say(this.num(655360).padStart(10) + ' bytes total conventional memory'); this.say(this.num(free).padStart(10) + ' bytes available to programs'); this.say();
+  }
+  c_pause() { this.out('Press any key to continue . . .'); this.paused = true; }
+  c_rem() { }
+  c_call(a) { const t = a.trim(); if (t) this.dispatch(t); }
+  c_exit() { this.say('This is the top-level command interpreter. Close the browser tab to quit.'); }
+  c_unsup(a, name) { this.say(name + ' is not supported in this shell.'); }
+  c_tree() {
+    const walk = (dir, pre) => {
+      const ds = this.vfs.list(dir).filter(n => n.isDir).sort((x, y) => x.alias < y.alias ? -1 : 1);
+      ds.forEach((d, i) => { const last = i === ds.length - 1; this.say(pre + (last ? '\\---' : '+---') + d.alias); walk(d, pre + (last ? '    ' : '|   ')); });
+    };
+    const dir = this.vfs.walk(this.dos.cwd); this.say(this.pathStr()); walk(dir, '');
+  }
+  c_help() {
+    [
+      'DIR [path] [/W] [/B]     List files        CD [path]        Change directory',
+      'MD path                  Make directory    RD [/S] path     Remove directory',
+      'DEL file(s)              Delete files      COPY src [dst]   Copy files',
+      'REN old new              Rename            MOVE src dst     Move files/dirs',
+      'TYPE file                Show a text file  CLS              Clear the screen',
+      'ECHO text > file         Write a text file (also >> to append, > NUL to hide)',
+      'SET [VAR=value]          Environment       PATH [list]      Program search path',
+      'TREE  VER  DATE  TIME  MEM  VOL  PAUSE  CALL file.BAT',
+      '',
+      'Type a program name (GAME, GAME.EXE, SETUP...) to run it. Tab completes names;',
+      'Up/Down recall history. Files are saved when a program ends.',
+    ].forEach(l => this.say(l));
+  }
+}
+
 window.__startUI = function () {
   const $ = id => document.getElementById(id);
   const machine = new Machine();
@@ -2825,17 +3204,42 @@ window.__startUI = function () {
   /* ------------------------------ persistence (IndexedDB) ------------------------------ */
   const store = {
     db: null,
-    open() { return new Promise(res => { try { const rq = indexedDB.open('dosemu', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('files'); rq.onsuccess = () => { this.db = rq.result; res(true); }; rq.onerror = () => res(false); } catch (e) { res(false); } }); },
-    put(path, data) { if (!this.db) return; try { this.db.transaction('files', 'readwrite').objectStore('files').put(data, path); } catch (e) { } },
-    all() { return new Promise(res => { if (!this.db) return res([]); try { const out = []; const rq = this.db.transaction('files').objectStore('files').openCursor(); rq.onsuccess = () => { const c = rq.result; if (c) { out.push([c.key, c.value]); c.continue(); } else res(out); }; rq.onerror = () => res([]); } catch (e) { res([]); } }); },
-    clear() { if (!this.db) return; try { this.db.transaction('files', 'readwrite').objectStore('files').clear(); } catch (e) { } },
+    open() { return new Promise(res => { try { const rq = indexedDB.open('dosemu', 2); rq.onupgradeneeded = () => { const db = rq.result; for (const n of ['files', 'base']) if (!db.objectStoreNames.contains(n)) db.createObjectStore(n); }; rq.onsuccess = () => { this.db = rq.result; res(true); }; rq.onerror = () => res(false); rq.onblocked = () => res(false); } catch (e) { res(false); } }); },
+    put(path, data, st = 'files') { if (!this.db) return; try { this.db.transaction(st, 'readwrite').objectStore(st).put(data, path); } catch (e) { } },
+    del(path, st = 'files') { if (!this.db) return; try { this.db.transaction(st, 'readwrite').objectStore(st).delete(path); } catch (e) { } },
+    all(st = 'files') { return new Promise(res => { if (!this.db) return res([]); try { const out = []; const rq = this.db.transaction(st).objectStore(st).openCursor(); rq.onsuccess = () => { const c = rq.result; if (c) { out.push([c.key, c.value]); c.continue(); } else res(out); }; rq.onerror = () => res([]); } catch (e) { res([]); } }); },
+    clear(st) { return new Promise(res => { if (!this.db) return res(); try { const tx = this.db.transaction(st, 'readwrite'); tx.objectStore(st).clear(); tx.oncomplete = tx.onerror = tx.onabort = () => res(); } catch (e) { res(); } }); },
   };
+  // 프로그램이 끝날 때(중지·창 닫을 때 포함) 호출: 바뀐 파일/폴더/삭제를 브라우저에 저장
   function flushSaves() {
-    const vfs = machine.dos.vfs; if (!vfs.dirty.size) return;
-    for (const n of vfs.dirty) if (n && typeof n === 'object') store.put(vfs.fullPath(n), n.data.slice(0, n.size));
+    const vfs = machine.dos.vfs; if (!vfs.dirty.size && !vfs.deleted.size) return;
+    for (const k of vfs.deleted) { store.del(k, 'files'); store.del(k, 'base'); }
+    vfs.deleted.clear();
+    for (const n of vfs.dirty) {
+      if (!n || typeof n !== 'object' || !vfs.attached(n)) continue;
+      if (n.isDir) store.put(vfs.realPath(n) + '\\', new Uint8Array(0), 'files'); else store.put(vfs.realPath(n), n.data.slice(0, n.size), 'files');
+    }
     vfs.dirty.clear(); refreshSaves();
   }
-  async function refreshSaves() { const a = await store.all(); $('saveInfo').textContent = a.length ? `저장된 파일 ${a.length}개 (브라우저에 보관됨)` : '저장된 파일 없음'; }
+  async function applySaves() {
+    const vfs = machine.dos.vfs;
+    for (const [path, data] of await store.all('files')) {
+      const parts = path.split(/[\\/]/).filter(Boolean); if (!parts.length) continue;
+      if (/[\\/]$/.test(path)) { let d = vfs.root; for (const p of parts) d = vfs.childOf(d, p) || vfs.add(d, p, true); continue; }
+      const ex = vfs.walk(parts); if (!ex) vfs.addFile(path, data); else if (!ex.isDir) { ex.data = data; ex.size = data.length; }
+    }
+  }
+  async function restoreFromStore() {
+    const vfs = machine.dos.vfs;
+    for (const [path, data] of await store.all('base')) vfs.addFile(path, data);
+    await applySaves();
+  }
+  async function refreshSaves() {
+    const [b, f] = [await store.all('base'), await store.all('files')];
+    $('saveInfo').textContent = (b.length || f.length) ? `보관된 게임 파일 ${b.length}개 · 게임이 저장/수정한 파일·폴더 ${f.length}개 (이 브라우저에 보관됨)` : '보관된 데이터 없음';
+  }
+  window.addEventListener('pagehide', flushSaves);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
 
   /* ------------------------------ file loading ------------------------------ */
   let loaded = []; // {path, data}
@@ -2876,8 +3280,12 @@ window.__startUI = function () {
     }
     const hasDirs = list.some(f => f.path.includes('/'));
     const fin = hasDirs ? stripCommonRoot(list) : list;
-    for (const f of fin) { machine.dos.vfs.addFile(f.path, f.data); loaded.push(f); }
-    refreshPrograms();
+    flushSaves();
+    const vfs = machine.dos.vfs;
+    for (const f of fin) { const nd = vfs.addFile(f.path, f.data); loaded.push(f); if (nd) store.put(vfs.realPath(nd), f.data, 'base'); }
+    await applySaves();
+    refreshPrograms(); refreshSaves();
+    shell.notice(fin.length + ' file(s) loaded. Saved progress was restored.');
   }
   async function walkEntry(entry, prefix, out) {
     if (entry.isFile) { const file = await new Promise((res, rej) => entry.file(res, rej)); file._path = prefix + entry.name; out.push(file); }
@@ -2896,7 +3304,7 @@ window.__startUI = function () {
     const total = machine.dos.vfs.all().reduce((a, n) => a + n.size, 0);
     $('fileInfo').textContent = `${machine.dos.vfs.all().length}개 파일 (${(total / 1048576).toFixed(1)} MB) · 실행 파일 ${progs.length}개`;
     $('runBtn').disabled = progs.length === 0;
-    setStatus(progs.length ? '실행할 프로그램을 선택하고 [실행]을 누르세요.' : '실행 파일(.EXE/.COM)을 찾지 못했습니다.');
+    setStatus(progs.length ? '화면에 프로그램 이름을 입력하거나, 여기서 선택해 [실행]을 누르세요.' : (machine.dos.vfs.all().length ? '실행 파일(.EXE/.COM)을 찾지 못했습니다.' : '게임 파일(폴더/ZIP/개별 파일)을 끌어다 놓거나 아래 버튼으로 불러오세요.'));
   }
   $('fileIn').onchange = e => { addBlobs([...e.target.files]); e.target.value = ''; };
   $('dirIn').onchange = e => { addBlobs([...e.target.files]); e.target.value = ''; };
@@ -2930,17 +3338,22 @@ window.__startUI = function () {
   $('gear').onclick = e => { e.stopPropagation(); settingsEl.classList.toggle('open'); };
   $('gear').onmousedown = e => e.stopPropagation();
   $('settingsClose').onclick = () => { closeSettings(); cv.focus(); };
-  cv.addEventListener('mousedown', closeSettings);
-  async function start() {
-    initAudio();
+  cv.addEventListener('mousedown', () => { closeSettings(); $('hint').style.display = 'none'; });
+  const shell = new Shell(machine, { launch: (n, t) => launchProgram(n, t), flush: () => flushSaves() });
+  function start() {
     const idx = +$('prog').value, p = machine._progs[idx]; if (!p) return;
-    machine.ips = +$('speed').value * 1e6;
-    // restore saved files
-    for (const [path, data] of await store.all()) { const ex = machine.dos.vfs.walk(path.split(/[\\/]/).filter(Boolean)); if (!ex) machine.dos.vfs.addFile(path, data); else if (!ex.isDir) { ex.data = data; ex.size = data.length; } }
-    try { machine.dos.startProgram(p.node, $('args').value ? ' ' + $('args').value : ''); } catch (e) { setStatus('실행 실패: ' + e.message, true); return; }
+    initAudio();
+    shell.runFromUI(p.node, $('args').value ? ' ' + $('args').value : '');
+  }
+  function launchProgram(node, tail) {
+    initAudio(); machine.ips = +$('speed').value * 1e6;
+    flushSaves();
+    const cwd = machine.dos.cwd.slice();
+    try { machine.dos.startProgram(node, tail); } catch (e) { setStatus('실행 실패: ' + e.message, true); throw e; }
+    machine.dos.cwd = cwd;
     machine.dos.mouse.present = $('mouseOn').checked;
     paused = false; $('pauseBtn').textContent = '일시정지'; lastT = performance.now(); machine.error = null; img = null;
-    $('stopBtn').disabled = false; $('hint').style.display = 'none'; closeSettings(); cv.focus(); setStatus('실행 중: ' + p.path);
+    $('stopBtn').disabled = false; $('hint').style.display = 'none'; closeSettings(); cv.focus(); setStatus('실행 중: ' + machine.dos.vfs.realPath(node));
   }
   $('runBtn').onclick = start;
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
@@ -2949,7 +3362,8 @@ window.__startUI = function () {
   $('speedVal').textContent = $('speed').value + ' MIPS';
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
   $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
-  $('clearSaves').onclick = () => { store.clear(); refreshSaves(); };
+  $('clearSaves').onclick = async () => { if (!confirm('게임이 저장한 진행상황(세이브/설정)만 삭제하고 새로고침합니다. 계속할까요?')) return; await store.clear('files'); location.reload(); };
+  $('clearAll').onclick = async () => { if (!confirm('불러온 게임 파일과 모든 저장 데이터를 삭제하고 새로고침합니다. 계속할까요?')) return; await store.clear('files'); await store.clear('base'); try { localStorage.removeItem('dosemu.meta'); } catch (e) { } location.reload(); };
   $('keep43').onchange = e => $('stage').classList.toggle('keep43', e.target.checked);
   $('mouseOn').onchange = e => { machine.dos.mouse.present = e.target.checked; };
 
@@ -2992,8 +3406,9 @@ window.__startUI = function () {
       machine._exitShown = true; setStatus('프로그램이 종료되었습니다 (종료 코드 ' + machine.exitInfo.code + ')'); flushSaves();
     }
     if (machine.running) machine._exitShown = false;
+    if (shell.waiting && !machine.running) shell.programExited(!!machine.error);
     present();
-    fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0; const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); flushSaves(); }
+    fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0; const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
     const g = machine.vga.geometry(); const key = g.w + 'x' + g.h + g.text;
     if (key !== lastGeom) { lastGeom = key; machine.dos.mouseSetBounds(g.text ? (g.cols || 80) * 8 : (machine.vga.mode === 0x13 ? g.w * 2 : g.w), g.text ? (g.rows || 25) * 8 : g.h); }
   }
@@ -3003,8 +3418,9 @@ window.__startUI = function () {
   cv.addEventListener('focus', () => { focused = true; $('kbd').classList.add('on'); $('kbd').textContent = '키보드 캡처 중'; });
   cv.addEventListener('blur', () => { focused = false; $('kbd').classList.remove('on'); $('kbd').textContent = '키보드 캡처 꺼짐 (화면 클릭)'; for (const c of [...machine.kb.down]) machine.key(c, false); });
   const keyHandler = down => e => {
-    if (!focused || !machine.running) return;
-    if (e.code === 'F11' ) return;
+    if (!focused) return;
+    if (e.code === 'F11') return;
+    if (!machine.running) { if (down && shell.key(e)) { e.preventDefault(); e.stopPropagation(); } return; }
     if (machine.key(e.code, down)) { e.preventDefault(); e.stopPropagation(); }
   };
   window.addEventListener('keydown', keyHandler(true), true);
@@ -3021,9 +3437,8 @@ window.__startUI = function () {
   cv.addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('mousemove', e => { if (document.pointerLockElement === cv) machine.dos.mouseEvent(e.movementX, e.movementY, buttons); });
 
-  store.open().then(refreshSaves);
-  refreshPrograms(); $('runBtn').disabled = true; setStatus('게임 파일(폴더/ZIP/개별 파일)을 끌어다 놓거나 아래 버튼으로 불러오세요. 또는 데모를 실행해 보세요.');
   requestAnimationFrame(frame);
+  (async () => { await store.open(); await restoreFromStore(); refreshPrograms(); shell.boot(); refreshSaves(); cv.focus(); })();
 };
 if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고 접속 버튼으로 수동 시작)
 
