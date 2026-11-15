@@ -9,13 +9,22 @@
 @media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--panel:#fff;--line:#d9dce2;--fg:#1c1f26;--dim:#5b6472;--acc:#0a8f6a;--warn:#c2362d}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif}
-.wrap{max-width:1280px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px}
-@media (max-width:900px){.wrap{grid-template-columns:1fr}}
+.wrap{max-width:none;margin:0;padding:0;display:block}
+html,body{height:100%;overflow:hidden}
 h1{font-size:18px;margin:0 0 12px;font-weight:650}
 h1 small{color:var(--dim);font-weight:400;margin-left:8px;font-size:12px}
-#stage{background:#000;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;aspect-ratio:4/3;width:100%;border:1px solid var(--line);position:relative}
-#stage:fullscreen{border:0;border-radius:0;aspect-ratio:auto;width:100vw;height:100vh}
+#stage{background:#000;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;width:100vw;height:100vh;height:100dvh;margin:0;border:0;border-radius:0;position:relative}
+#stage.keep43 #screen{width:auto;height:auto;aspect-ratio:4/3;max-width:100%;max-height:100%}
+#stage:fullscreen{width:100vw;height:100vh}
+#stage:fullscreen #gear,#stage:fullscreen #hint{display:none}
 #screen{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:fill;image-rendering:pixelated;outline:none;display:block;background:#000}
+#gear{position:absolute;left:8px;top:8px;z-index:5;width:34px;height:34px;padding:0;font-size:18px;line-height:1;border-radius:50%;background:#000a;color:#ddd;border:1px solid #fff3}
+#gear:hover{border-color:var(--acc);color:#fff}
+#hint{position:absolute;left:0;right:0;bottom:12%;text-align:center;color:#9aa;font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;pointer-events:none}
+#settings{position:fixed;left:0;top:0;bottom:0;width:360px;max-width:92vw;overflow:auto;background:var(--bg);border-right:1px solid var(--line);padding:12px;z-index:100;transform:translateX(-105%);transition:transform .2s;box-shadow:4px 0 18px #0006}
+#settings.open{transform:none}
+#settings .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+#settings .head h1{margin:0}
 #kbd{position:absolute;right:8px;top:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:#0008;color:#ccc;pointer-events:none}
 #kbd.on{background:#0a8f6acc;color:#fff}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
@@ -59,8 +68,11 @@ html.is-mobile .wrap{display:none}
 </script>
 <div class="wrap">
   <main>
-    <h1>DOS 에뮬레이터<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1>
-    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div></div>
+    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="hint">⚙ 설정 버튼에서 게임 파일을 불러오고 실행하세요</div></div>
+  </main>
+  <aside id="settings">
+    <div class="head"><h1>DOS 에뮬레이터<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1><button id="settingsClose">닫기 ✕</button></div>
+    <div class="card">
     <div class="bar">
       <button id="pauseBtn">일시정지</button>
       <button id="stopBtn" disabled>중지</button>
@@ -70,8 +82,7 @@ html.is-mobile .wrap{display:none}
     </div>
     <div id="perf"></div>
     <div id="status"></div>
-  </main>
-  <aside>
+    </div>
     <div class="card" id="drop">
       <div style="margin-bottom:8px">게임 폴더 / ZIP / 파일을 여기로 끌어다 놓기</div>
       <label class="file"><input id="dirIn" type="file" webkitdirectory multiple><span>폴더 선택</span></label>
@@ -86,6 +97,7 @@ html.is-mobile .wrap{display:none}
       <div class="row" style="margin-top:10px"><span style="width:62px">CPU 속도</span><input id="speed" type="range" min="2" max="80" value="14"><span id="speedVal" class="dim" style="width:64px;text-align:right"></span></div>
       <div class="row"><span style="width:62px">볼륨</span><input id="vol" type="range" min="0" max="100" value="80"></div>
       <div class="row"><label><input id="sndOpl" type="checkbox" checked> AdLib</label><label><input id="sndSb" type="checkbox" checked> Sound Blaster</label><label><input id="sndSpk" type="checkbox" checked> 스피커</label></div>
+      <div class="row"><label><input id="keep43" type="checkbox"> 화면 비율 4:3 유지 (끄면 창 전체에 꽉 채움)</label></div>
       <div class="row"><label><input id="mouseOn" type="checkbox"> 마우스 사용 (클릭 시 포인터 잠금, Esc로 해제)</label></div>
     </div>
     <div class="card">
@@ -1509,7 +1521,7 @@ const MULT = [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15];
 const KSLROM = [0, 32, 40, 45, 48, 51, 53, 55, 56, 58, 59, 60, 61, 62, 63, 64];
 const KSLSHIFT = [8, 1, 2, 0];
 const FBTAB = [0, 1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2];
-const SLOT_OFF = [0, 1, 2, 3, 4, 5, -1, -1, 8, 9, 10, 11, 12, 13, -1, -1, 16, 17, 18, 19, 20, 21];
+const SLOT_OFF = [0, 1, 2, 3, 4, 5, -1, -1, 6, 7, 8, 9, 10, 11, -1, -1, 12, 13, 14, 15, 16, 17]; // 레지스터 오프셋 -> 슬롯 0..17
 const CH_MOD = [0, 1, 2, 6, 7, 8, 12, 13, 14]; // operator index of modulator for channels 0..8
 const DB2LIN = new Float32Array(1024);
 for (let i = 0; i < 1024; i++) DB2LIN[i] = Math.pow(10, -(i * 0.1) / 20); // index in 0.1 dB steps
@@ -2911,7 +2923,14 @@ window.__startUI = function () {
 
   /* ------------------------------ run control ------------------------------ */
   let paused = false, lastT = 0, accEmu = 0, accReal = 0, fps = 0, fpsCount = 0, fpsT = 0, lastKey = '';
-  function setStatus(t, err) { const s = $('status'); s.textContent = t; s.className = err ? 'err' : ''; }
+  function setStatus(t, err) { const s = $('status'); s.textContent = t; s.className = err ? 'err' : ''; if (err) openSettings(); }
+  const settingsEl = $('settings');
+  function openSettings() { settingsEl.classList.add('open'); }
+  function closeSettings() { settingsEl.classList.remove('open'); }
+  $('gear').onclick = e => { e.stopPropagation(); settingsEl.classList.toggle('open'); };
+  $('gear').onmousedown = e => e.stopPropagation();
+  $('settingsClose').onclick = () => { closeSettings(); cv.focus(); };
+  cv.addEventListener('mousedown', closeSettings);
   async function start() {
     initAudio();
     const idx = +$('prog').value, p = machine._progs[idx]; if (!p) return;
@@ -2921,7 +2940,7 @@ window.__startUI = function () {
     try { machine.dos.startProgram(p.node, $('args').value ? ' ' + $('args').value : ''); } catch (e) { setStatus('실행 실패: ' + e.message, true); return; }
     machine.dos.mouse.present = $('mouseOn').checked;
     paused = false; $('pauseBtn').textContent = '일시정지'; lastT = performance.now(); machine.error = null; img = null;
-    $('stopBtn').disabled = false; cv.focus(); setStatus('실행 중: ' + p.path);
+    $('stopBtn').disabled = false; $('hint').style.display = 'none'; closeSettings(); cv.focus(); setStatus('실행 중: ' + p.path);
   }
   $('runBtn').onclick = start;
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
@@ -2931,6 +2950,7 @@ window.__startUI = function () {
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
   $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
   $('clearSaves').onclick = () => { store.clear(); refreshSaves(); };
+  $('keep43').onchange = e => $('stage').classList.toggle('keep43', e.target.checked);
   $('mouseOn').onchange = e => { machine.dos.mouse.present = e.target.checked; };
 
   function describeError() {
