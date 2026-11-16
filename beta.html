@@ -71,7 +71,7 @@ html.is-mobile .wrap{display:none}
     <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="hint">화면을 클릭하고 명령어를 입력하세요 (HELP) · ⚙ 설정에서 게임 파일 불러오기</div></div>
   </main>
   <aside id="settings">
-    <div class="head"><h1>DOS 에뮬레이터 v1.1<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1><button id="settingsClose">닫기 ✕</button></div>
+    <div class="head"><h1>DOS 에뮬레이터 v1.2<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1><button id="settingsClose">닫기 ✕</button></div>
     <div class="card">
     <div class="bar">
       <button id="pauseBtn">일시정지</button>
@@ -94,7 +94,7 @@ html.is-mobile .wrap{display:none}
       <select id="prog"></select>
       <input id="args" type="text" placeholder="명령줄 인수 (선택)">
       <div class="bar" style="margin:0"><button id="runBtn" class="primary" disabled>실행</button></div>
-      <div class="row" style="margin-top:10px"><span style="width:62px">CPU 속도</span><input id="speed" type="range" min="2" max="80" value="40"><span id="speedVal" class="dim" style="width:150px;text-align:right"></span></div>
+      <div class="row" style="margin-top:10px"><span style="width:62px">CPU 속도</span><input id="speed" type="range" min="2" max="400" value="120"><span id="speedVal" class="dim" style="width:190px;text-align:right"></span></div>
       <div class="row"><span style="width:62px">볼륨</span><input id="vol" type="range" min="0" max="100" value="80"></div>
       <div class="row"><label><input id="sndOpl" type="checkbox" checked> AdLib</label><label><input id="sndSb" type="checkbox" checked> Sound Blaster</label><label><input id="sndSpk" type="checkbox" checked> 스피커</label></div>
       <div class="row"><label><input id="keep43" type="checkbox"> 화면 비율 4:3 유지 (끄면 창 전체에 꽉 채움)</label></div>
@@ -788,6 +788,30 @@ class CPU {
     const kind = op & 0xFE; // A4 movs, A6 cmps, AA stos, AC lods, AE scas
     const checkZ = rep && (kind === 0xA6 || kind === 0xAE);
     if (rep && cx === 0) return;
+    // [v1.2] 빠른 경로: 16비트 주소, 정방향, VGA 창을 건드리지 않는 REP MOVS/STOS는 한 번에 처리
+    if (rep && !a32 && !this.fDF && (kind === 0xA4 || kind === 0xAA)) {
+      const len = cx * sz;
+      if (si + (kind === 0xA4 ? len : 0) <= 0x10000 && di + len <= 0x10000) {
+        const dA = (dstBase + di) & 0xFFFFF, sA = (srcBase + si) & 0xFFFFF;
+        if (kind === 0xAA && (dA >>> 17) === 5 && this.vga.fillRun(dA, this.getR(0, sz), sz, cx)) {
+          r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+        }
+        if (dA + len <= 0xA0000 || dA >= 0xC0000 && dA + len <= 0x110000) {
+          if (kind === 0xAA) {
+            const v = this.getR(0, sz), m = this.mem;
+            if (sz === 1) m.fill(v, dA, dA + len);
+            else { for (let k = 0; k < cx; k++) { const p = dA + k * sz; m[p] = v; m[p + 1] = v >> 8; if (sz === 4) { m[p + 2] = v >> 16; m[p + 3] = v >> 24; } } }
+            r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+          }
+          if ((sA + len <= 0xA0000 || sA >= 0xC0000 && sA + len <= 0x110000) && (dA <= sA || dA >= sA + len)) {
+            this.mem.copyWithin(dA, sA, sA + len);
+            r[6] = (r[6] & ~0xFFFF) | ((si + len) & 0xFFFF); r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+          }
+        }
+      }
+    }
+    // [v1.2] 일반 경로도 반복 횟수만큼 CPU 시간을 소모(전엔 1사이클 취급 → 프레임당 수십억 번 연산하며 멈춤)
+    if (rep) this.cyc += cx;
     do {
       switch (kind) {
         case 0xA4: this.ws(dstBase + di, sz, this.rs(srcBase + si, sz)); si = wrap(si + d); di = wrap(di + d); break;
@@ -815,6 +839,7 @@ class CPU {
     let cx = a32 ? r[1] >>> 0 : r[1] & 0xFFFF;
     const srcBase = this.sb[this.ov >= 0 ? this.ov : 3], dstBase = this.sb[0];
     if (rep && cx === 0) return;
+    if (rep) this.cyc += cx;
     do {
       if (op < 0x6E) { // INS
         const v = sz === 1 ? this.sys.inb(port) : sz === 2 ? this.sys.inw(port) : this.sys.ind(port);
@@ -1295,6 +1320,26 @@ class VGA {
     this.fastWrite = this.writeMode === 0 && this.gc[1] === 0 && (this.gc[3] & 0x1F) === 0 && this.gc[8] === 0xFF;
     this.fastWrite1 = this.writeMode === 2 && (this.gc[3] & 0x18) === 0 && this.gc[8] === 0xFF;
   }
+  fillRun(a, v, sz, cnt) {   // [v1.2] REP STOS가 VGA 창을 채울 때의 빠른 경로
+    const off = a - this.mapStart, len = cnt * sz;
+    if (off < 0 || off + len > this.mapLen) return false;
+    const vr = this.vram;
+    if (this.chain4) {
+      if (off + len > 0x40000) return false;
+      if (sz === 1) vr.fill(v & 0xFF, off, off + len);
+      else for (let k = 0; k < len; k++) vr[off + k] = (v >> ((k % sz) * 8)) & 0xFF;
+      this.dirty = true; return true;
+    }
+    if (!this.oddEven && this.fastWrite) {
+      const mm = this.mapMask;
+      for (let k = 0; k < len; k++) {
+        const val = (v >> ((k % sz) * 8)) & 0xFF, b = ((off + k) & 0xFFFF) << 2;
+        if (mm & 1) vr[b] = val; if (mm & 2) vr[b + 1] = val; if (mm & 4) vr[b + 2] = val; if (mm & 8) vr[b + 3] = val;
+      }
+      this.dirty = true; return true;
+    }
+    return false;
+  }
   rb(a) {
     let off = a - this.mapStart;
     if (off < 0 || off >= this.mapLen) return 0xFF;
@@ -1424,6 +1469,9 @@ class VGA {
   render() {
     const g = this.geometry();
     let w = g.w, h = g.h;
+    if (!g.text && !this.dirty && this._lastW === w && this._lastH === h) return false;
+    this._lastW = w; this._lastH = h;
+    if (!g.text) this.dirty = false;
     if (w < 16 || h < 16 || w > 1024 || h > 768) { w = Math.max(16, Math.min(1024, w)); h = Math.max(16, Math.min(768, h)); }
     this.width = w; this.height = h;
     const out = this.out;
@@ -1431,7 +1479,7 @@ class VGA {
     const start = (c[0x0C] << 8) | c[0x0D];
     const stride = c[0x13] * 2;
     const lc = c[0x18] | ((c[7] & 0x10) << 4) | ((c[9] & 0x40) << 3);
-    if (g.text) { this.renderText(g, w, h, start); this.frame++; return; }
+    if (g.text) { this.renderText(g, w, h, start); this.frame++; return true; }
     const lines = g.lines;
     const ac = this.ac, pan = ac[0x13] & 15;
     const cs = this.ac[0x14] & 15, mc = ac[0x10];
@@ -1474,6 +1522,7 @@ class VGA {
       }
     }
     this.frame++;
+    return true;
   }
 
   renderText(g, w, h, start) {
@@ -1709,7 +1758,7 @@ class SoundBlaster {
     this.outq = []; this.cmd = -1; this.args = []; this.need = 0; this.speaker = false;
     this.tc = 0xD0; this.rate = 8000; this.blockLen = 0x7FF; this.playing = false; this.auto = false; this.paused = false;
     this.left = 0; this.irqPending = false; this.acc = 0; this.dac = 128; this.testReg = 0; this.e2v = 0xAA; this.e2c = 0;
-    this.pcm = new Float32Array(16384); this.pcmW = 0; this.pcmR = 0; this.lastS = 0; this.resFrac = 0; this.blockLeft = 0;
+    this.pcm = new Float32Array(16384); this.pcmW = 0; this.pcmR = 0; this.lastS = 0; this.resFrac = 0; this.blockLeft = 0; this.prevS = 0; this.curS = 0; this.lp = 0;
   }
   readPort(p) {
     switch (p - this.base) {
@@ -1811,8 +1860,16 @@ class SoundBlaster {
     const step = this.rate / hostRate;
     for (let i = 0; i < n; i++) {
       this.resFrac += step;
-      while (this.resFrac >= 1) { this.resFrac -= 1; if (this.pcmR !== this.pcmW) { this.lastS = this.pcm[this.pcmR]; this.pcmR = (this.pcmR + 1) & 16383; } }
-      out[i] += this.lastS * gain;
+      while (this.resFrac >= 1) {
+        this.resFrac -= 1; this.prevS = this.curS || 0;
+        if (this.pcmR !== this.pcmW) { this.curS = this.pcm[this.pcmR]; this.pcmR = (this.pcmR + 1) & 16383; }
+        else this.curS = (this.curS || 0) * 0.98;   // 데이터가 모자라면 마지막 값에서 서서히 0으로(지직 소리 방지)
+      }
+      const fr = this.resFrac;   // 샘플 사이를 선형 보간
+      // 1차 저역 통과로 8비트 PCM 계단 소리 완화
+      const x = (this.prevS || 0) + ((this.curS || 0) - (this.prevS || 0)) * fr;
+      this.lp = (this.lp || 0) + (x - (this.lp || 0)) * 0.55;
+      out[i] += this.lp * gain;
     }
   }
 }
@@ -2644,7 +2701,7 @@ class Machine {
     this.sb = new SoundBlaster(this, 0x220, 7, 1);
     this.spk = new Speaker(this);
     this.dos = new DOS(this);
-    this.ipsCap = 40e6; this.ips = 40e6;               // emulated instructions per second (386DX 초고사양)
+    this.ipsCap = 120e6; this.ips = 120e6;             // emulated instructions per second (v1.2: 초고사양 486DX4급 이상, 호스트 속도에 맞춰 자동 조절)
     this.running = false; this.exitInfo = null; this.error = null;
     this.kb61 = 0; this.refresh = 0; this.a20 = false;
     this.cmos = new Uint8Array(128); this.cmosIdx = 0;
@@ -2761,6 +2818,7 @@ class Machine {
     if (this.soundOn.opl) this.opl.generate(out, n, rate, 0.22);
     if (this.soundOn.sb) this.sb.generate(out, n, rate, 0.45);
     if (this.soundOn.speaker) this.spk.generate(out, n, rate, 0.12);
+    for (let i = 0; i < n; i++) { const x = out[i]; if (x > 0.6) out[i] = 0.6 + 0.4 * Math.tanh((x - 0.6) / 0.4); else if (x < -0.6) out[i] = -0.6 - 0.4 * Math.tanh((-x - 0.6) / 0.4); }   // v1.2 소프트 클리핑
   }
 
   /* ------------------------------ helpers ------------------------------ */
@@ -2812,7 +2870,7 @@ class Shell {
   reinit() { const cwd = this.dos.cwd.slice(); this.dos.initBIOS(); this.dos.cwd = cwd; this.m.resetDevices(); }
   boot() {
     this.restoreMeta(); this.reinit();
-    this.say('WEB DOS Emulator [Version 1.1]'); this.say('Type HELP for a list of commands.'); this.say();
+    this.say('WEB DOS Emulator [Version 1.2]'); this.say('Type HELP for a list of commands.'); this.say();
     this.booted = true; this.step();
   }
   step() {
@@ -3115,7 +3173,7 @@ class Shell {
     if (!k) { this.say('Syntax error'); return; } if (v === '') delete env[k]; else env[k] = v;
   }
   c_path(a) { const t = a.trim().replace(/^=/, ''); if (!t) { this.say('PATH=' + (this.dos.env.PATH || '')); return; } this.dos.env.PATH = t.replace(/^PATH=/i, ''); }
-  c_ver() { this.say(); this.say('Web DOS Emulator [Version 1.1]'); this.say(); }
+  c_ver() { this.say(); this.say('Web DOS Emulator [Version 1.2]'); this.say(); }
   c_date() { const d = new Date(); this.say('Current date is ' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + this.fmtDate(d).replace(/-(\d\d)$/, '-' + d.getFullYear())); }
   c_time() { const d = new Date(), p = x => String(x).padStart(2, '0'); this.say('Current time is ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())); }
   c_vol() { this.say(' Volume in drive C is WEBDOS'); }
@@ -3206,7 +3264,7 @@ window.__startUI = function () {
   const cv = $('screen'), ctx = cv.getContext('2d', { alpha: false });
   let img = null, imgW = 0, imgH = 0;
   function present() {
-    const v = machine.vga; v.render();
+    const v = machine.vga; if (v.render() === false && img) return;
     const w = v.width, h = v.height;
     if (!img || w !== imgW || h !== imgH) { cv.width = w; cv.height = h; img = new ImageData(new Uint8ClampedArray(v.out.buffer, 0, w * h * 4), w, h); imgW = w; imgH = h; }
     ctx.putImageData(img, 0, 0);
@@ -3383,7 +3441,7 @@ window.__startUI = function () {
   $('runBtn').onclick = start;
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
   $('pauseBtn').onclick = () => { paused = !paused; $('pauseBtn').textContent = paused ? '계속' : '일시정지'; lastT = performance.now(); };
-  const speedLabel = v => (+v >= 33 ? '386DX 초고사양 · ' : '') + v + ' MIPS';
+  const speedLabel = v => (+v >= 200 ? '펜티엄급 초초고사양 · ' : +v >= 100 ? '486DX4 초고사양 · ' : +v >= 33 ? '386DX 고사양 · ' : '') + v + ' MIPS';
   $('speed').oninput = e => { machine.ips = machine.ipsCap = +e.target.value * 1e6; $('speedVal').textContent = speedLabel(e.target.value); };
   $('speedVal').textContent = speedLabel($('speed').value);
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
@@ -3442,8 +3500,8 @@ window.__startUI = function () {
     present();
     fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0;
       if (machine.running && !paused && machine.ipsCap) { // auto-throttle: keep real-time speed on slower devices
-        if (load > 0.92) machine.ips = Math.max(8e6, machine.ips * 0.85);
-        else if (load < 0.6 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.1);
+        if (load > 0.85) machine.ips = Math.max(8e6, machine.ips * 0.88);
+        else if (load < 0.55 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.2);
       } const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · ${(machine.ips / 1e6).toFixed(0)} MIPS · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
     const g = machine.vga.geometry(); const key = g.w + 'x' + g.h + g.text;
     if (key !== lastGeom) { lastGeom = key; machine.dos.mouseSetBounds(g.text ? (g.cols || 80) * 8 : (machine.vga.mode === 0x13 ? g.w * 2 : g.w), g.text ? (g.rows || 25) * 8 : g.h); }
