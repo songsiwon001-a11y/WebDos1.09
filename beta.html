@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WebDosBeta</title>
+<title>WebDos</title>
 <style>
 :root{--bg:#14161a;--panel:#1d2026;--line:#2c313a;--fg:#e6e8ec;--dim:#98a0ad;--acc:#4dd0a8;--warn:#ff7b72}
 @media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--panel:#fff;--line:#d9dce2;--fg:#1c1f26;--dim:#5b6472;--acc:#0a8f6a;--warn:#c2362d}}
@@ -59,6 +59,9 @@ kbd{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:
 #mobileBlock p{margin:6px 0;color:var(--dim)}
 html.is-mobile #mobileBlock{display:flex}
 html.is-mobile .wrap{display:none}
+html.embed #settings{display:none!important}
+html.embed #gear,html.embed #hint,html.embed #kbd{display:none!important}
+#wdOverlay{display:none;position:absolute;inset:0;z-index:6;background:#000b;color:#fff;align-items:center;justify-content:center;font:16px/1.6 system-ui,sans-serif;cursor:pointer;text-align:center}
 </style>
 </head>
 <body>
@@ -68,7 +71,7 @@ html.is-mobile .wrap{display:none}
 </script>
 <div class="wrap">
   <main>
-    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="hint">화면을 클릭하고 명령어를 입력하세요 (HELP) · ⚙ 설정에서 게임 파일 불러오기</div></div>
+    <div id="stage"><canvas id="screen" width="640" height="400" tabindex="0"></canvas><div id="kbd">키보드 캡처 꺼짐 (화면 클릭)</div><button id="gear" title="설정" aria-label="설정">⚙</button><div id="wdOverlay"><div>▶ 클릭해서 시작<br><small>키보드 입력과 소리가 활성화됩니다</small></div></div><div id="hint">화면을 클릭하고 명령어를 입력하세요 (HELP) · ⚙ 설정에서 게임 파일 불러오기</div></div>
   </main>
   <aside id="settings">
     <div class="head"><h1>DOS 에뮬레이터 v1.2<small>x86 CPU · VGA · AdLib · Sound Blaster — 외부 에뮬레이터 없이 이 파일 하나로 동작</small></h1><button id="settingsClose">닫기 ✕</button></div>
@@ -3536,8 +3539,223 @@ window.__startUI = function () {
   cv.addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('mousemove', e => { if (document.pointerLockElement === cv) machine.dos.mouseEvent(e.movementX, e.movementY, buttons); });
 
+  /* ===================================================================
+   *  WebDos 임베드 API (iframe / 외부 페이지에서 파일 주입 + 자동 실행)
+   *   1) window.WebDos            (같은 페이지/동일 출처에서 직접 호출)
+   *   2) postMessage 프로토콜      (iframe 부모 → 이 페이지)
+   *   3) URL 파라미터              (?zip=...&run=GAME.EXE&ui=0 ...)
+   * =================================================================== */
+  const WD = (() => {
+    const VERSION = '1.0';
+    const listeners = [];
+    let readyResolve; const ready = new Promise(r => { readyResolve = r; });
+    let isReady = false;
+
+    const norm = p => String(p).replace(/\\/g, '/').replace(/^\.?\/+/, '');
+    const toU8 = async d => {
+      if (d instanceof Uint8Array) return d;
+      if (d instanceof ArrayBuffer) return new Uint8Array(d);
+      if (ArrayBuffer.isView(d)) return new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+      if (typeof Blob !== 'undefined' && d instanceof Blob) return new Uint8Array(await d.arrayBuffer());
+      if (typeof d === 'string') { // base64 (data: URL 접두사 허용)
+        const b = d.replace(/^data:[^,]*,/, '');
+        return Uint8Array.from(atob(b), c => c.charCodeAt(0));
+      }
+      throw new Error('지원하지 않는 데이터 형식');
+    };
+    const emit = (type, data) => { for (const f of listeners) { try { f(type, data || {}); } catch (e) { } } };
+
+    // 파일 목록 [{path, data}] 를 가상 디스크에 추가
+    async function loadFiles(files, opt = {}) {
+      const persist = !!opt.persist;
+      const list = [];
+      for (const f of files) list.push({ path: norm(f.path), data: await toU8(f.data) });
+      const fin = opt.stripRoot ? stripCommonRoot(list) : list;
+      flushSaves();
+      const vfs = machine.dos.vfs;
+      for (const f of fin) {
+        const nd = vfs.addFile(f.path, f.data); if (!nd) continue;
+        loaded.push(f);
+        if (persist) store.put(vfs.realPath(nd), f.data, 'base');
+      }
+      if (opt.restoreSaves !== false) await applySaves();
+      refreshPrograms(); refreshSaves();
+      emit('files', { count: fin.length });
+      return fin.length;
+    }
+    async function loadZip(src, opt = {}) {
+      let buf;
+      if (typeof src === 'string' && /^(https?:|blob:|data:|\.{0,2}\/)/i.test(src)) {
+        const r = await fetch(src); if (!r.ok) throw new Error('다운로드 실패: HTTP ' + r.status); buf = await r.arrayBuffer();
+      } else buf = (await toU8(src)).slice().buffer;
+      const list = await readZip(buf);
+      return loadFiles(list, Object.assign({ stripRoot: true }, opt));
+    }
+    async function loadUrl(url, path, opt = {}) {
+      const r = await fetch(url); if (!r.ok) throw new Error('다운로드 실패: HTTP ' + r.status);
+      const name = path || decodeURIComponent(String(url).split('?')[0].split('/').pop() || 'FILE');
+      if (!path && /\.zip$/i.test(name)) return loadZip(new Uint8Array(await r.arrayBuffer()), opt);
+      return loadFiles([{ path: name, data: await r.arrayBuffer() }], opt);
+    }
+    function listPrograms() { return machine.findPrograms().map(p => p.path); }
+    function findProgram(path) {
+      const progs = machine.findPrograms();
+      if (path == null || path === '') { // 자동 선택: 설치/설정 계열 제외
+        return (progs.find(p => !/INSTALL|SETUP|UNINST|CONFIG|SERSETUP|README/i.test(p.path)) || progs[0] || {}).node || null;
+      }
+      const want = norm(path).toUpperCase();
+      const hit = progs.find(p => machine.dos.vfs.realPath(p.node).replace(/\\/g, '/').toUpperCase() === want)
+        || progs.find(p => p.path.replace(/\\/g, '/').toUpperCase() === want)
+        || progs.find(p => p.node.name.toUpperCase() === want)
+        || progs.find(p => p.path.replace(/\\/g, '/').toUpperCase().endsWith('/' + want))
+        || progs.find(p => p.node.name.toUpperCase() === want + '.EXE' || p.node.name.toUpperCase() === want + '.COM');
+      return hit ? hit.node : null;
+    }
+    function run(path, args) {
+      const node = findProgram(path);
+      if (!node) throw new Error('실행 파일을 찾을 수 없습니다: ' + (path || '(자동)'));
+      initAudio(); hookAudioUnlock();
+      shell.runFromUI(node, args ? ' ' + String(args).replace(/^\s+/, '') : '');
+      return machine.dos.vfs.fullPath(node);
+    }
+    function stop() { machine.running = false; flushSaves(); setStatus('중지됨'); }
+    // 임베드 종료: 실행 중지 + 오디오 닫기 (iframe 을 제거하기 직전에 호출)
+    function shutdown() { execMode = false; machine.running = false; try { if (ac) ac.close(); } catch (e) { } ac = null; }
+    // 명령 줄 실행 (BAT 포함). 셸이 다시 프롬프트로 돌아오면 'exit' 이벤트
+    function exec(line) { initAudio(); hookAudioUnlock(); execMode = true; wasRunning = false; shell.submit(String(line)); return true; }
+    function pause() { paused = true; $('pauseBtn').textContent = '계속'; }
+    function resume() { paused = false; $('pauseBtn').textContent = '일시정지'; lastT = performance.now(); }
+    function setSpeed(mips) { $('speed').value = mips; $('speed').oninput({ target: $('speed') }); }
+    function setVolume(v) { $('vol').value = Math.round(v * 100); if (window.__gain) window.__gain.gain.value = v; }
+    function setUI(on) { document.documentElement.classList.toggle('embed', !on); }
+    function setKeep43(on) { $('keep43').checked = !!on; $('stage').classList.toggle('keep43', !!on); }
+    function setMouse(on) { $('mouseOn').checked = !!on; machine.dos.mouse.present = !!on; }
+    function focus() { cv.focus(); }
+    function unlockAudio() { initAudio(); const o = $('wdOverlay'); if (o) o.style.display = 'none'; }
+    function fullscreen() { $('fsBtn').click(); }
+    function screenshot() { return cv.toDataURL('image/png'); }
+    function reset() { // 가상 디스크 비우기 (저장된 세이브는 유지)
+      if (machine.running) stop();
+      machine.dos.vfs = new VFS(); loaded = [];
+      shell.vfs = machine.dos.vfs; machine.dos.cwd = [];
+      refreshPrograms(); emit('files', { count: 0 });
+    }
+    function status() {
+      return { version: VERSION, ready: isReady, running: machine.running, paused, programs: listPrograms(), error: machine.error ? machine.error.message : null };
+    }
+    // 키 입력 주입 (e.g. sendKey('Enter'), sendKey('KeyA'))
+    function sendKey(code, ms = 60) { machine.key(code, true); setTimeout(() => machine.key(code, false), ms); }
+
+    // 오디오는 브라우저 정책상 사용자 제스처가 필요 → 첫 클릭/키 입력 때 풀어줌 + 안내 오버레이
+    let unlockHooked = false;
+    function hookAudioUnlock() {
+      const ov = $('wdOverlay');
+      if (ac && ac.state === 'running' && document.hasFocus()) { ov.style.display = 'none'; return; }
+      ov.style.display = 'flex';
+      if (unlockHooked) return; unlockHooked = true;
+      const go = () => { initAudio(); cv.focus(); ov.style.display = 'none'; };
+      ov.addEventListener('pointerdown', go);
+      window.addEventListener('keydown', () => { if (ac && ac.state === 'suspended') ac.resume(); ov.style.display = 'none'; }, true);
+    }
+
+    // 실행 상태 변화를 이벤트로 알림
+    let wasRunning = false, execMode = false, idleN = 0;
+    setInterval(() => {
+      const r = machine.running;
+      if (r && !wasRunning) emit('started', {});
+      if (!r && wasRunning && !execMode) {
+        if (machine.error) emit('error', { message: machine.error.message, detail: describeError() });
+        emit('exit', { code: machine.exitInfo ? machine.exitInfo.code : null, error: !!machine.error });
+      }
+      if (execMode && !r && machine.error) { execMode = false; emit('error', { message: machine.error.message, detail: describeError() }); emit('exit', { code: null, error: true }); }
+      else if (execMode && !r && !shell.waiting && !shell.queue.length && !shell.paused && wasRunning !== null) {
+        if (wasRunning || ++idleN > 6) { execMode = false; idleN = 0; emit('exit', { code: machine.exitInfo ? machine.exitInfo.code : 0, error: false }); }
+      }
+      wasRunning = r;
+    }, 150);
+
+    const api = {
+      version: VERSION, ready, machine, shutdown, exec, unlockAudio, loadFiles, loadZip, loadUrl, listPrograms, run, stop, pause, resume,
+      setSpeed, setVolume, setUI, setKeep43, setMouse, focus, fullscreen, screenshot, reset, status, sendKey,
+      on(f) { listeners.push(f); return () => { const i = listeners.indexOf(f); if (i >= 0) listeners.splice(i, 1); }; },
+      _ready() { isReady = true; readyResolve(api); emit('ready', { version: VERSION }); },
+    };
+    return api;
+  })();
+  window.WebDos = WD;
+
+  /* ---- postMessage 프로토콜 ----
+   * 요청:  { webdos: 1, id, cmd, ...args }
+   * 응답:  { webdos: 1, id, ok: true, result } | { webdos: 1, id, ok: false, error }
+   * 이벤트(이 페이지 → 부모): { webdos: 1, event: 'ready'|'started'|'exit'|'error'|'files', ... }
+   * 허용 출처는 ?origin=https://a.com,https://b.com 로 제한 가능(기본: 모두 허용)
+   */
+  const allowOrigins = (new URLSearchParams(location.search).get('origin') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const originOk = o => !allowOrigins.length || allowOrigins.includes(o);
+  const parentTargets = new Set();
+  WD.on((type, data) => {
+    const msg = Object.assign({ webdos: 1, event: type }, data);
+    if (window.parent !== window) { try { window.parent.postMessage(msg, allowOrigins.length === 1 ? allowOrigins[0] : '*'); } catch (e) { } }
+  });
+  const handlers = {
+    ping: () => WD.status(),
+    status: () => WD.status(),
+    loadFiles: a => WD.loadFiles(a.files || [], a.options || {}),
+    loadZip: a => WD.loadZip(a.data != null ? a.data : a.url, a.options || {}),
+    loadUrl: a => WD.loadUrl(a.url, a.path, a.options || {}),
+    // 한 번에: 파일 주입 + 실행  { files|zip|url, run, args }
+    start: async a => {
+      if (a.reset) WD.reset();
+      if (a.files) await WD.loadFiles(a.files, a.options || {});
+      if (a.zip != null) await WD.loadZip(a.zip, a.options || {});
+      if (a.url) await WD.loadUrl(a.url, a.path, a.options || {});
+      if (a.speed) WD.setSpeed(a.speed);
+      if (a.volume != null) WD.setVolume(a.volume);
+      return WD.run(a.run, a.args);
+    },
+    run: a => WD.run(a.path, a.args),
+    exec: a => WD.exec(a.line),
+    unlockAudio: () => WD.unlockAudio(),
+    stop: () => WD.stop(), pause: () => WD.pause(), resume: () => WD.resume(), reset: () => WD.reset(),
+    listPrograms: () => WD.listPrograms(),
+    setSpeed: a => WD.setSpeed(a.value), setVolume: a => WD.setVolume(a.value),
+    setUI: a => WD.setUI(!!a.value), setKeep43: a => WD.setKeep43(!!a.value), setMouse: a => WD.setMouse(!!a.value),
+    focus: () => WD.focus(), fullscreen: () => WD.fullscreen(), screenshot: () => WD.screenshot(),
+    sendKey: a => WD.sendKey(a.code, a.ms),
+  };
+  window.addEventListener('message', async e => {
+    const d = e.data; if (!d || d.webdos !== 1 || !d.cmd) return;
+    if (!originOk(e.origin)) return;
+    const reply = o => { try { (e.source || window.parent).postMessage(Object.assign({ webdos: 1, id: d.id }, o), e.origin === 'null' ? '*' : e.origin); } catch (er) { } };
+    const h = handlers[d.cmd];
+    if (!h) { reply({ ok: false, error: '알 수 없는 명령: ' + d.cmd }); return; }
+    try { await WD.ready; reply({ ok: true, result: await h(d) }); }
+    catch (er) { reply({ ok: false, error: er && er.message || String(er) }); }
+  });
+
+  /* ---- URL 파라미터 ----
+   *  ui=0        설정 버튼/힌트/키보드 배지 숨김(임베드 모드)
+   *  zip=URL     ZIP 내려받아 불러옴 (CORS 허용 필요)      file=URL  개별 파일(여러 개: file=a&file=b)
+   *  run=NAME    실행할 EXE/COM (비우고 autorun=1 이면 자동 선택)  args=...  명령줄 인수
+   *  speed=MIPS  volume=0..100   keep43=1   mouse=0
+   */
+  async function applyParams() {
+    const q = new URLSearchParams(location.search);
+    if (q.get('ui') === '0' || q.get('embed') === '1') WD.setUI(false);
+    if (q.has('speed')) WD.setSpeed(+q.get('speed'));
+    if (q.has('volume')) WD.setVolume(+q.get('volume') / 100);
+    if (q.get('keep43') === '1') WD.setKeep43(true);
+    if (q.get('mouse') === '0') WD.setMouse(false);
+    try {
+      const persist = q.get('persist') === '1';
+      if (q.has('zip')) await WD.loadZip(q.get('zip'), { persist });
+      for (const u of q.getAll('file')) await WD.loadUrl(u, null, { persist });
+      if (q.has('run') || q.get('autorun') === '1') WD.run(q.get('run') || '', q.get('args') || '');
+    } catch (e) { setStatus('자동 실행 실패: ' + e.message, true); }
+  }
+
   requestAnimationFrame(frame);
-  (async () => { await store.open(); await restoreFromStore(); refreshPrograms(); shell.boot(); refreshSaves(); cv.focus(); })();
+  (async () => { await store.open(); await restoreFromStore(); refreshPrograms(); shell.boot(); refreshSaves(); cv.focus(); WD._ready(); await applyParams(); })();
 };
 if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고 접속 버튼으로 수동 시작)
 
