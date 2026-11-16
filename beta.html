@@ -1708,7 +1708,7 @@ class SoundBlaster {
   reset() {
     this.outq = []; this.cmd = -1; this.args = []; this.need = 0; this.speaker = false;
     this.tc = 0xD0; this.rate = 8000; this.blockLen = 0x7FF; this.playing = false; this.auto = false; this.paused = false;
-    this.left = 0; this.irqPending = false; this.acc = 0; this.dac = 128; this.testReg = 0;
+    this.left = 0; this.irqPending = false; this.acc = 0; this.dac = 128; this.testReg = 0; this.e2v = 0xAA; this.e2c = 0;
     this.pcm = new Float32Array(16384); this.pcmW = 0; this.pcmR = 0; this.lastS = 0; this.resFrac = 0; this.blockLeft = 0;
   }
   readPort(p) {
@@ -1732,7 +1732,7 @@ class SoundBlaster {
       if (this.args.length >= this.need) { const c = this.cmd; this.cmd = -1; this.exec(c, this.args); }
       return;
     }
-    const need = { 0x10: 1, 0x14: 2, 0x1C: 0, 0x40: 1, 0x48: 2, 0xE0: 1, 0xE4: 1, 0x80: 2, 0x91: 0, 0x90: 0, 0x24: 2, 0x20: 0, 0x1D: 0, 0xD0: 0, 0xD1: 0, 0xD3: 0, 0xD4: 0, 0xDA: 0, 0xE1: 0, 0xF2: 0, 0xE8: 0, 0xD8: 0, 0x45: 0, 0x47: 0, 0xDC: 0, 0xF8: 0 }[v];
+    const need = { 0x10: 1, 0x14: 2, 0x1C: 0, 0x40: 1, 0x48: 2, 0xE0: 1, 0xE4: 1, 0xE2: 1, 0x80: 2, 0x91: 0, 0x90: 0, 0x24: 2, 0x20: 0, 0x1D: 0, 0xD0: 0, 0xD1: 0, 0xD3: 0, 0xD4: 0, 0xDA: 0, 0xE1: 0, 0xF2: 0, 0xE8: 0, 0xD8: 0, 0x45: 0, 0x47: 0, 0xDC: 0, 0xF8: 0 }[v];
     if (need === undefined) return; // unknown: ignore
     if (need === 0) { this.exec(v, []); return; }
     this.cmd = v; this.args = []; this.need = need;
@@ -1753,6 +1753,19 @@ class SoundBlaster {
       case 0xE1: this.outq.push(2, 1); break;
       case 0xE0: this.outq.push((~a[0]) & 0xFF); break;
       case 0xE4: this.testReg = a[0]; break;
+      case 0xE2: { // DSP "DMA identification": value derived from the data byte is written into memory through the DMA channel
+        // (Creative's CT-VOICE driver uses it to compute its own jump-table entries at start-up)
+        const T = [[1, -2, -4, 8, -16, 32, 64, -128, -106], [-1, 2, -4, 8, 16, -32, 64, -128, 165], [-1, 2, 4, -8, 16, -32, -64, 128, -151], [1, -2, 4, -8, -16, 32, -64, 128, 90]][this.e2c & 3];
+        for (let i = 0; i < 8; i++) if ((a[0] >> i) & 1) this.e2v += T[i];
+        this.e2v += T[8]; this.e2c++;
+        const dma = this.sys.dma, ch = this.dma;
+        if (dma.rem[ch] > 0) {
+          this.sys.mem[((dma.page[ch] << 16) | (dma.cur[ch] & 0xFFFF)) & 0xFFFFF] = this.e2v & 0xFF;
+          dma.cur[ch] = (dma.cur[ch] + 1) & 0xFFFF;
+          if (--dma.rem[ch] <= 0) { dma.status |= 1 << ch; dma.mask[ch] = 1; }
+        }
+        break;
+      }
       case 0xE8: this.outq.push(this.testReg); break;
       case 0xF2: this.raiseIrq(); break;
       case 0x80: break;
