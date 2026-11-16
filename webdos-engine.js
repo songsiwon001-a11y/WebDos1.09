@@ -1,0 +1,3628 @@
+/* WebDos engine: x86 CPU / VGA / AdLib / Sound Blaster / DOS HLE + embed API (window.WebDos).
+ * 이 스크립트는 webdos.html 의 DOM(id: screen, stage, settings, wdOverlay 등)이 있어야 시작됩니다. */
+'use strict';
+
+/* ===========================================================================
+ *  x86 (386 real-mode) CPU core
+ *  - 8086/186/286 full instruction set, 386 32-bit operands/addressing in real mode
+ *  - lazy arithmetic flags
+ *  - FPU opcodes are decoded and ignored (programs will detect "no FPU")
+ *  - protected mode is NOT implemented (mov cr0 with PE raises an emulator error)
+ * =========================================================================== */
+
+const PARITY = new Uint8Array(256);
+for (let i = 0; i < 256; i++) { let p = 1; for (let b = i; b; b >>= 1) p ^= b & 1; PARITY[i] = p; }
+const SIGN = [0, 0x80, 0x8000, 0, 0x80000000];
+const MASKSZ = [0, 0xFF, 0xFFFF, 0, 0xFFFFFFFF];
+
+class EmuError extends Error {}
+
+class CPU {
+  constructor(sys) {
+    this.sys = sys;
+    this.mem = sys.mem;
+    this.vga = sys.vga;
+    this.r = new Int32Array(8);          // EAX ECX EDX EBX ESP EBP ESI EDI
+    this.seg = new Uint16Array(6);       // ES CS SS DS FS GS
+    this.sb = new Int32Array(6);         // segment bases
+    this.ip = 0;
+    this.fop = 0; this.fres = 0; this.fsz = 1; this.fdst = 0; this.fsrc = 0;
+    this.cfx = 0; this.ofx = 0; this.afx = 0; this.zfx = 0; this.sfx = 0; this.pfx = 0;
+    this.fIF = 0; this.fDF = 0; this.fTF = 0; this.fmisc = 0;
+    this.halted = false; this.noirq = 0; this.irqLine = false;
+    this.ov = -1; this.a32 = false; this.osz = 2; this.rep = 0;
+    this.mod = 0; this.reg = 0; this.rm = 0; this.ea = 0;
+    this.instrCount = 0; this.yielded = false;
+    this.cr0 = 0; this.cyc = 0;
+  }
+
+  reset() {
+    this.r.fill(0); this.seg.fill(0); this.sb.fill(0); this.ip = 0;
+    this.fop = 0; this.fres = 1; this.fsz = 1; this.cfx = this.ofx = this.afx = 0;
+    this.fIF = 0; this.fDF = 0; this.fTF = 0; this.fmisc = 0; this.halted = false; this.noirq = 0;
+    this.yielded = false;
+  }
+
+  /* ---------------- memory ---------------- */
+  rb(a) { a &= 0xFFFFF; if ((a >>> 17) === 5) return this.vga.rb(a); return this.mem[a]; }
+  rw(a) {
+    a &= 0xFFFFF;
+    if ((a >>> 17) === 5) return this.vga.rb(a) | (this.vga.rb(a + 1) << 8);
+    return this.mem[a] | (this.mem[a + 1] << 8);
+  }
+  rd(a) {
+    a &= 0xFFFFF;
+    if ((a >>> 17) === 5) return (this.vga.rb(a) | (this.vga.rb(a + 1) << 8) | (this.vga.rb(a + 2) << 16) | (this.vga.rb(a + 3) << 24)) >>> 0;
+    const m = this.mem;
+    return (m[a] | (m[a + 1] << 8) | (m[a + 2] << 16) | (m[a + 3] << 24)) >>> 0;
+  }
+  wb(a, v) { a &= 0xFFFFF; if ((a >>> 17) === 5) { this.vga.wb(a, v & 0xFF); return; } this.mem[a] = v; }
+  ww(a, v) {
+    a &= 0xFFFFF;
+    if ((a >>> 17) === 5) { this.vga.wb(a, v & 0xFF); this.vga.wb(a + 1, (v >> 8) & 0xFF); return; }
+    this.mem[a] = v; this.mem[a + 1] = v >> 8;
+  }
+  wd(a, v) {
+    a &= 0xFFFFF;
+    if ((a >>> 17) === 5) { for (let i = 0; i < 4; i++) this.vga.wb(a + i, (v >>> (8 * i)) & 0xFF); return; }
+    const m = this.mem; m[a] = v; m[a + 1] = v >> 8; m[a + 2] = v >> 16; m[a + 3] = v >> 24;
+  }
+  rs(a, sz) { return sz === 1 ? this.rb(a) : sz === 2 ? this.rw(a) : this.rd(a); }
+  ws(a, sz, v) { if (sz === 1) this.wb(a, v); else if (sz === 2) this.ww(a, v); else this.wd(a, v); }
+
+  fetchb() { const v = this.mem[(this.sb[1] + this.ip) & 0xFFFFF]; this.ip = (this.ip + 1) & 0xFFFF; return v; }
+  fetchw() { const a = this.sb[1] + this.ip; this.ip = (this.ip + 2) & 0xFFFF; return this.mem[a & 0xFFFFF] | (this.mem[(a + 1) & 0xFFFFF] << 8); }
+  fetchd() { const a = this.sb[1] + this.ip; this.ip = (this.ip + 4) & 0xFFFF; const m = this.mem; return (m[a & 0xFFFFF] | (m[(a + 1) & 0xFFFFF] << 8) | (m[(a + 2) & 0xFFFFF] << 16) | (m[(a + 3) & 0xFFFFF] << 24)) >>> 0; }
+  fetchs(sz) { return sz === 2 ? this.fetchw() : this.fetchd(); }
+  fetchsb() { return (this.fetchb() << 24) >> 24; }
+
+  setSeg(i, v) { this.seg[i] = v; this.sb[i] = v << 4; }
+
+  /* ---------------- registers ---------------- */
+  getR(i, sz) {
+    if (sz === 2) return this.r[i] & 0xFFFF;
+    if (sz === 4) return this.r[i] >>> 0;
+    return i < 4 ? this.r[i] & 0xFF : (this.r[i - 4] >> 8) & 0xFF;
+  }
+  setR(i, sz, v) {
+    if (sz === 2) this.r[i] = (this.r[i] & ~0xFFFF) | (v & 0xFFFF);
+    else if (sz === 4) this.r[i] = v | 0;
+    else if (i < 4) this.r[i] = (this.r[i] & ~0xFF) | (v & 0xFF);
+    else this.r[i - 4] = (this.r[i - 4] & ~0xFF00) | ((v & 0xFF) << 8);
+  }
+
+  /* ---------------- flags ---------------- */
+  getCF() {
+    switch (this.fop) {
+      case 1: return this.fres < this.fdst ? 1 : 0;
+      case 2: return this.fdst < this.fsrc ? 1 : 0;
+      case 3: return 0;
+      default: return this.cfx;
+    }
+  }
+  getOF() {
+    const s = SIGN[this.fsz];
+    switch (this.fop) {
+      case 1: return ((this.fsrc ^ this.fres) & (this.fdst ^ this.fres) & s) !== 0 ? 1 : 0;
+      case 2: return ((this.fdst ^ this.fsrc) & (this.fdst ^ this.fres) & s) !== 0 ? 1 : 0;
+      case 3: return 0;
+      case 4: return this.fres === s ? 1 : 0;
+      case 5: return this.fres === s - 1 ? 1 : 0;
+      default: return this.ofx;
+    }
+  }
+  getAF() {
+    switch (this.fop) {
+      case 1: case 2: return ((this.fdst ^ this.fsrc ^ this.fres) & 16) ? 1 : 0;
+      case 3: return 0;
+      case 4: return (this.fres & 15) === 0 ? 1 : 0;
+      case 5: return (this.fres & 15) === 15 ? 1 : 0;
+      default: return this.afx;
+    }
+  }
+  getZF() { return this.fop === 6 ? this.zfx : (this.fres === 0 ? 1 : 0); }
+  getSF() { return this.fop === 6 ? this.sfx : ((this.fres & SIGN[this.fsz]) !== 0 ? 1 : 0); }
+  getPF() { return this.fop === 6 ? this.pfx : PARITY[this.fres & 0xFF]; }
+  matFlags() {
+    const cf = this.getCF(), of = this.getOF(), af = this.getAF(), zf = this.getZF(), sf = this.getSF(), pf = this.getPF();
+    this.cfx = cf; this.ofx = of; this.afx = af; this.zfx = zf; this.sfx = sf; this.pfx = pf; this.fop = 6;
+  }
+  getFlags() {
+    return this.getCF() | 2 | (this.getPF() << 2) | (this.getAF() << 4) | (this.getZF() << 6) | (this.getSF() << 7) |
+      (this.fTF << 8) | (this.fIF << 9) | (this.fDF << 10) | (this.getOF() << 11) | this.fmisc;
+  }
+  setFlags(v) {
+    this.fop = 6; this.cfx = v & 1; this.pfx = (v >> 2) & 1; this.afx = (v >> 4) & 1; this.zfx = (v >> 6) & 1;
+    this.sfx = (v >> 7) & 1; this.ofx = (v >> 11) & 1; this.fTF = (v >> 8) & 1; this.fIF = (v >> 9) & 1;
+    this.fDF = (v >> 10) & 1; this.fmisc = v & 0xF000;
+  }
+  setCO(cf, of) {
+    if (this.fop !== 6) { this.afx = this.getAF(); this.fop = 0; }
+    this.cfx = cf; this.ofx = of;
+  }
+  cond(n) {
+    let r;
+    switch (n >> 1) {
+      case 0: r = this.getOF(); break;
+      case 1: r = this.getCF(); break;
+      case 2: r = this.getZF(); break;
+      case 3: r = this.getCF() | this.getZF(); break;
+      case 4: r = this.getSF(); break;
+      case 5: r = this.getPF(); break;
+      case 6: r = this.getSF() ^ this.getOF(); break;
+      default: r = this.getZF() | (this.getSF() ^ this.getOF()); break;
+    }
+    return (n & 1) ? !r : !!r;
+  }
+
+  /* ---------------- helpers ---------------- */
+  m(v, sz) { return sz === 1 ? v & 0xFF : sz === 2 ? v & 0xFFFF : v >>> 0; }
+  sx(v, sz) { return sz === 1 ? (v << 24) >> 24 : sz === 2 ? (v << 16) >> 16 : v | 0; }
+
+  push(v, sz) {
+    const sp = (this.r[4] - sz) & 0xFFFF;
+    this.r[4] = (this.r[4] & ~0xFFFF) | sp;
+    if (sz === 2) this.ww(this.sb[2] + sp, v); else this.wd(this.sb[2] + sp, v);
+  }
+  pop(sz) {
+    const sp = this.r[4] & 0xFFFF;
+    const v = sz === 2 ? this.rw(this.sb[2] + sp) : this.rd(this.sb[2] + sp);
+    this.r[4] = (this.r[4] & ~0xFFFF) | ((sp + sz) & 0xFFFF);
+    return v;
+  }
+
+  /* ModRM ------------------------------------------------------------------*/
+  modrm() {
+    const b = this.fetchb();
+    const mod = b >> 6, rm = b & 7;
+    this.mod = mod; this.reg = (b >> 3) & 7; this.rm = rm;
+    if (mod === 3) return;
+    const r = this.r;
+    let seg = 3, off;
+    if (!this.a32) {
+      switch (rm) {
+        case 0: off = r[3] + r[6]; break;
+        case 1: off = r[3] + r[7]; break;
+        case 2: off = r[5] + r[6]; seg = 2; break;
+        case 3: off = r[5] + r[7]; seg = 2; break;
+        case 4: off = r[6]; break;
+        case 5: off = r[7]; break;
+        case 6: if (mod === 0) { off = this.fetchw(); } else { off = r[5]; seg = 2; } break;
+        default: off = r[3]; break;
+      }
+      if (mod === 1) off += this.fetchsb();
+      else if (mod === 2) off += this.fetchw();
+      off &= 0xFFFF;
+    } else {
+      if (rm === 4) {
+        const sib = this.fetchb();
+        const sc = sib >> 6, idx = (sib >> 3) & 7, base = sib & 7;
+        off = 0;
+        if (base === 5 && mod === 0) off = this.fetchd() | 0;
+        else { off = r[base]; if (base === 4 || base === 5) seg = 2; }
+        if (idx !== 4) off += r[idx] << sc;
+      } else if (rm === 5 && mod === 0) off = this.fetchd() | 0;
+      else { off = r[rm]; if (rm === 5) seg = 2; }
+      if (mod === 1) off += this.fetchsb();
+      else if (mod === 2) off += this.fetchd() | 0;
+      off |= 0;
+    }
+    if (this.ov >= 0) seg = this.ov;
+    this.ea = this.sb[seg] + off;
+  }
+  getE(sz) { return this.mod === 3 ? this.getR(this.rm, sz) : this.rs(this.ea, sz); }
+  setE(sz, v) { if (this.mod === 3) this.setR(this.rm, sz, v); else this.ws(this.ea, sz, v); }
+  getG(sz) { return this.getR(this.reg, sz); }
+  setG(sz, v) { this.setR(this.reg, sz, v); }
+
+  /* ---------------- ALU ---------------- */
+  alu(op, a, b, sz) {
+    let res;
+    switch (op) {
+      case 0: res = this.m(a + b, sz); this.fop = 1; this.fdst = a; this.fsrc = b; break;
+      case 1: res = this.m(a | b, sz); this.fop = 3; break;
+      case 2: {
+        const c = this.getCF(); res = this.m(a + b + c, sz);
+        this.cfx = c ? (res <= a ? 1 : 0) : (res < a ? 1 : 0);
+        this.ofx = ((a ^ res) & (b ^ res) & SIGN[sz]) !== 0 ? 1 : 0;
+        this.afx = ((a ^ b ^ res) & 16) ? 1 : 0; this.fop = 0; break;
+      }
+      case 3: {
+        const c = this.getCF(); res = this.m(a - b - c, sz);
+        this.cfx = c ? (a <= b ? 1 : 0) : (a < b ? 1 : 0);
+        this.ofx = ((a ^ b) & (a ^ res) & SIGN[sz]) !== 0 ? 1 : 0;
+        this.afx = ((a ^ b ^ res) & 16) ? 1 : 0; this.fop = 0; break;
+      }
+      case 4: res = this.m(a & b, sz); this.fop = 3; break;
+      case 6: res = this.m(a ^ b, sz); this.fop = 3; break;
+      default: res = this.m(a - b, sz); this.fop = 2; this.fdst = a; this.fsrc = b; break; // 5 sub, 7 cmp
+    }
+    this.fres = res; this.fsz = sz;
+    return res;
+  }
+  inc(a, sz) { this.cfx = this.getCF(); const res = this.m(a + 1, sz); this.fop = 4; this.fres = res; this.fsz = sz; return res; }
+  dec(a, sz) { this.cfx = this.getCF(); const res = this.m(a - 1, sz); this.fop = 5; this.fres = res; this.fsz = sz; return res; }
+
+  shift(op, a, cnt, sz) {
+    cnt &= 31;
+    if (cnt === 0) return a;
+    const bits = sz * 8, s = SIGN[sz];
+    let res, cf, of;
+    switch (op) {
+      case 0: { // ROL
+        const c = cnt % bits;
+        res = c === 0 ? a : this.m(sz === 4 ? ((a << c) | (a >>> (32 - c))) : ((a << c) | (a >>> (bits - c))), sz);
+        cf = res & 1; of = ((res & s) !== 0 ? 1 : 0) ^ cf; this.setCO(cf, of); return res;
+      }
+      case 1: { // ROR
+        const c = cnt % bits;
+        res = c === 0 ? a : this.m(sz === 4 ? ((a >>> c) | (a << (32 - c))) : ((a >>> c) | (a << (bits - c))), sz);
+        cf = (res & s) !== 0 ? 1 : 0; of = cf ^ (((res << 1) & s) !== 0 ? 1 : 0); this.setCO(cf, of); return res;
+      }
+      case 2: { // RCL
+        let c = this.getCF(); res = a;
+        for (let i = cnt % (bits + 1); i > 0; i--) { const nc = (res & s) !== 0 ? 1 : 0; res = this.m((res << 1) | c, sz); c = nc; }
+        of = ((res & s) !== 0 ? 1 : 0) ^ c; this.setCO(c, of); return res;
+      }
+      case 3: { // RCR
+        let c = this.getCF(); res = a;
+        for (let i = cnt % (bits + 1); i > 0; i--) { const nc = res & 1; res = this.m((res >>> 1) | (c ? s : 0), sz); c = nc; }
+        of = ((res & s) !== 0 ? 1 : 0) ^ (((res << 1) & s) !== 0 ? 1 : 0); this.setCO(c, of); return res;
+      }
+      case 4: case 6: // SHL / SAL
+        res = this.m(a << cnt, sz); cf = cnt <= bits ? (a >>> (bits - cnt)) & 1 : 0;
+        of = ((res & s) !== 0 ? 1 : 0) ^ cf; break;
+      case 5: // SHR
+        res = cnt >= 32 ? 0 : a >>> cnt; res = this.m(res, sz); cf = cnt <= bits ? (a >>> (cnt - 1)) & 1 : 0;
+        of = (a & s) !== 0 ? 1 : 0; break;
+      default: { // SAR
+        const v = this.sx(a, sz);
+        res = this.m(v >> Math.min(cnt, 31), sz); cf = (v >> Math.min(cnt - 1, 31)) & 1; of = 0; break;
+      }
+    }
+    this.fop = 0; this.fres = res; this.fsz = sz; this.cfx = cf; this.ofx = of; this.afx = 0;
+    return res;
+  }
+
+  mul32(a, b) { // unsigned 32x32 -> [lo,hi]
+    const al = a & 0xFFFF, ah = a >>> 16, bl = b & 0xFFFF, bh = b >>> 16;
+    const t = al * bl;
+    const m1 = ah * bl + (t >>> 16);
+    const m2 = al * bh + (m1 & 0xFFFF);
+    const hi = ah * bh + Math.floor(m1 / 65536) + Math.floor(m2 / 65536);
+    return [Math.imul(a, b) >>> 0, hi >>> 0];
+  }
+
+  divErr() { this.intr(0); return false; }
+
+  /* ---------------- stack frames / interrupts ---------------- */
+  intr(n) {
+    this.push(this.getFlags() & 0xFFFF, 2);
+    this.push(this.seg[1], 2); this.push(this.ip, 2);
+    this.fIF = 0; this.fTF = 0;
+    const a = n << 2;
+    this.ip = this.mem[a] | (this.mem[a + 1] << 8);
+    this.setSeg(1, this.mem[a + 2] | (this.mem[a + 3] << 8));
+    this.halted = false;
+  }
+
+  /* far call helper for HLE callbacks (mouse handler etc.) */
+  farCallTo(seg, off, retSeg, retOff) {
+    this.push(retSeg, 2); this.push(retOff, 2);
+    this.setSeg(1, seg); this.ip = off;
+  }
+
+  /* ---------------- main loop ---------------- */
+  run(n) {
+    const sys = this.sys;
+    let done = 0;
+    while (done < n) {
+      if (this.irqLine && this.fIF && this.noirq === 0) {
+        const v = sys.pic.ack();
+        if (v >= 0) this.intr(v);
+      }
+      if (this.halted) {
+        if (!this.irqLine || !this.fIF) return done;
+        this.halted = false;
+      }
+      if (this.noirq) this.noirq--;
+      this.step();
+      done++; this.cyc++;
+      if (this.yielded) { this.yielded = false; return done; }
+    }
+    return done;
+  }
+
+  step() {
+    this.ov = -1; this.a32 = false; this.osz = 2; this.rep = 0;
+    const startIP = this.ip;
+    let op;
+    for (;;) {
+      op = this.fetchb();
+      switch (op) {
+        case 0x26: this.ov = 0; continue;
+        case 0x2E: this.ov = 1; continue;
+        case 0x36: this.ov = 2; continue;
+        case 0x3E: this.ov = 3; continue;
+        case 0x64: this.ov = 4; continue;
+        case 0x65: this.ov = 5; continue;
+        case 0x66: this.osz = 4; continue;
+        case 0x67: this.a32 = true; continue;
+        case 0xF0: continue;
+        case 0xF2: case 0xF3: this.rep = op; continue;
+      }
+      break;
+    }
+    const osz = this.osz, r = this.r;
+    if (op < 0x40 && (op & 7) < 6) {
+      const aop = op >> 3, form = op & 7;
+      switch (form) {
+        case 0: this.modrm(); { const res = this.alu(aop, this.getE(1), this.getG(1), 1); if (aop !== 7) this.setE(1, res); } return;
+        case 1: this.modrm(); { const res = this.alu(aop, this.getE(osz), this.getG(osz), osz); if (aop !== 7) this.setE(osz, res); } return;
+        case 2: this.modrm(); { const res = this.alu(aop, this.getG(1), this.getE(1), 1); if (aop !== 7) this.setG(1, res); } return;
+        case 3: this.modrm(); { const res = this.alu(aop, this.getG(osz), this.getE(osz), osz); if (aop !== 7) this.setG(osz, res); } return;
+        case 4: { const res = this.alu(aop, r[0] & 0xFF, this.fetchb(), 1); if (aop !== 7) r[0] = (r[0] & ~0xFF) | res; } return;
+        default: { const imm = this.fetchs(osz); const res = this.alu(aop, this.getR(0, osz), imm, osz); if (aop !== 7) this.setR(0, osz, res); } return;
+      }
+    }
+    switch (op) {
+      case 0x06: this.push(this.seg[0], osz); return;
+      case 0x07: this.setSeg(0, this.pop(osz) & 0xFFFF); return;
+      case 0x0E: this.push(this.seg[1], osz); return;
+      case 0x16: this.push(this.seg[2], osz); return;
+      case 0x17: this.setSeg(2, this.pop(osz) & 0xFFFF); this.noirq = 1; return;
+      case 0x1E: this.push(this.seg[3], osz); return;
+      case 0x1F: this.setSeg(3, this.pop(osz) & 0xFFFF); return;
+      case 0x0F: this.op0F(); return;
+      case 0x27: { // DAA
+        let al = r[0] & 0xFF; const oldal = al, oldcf = this.getCF(); let cf = 0;
+        if ((al & 15) > 9 || this.getAF()) { al += 6; cf = oldcf || (al > 255); this.afx = 1; } else this.afx = 0;
+        if (oldal > 0x99 || oldcf) { al += 0x60; cf = 1; }
+        al &= 0xFF; r[0] = (r[0] & ~0xFF) | al; this.fop = 0; this.fres = al; this.fsz = 1; this.cfx = cf ? 1 : 0; this.ofx = 0; return;
+      }
+      case 0x2F: { // DAS
+        let al = r[0] & 0xFF; const oldal = al, oldcf = this.getCF(); let cf = 0;
+        if ((al & 15) > 9 || this.getAF()) { cf = oldcf || (al < 6); al -= 6; this.afx = 1; } else this.afx = 0;
+        if (oldal > 0x99 || oldcf) { al -= 0x60; cf = 1; }
+        al &= 0xFF; r[0] = (r[0] & ~0xFF) | al; this.fop = 0; this.fres = al; this.fsz = 1; this.cfx = cf ? 1 : 0; this.ofx = 0; return;
+      }
+      case 0x37: { // AAA
+        if ((r[0] & 15) > 9 || this.getAF()) { r[0] = (r[0] & ~0xFFFF) | (((r[0] & 0xFFFF) + 0x106) & 0xFFFF); this.afx = 1; this.cfx = 1; }
+        else { this.afx = 0; this.cfx = 0; }
+        r[0] &= ~0xF0; this.fop = 0; this.fres = r[0] & 0xFF; this.fsz = 1; this.ofx = 0; return;
+      }
+      case 0x3F: { // AAS
+        if ((r[0] & 15) > 9 || this.getAF()) { r[0] = (r[0] & ~0xFFFF) | (((r[0] & 0xFFFF) - 6) & 0xFFFF); r[0] = (r[0] & ~0xFF00) | ((((r[0] >> 8) & 0xFF) - 1) << 8); this.afx = 1; this.cfx = 1; }
+        else { this.afx = 0; this.cfx = 0; }
+        r[0] &= ~0xF0; this.fop = 0; this.fres = r[0] & 0xFF; this.fsz = 1; this.ofx = 0; return;
+      }
+      case 0x40: case 0x41: case 0x42: case 0x43: case 0x44: case 0x45: case 0x46: case 0x47: {
+        const i = op & 7; this.setR(i, osz, this.inc(this.getR(i, osz), osz)); return;
+      }
+      case 0x48: case 0x49: case 0x4A: case 0x4B: case 0x4C: case 0x4D: case 0x4E: case 0x4F: {
+        const i = op & 7; this.setR(i, osz, this.dec(this.getR(i, osz), osz)); return;
+      }
+      case 0x50: case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: case 0x57: {
+        const i = op & 7;
+        // 8086 pushes the decremented SP for PUSH SP; 286+ pushes the original value
+        this.push(this.getR(i, osz), osz); return;
+      }
+      case 0x58: case 0x59: case 0x5A: case 0x5B: case 0x5C: case 0x5D: case 0x5E: case 0x5F: {
+        const i = op & 7; const v = this.pop(osz); this.setR(i, osz, v); return;
+      }
+      case 0x60: { // PUSHA
+        const sp = this.getR(4, osz);
+        for (let i = 0; i < 8; i++) this.push(i === 4 ? sp : this.getR(i, osz), osz); return;
+      }
+      case 0x61: { // POPA
+        for (let i = 7; i >= 0; i--) { const v = this.pop(osz); if (i !== 4) this.setR(i, osz, v); } return;
+      }
+      case 0x62: { // BOUND
+        this.modrm(); const idx = this.sx(this.getG(osz), osz);
+        const lo = this.sx(this.rs(this.ea, osz), osz), hi = this.sx(this.rs(this.ea + osz, osz), osz);
+        if (idx < lo || idx > hi) { this.ip = startIP; this.intr(5); } return;
+      }
+      case 0x68: this.push(this.fetchs(osz), osz); return;
+      case 0x6A: this.push(this.m(this.fetchsb(), osz), osz); return;
+      case 0x69: case 0x6B: {
+        this.modrm(); const a = this.sx(this.getE(osz), osz);
+        const b = op === 0x69 ? this.sx(this.fetchs(osz), osz) : this.fetchsb();
+        this.setG(osz, this.imul2(a, b, osz)); return;
+      }
+      case 0x6C: case 0x6D: case 0x6E: case 0x6F: this.ioString(op); return;
+      case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x77:
+      case 0x78: case 0x79: case 0x7A: case 0x7B: case 0x7C: case 0x7D: case 0x7E: case 0x7F: {
+        const d = this.fetchsb(); if (this.cond(op & 15)) this.ip = (this.ip + d) & 0xFFFF; return;
+      }
+      case 0x80: case 0x81: case 0x82: case 0x83: {
+        this.modrm(); const sz = op & 1 ? osz : 1;
+        const imm = op === 0x81 ? this.fetchs(osz) : (op === 0x83 ? this.m(this.fetchsb(), osz) : this.fetchb());
+        const res = this.alu(this.reg, this.getE(sz), imm, sz);
+        if (this.reg !== 7) this.setE(sz, res); return;
+      }
+      case 0x84: this.modrm(); this.alu(4, this.getE(1), this.getG(1), 1); return;
+      case 0x85: this.modrm(); this.alu(4, this.getE(osz), this.getG(osz), osz); return;
+      case 0x86: { this.modrm(); const a = this.getE(1), b = this.getG(1); this.setE(1, b); this.setG(1, a); return; }
+      case 0x87: { this.modrm(); const a = this.getE(osz), b = this.getG(osz); this.setE(osz, b); this.setG(osz, a); return; }
+      case 0x88: this.modrm(); this.setE(1, this.getG(1)); return;
+      case 0x89: this.modrm(); this.setE(osz, this.getG(osz)); return;
+      case 0x8A: this.modrm(); this.setG(1, this.getE(1)); return;
+      case 0x8B: this.modrm(); this.setG(osz, this.getE(osz)); return;
+      case 0x8C: this.modrm(); if (this.reg > 5) throw new EmuError('invalid segment register'); if (this.mod === 3) this.setR(this.rm, osz, this.seg[this.reg]); else this.ww(this.ea, this.seg[this.reg]); return;
+      case 0x8D: this.modrm(); if (this.mod === 3) throw new EmuError('LEA with register operand'); {
+        let off = this.ea - this.sb[this.ov >= 0 ? this.ov : (this.rm === 2 || this.rm === 3 || (this.rm === 6 && this.mod) ? 2 : 3)];
+        this.setG(osz, osz === 2 ? off & 0xFFFF : off >>> 0);
+        return;
+      }
+      case 0x8E: { this.modrm(); const v = this.getE(2); if (this.reg > 5 || this.reg === 1) throw new EmuError('invalid MOV Sreg'); this.setSeg(this.reg, v); if (this.reg === 2) this.noirq = 1; return; }
+      case 0x8F: { const v = this.pop(osz); this.modrm(); this.setE(osz, v); return; }
+      case 0x90: return;
+      case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97: {
+        const i = op & 7, a = this.getR(0, osz), b = this.getR(i, osz); this.setR(0, osz, b); this.setR(i, osz, a); return;
+      }
+      case 0x98: if (osz === 2) r[0] = (r[0] & ~0xFFFF) | (((r[0] << 24) >> 24) & 0xFFFF); else r[0] = (r[0] << 16) >> 16; return;
+      case 0x99: if (osz === 2) r[2] = (r[2] & ~0xFFFF) | ((r[0] & 0x8000) ? 0xFFFF : 0); else r[2] = r[0] >> 31; return;
+      case 0x9A: { const off = this.fetchs(osz), sg = this.fetchw(); this.push(this.seg[1], osz); this.push(this.ip, osz); this.setSeg(1, sg); this.ip = off & 0xFFFF; return; }
+      case 0x9B: return;
+      case 0x9C: this.push(this.getFlags() & (osz === 2 ? 0xFFFF : 0x3FFFFF) & ~0x30000, osz); return;
+      case 0x9D: {
+        const v = this.pop(osz); this.setFlags(v & 0xFFFF);
+        return;
+      }
+      case 0x9E: { const ah = (r[0] >> 8) & 0xFF; this.matFlags(); this.cfx = ah & 1; this.pfx = (ah >> 2) & 1; this.afx = (ah >> 4) & 1; this.zfx = (ah >> 6) & 1; this.sfx = (ah >> 7) & 1; return; }
+      case 0x9F: r[0] = (r[0] & ~0xFF00) | ((this.getFlags() & 0xFF) << 8); return;
+      case 0xA0: { const off = this.a32 ? this.fetchd() : this.fetchw(); this.setR(0, 1, this.rb(this.sb[this.ov >= 0 ? this.ov : 3] + off)); return; }
+      case 0xA1: { const off = this.a32 ? this.fetchd() : this.fetchw(); this.setR(0, osz, this.rs(this.sb[this.ov >= 0 ? this.ov : 3] + off, osz)); return; }
+      case 0xA2: { const off = this.a32 ? this.fetchd() : this.fetchw(); this.wb(this.sb[this.ov >= 0 ? this.ov : 3] + off, r[0]); return; }
+      case 0xA3: { const off = this.a32 ? this.fetchd() : this.fetchw(); this.ws(this.sb[this.ov >= 0 ? this.ov : 3] + off, osz, this.getR(0, osz)); return; }
+      case 0xA4: case 0xA5: case 0xA6: case 0xA7: case 0xAA: case 0xAB: case 0xAC: case 0xAD: case 0xAE: case 0xAF:
+        this.stringOp(op); return;
+      case 0xA8: this.alu(4, r[0] & 0xFF, this.fetchb(), 1); return;
+      case 0xA9: this.alu(4, this.getR(0, osz), this.fetchs(osz), osz); return;
+      case 0xB0: case 0xB1: case 0xB2: case 0xB3: case 0xB4: case 0xB5: case 0xB6: case 0xB7: this.setR(op & 7, 1, this.fetchb()); return;
+      case 0xB8: case 0xB9: case 0xBA: case 0xBB: case 0xBC: case 0xBD: case 0xBE: case 0xBF: this.setR(op & 7, osz, this.fetchs(osz)); return;
+      case 0xC0: case 0xC1: { this.modrm(); const sz = op & 1 ? osz : 1; const c = this.fetchb(); this.setE(sz, this.shift(this.reg, this.getE(sz), c, sz)); return; }
+      case 0xD0: case 0xD1: { this.modrm(); const sz = op & 1 ? osz : 1; this.setE(sz, this.shift(this.reg, this.getE(sz), 1, sz)); return; }
+      case 0xD2: case 0xD3: { this.modrm(); const sz = op & 1 ? osz : 1; this.setE(sz, this.shift(this.reg, this.getE(sz), r[1] & 0xFF, sz)); return; }
+      case 0xC2: { const n = this.fetchw(); this.ip = this.pop(osz) & 0xFFFF; r[4] = (r[4] & ~0xFFFF) | (((r[4] & 0xFFFF) + n) & 0xFFFF); return; }
+      case 0xC3: this.ip = this.pop(osz) & 0xFFFF; return;
+      case 0xC4: case 0xC5: {
+        this.modrm(); if (this.mod === 3) throw new EmuError('LES/LDS reg');
+        const off = this.rs(this.ea, osz), sg = this.rw(this.ea + osz);
+        this.setG(osz, off); this.setSeg(op === 0xC4 ? 0 : 3, sg); return;
+      }
+      case 0xC6: this.modrm(); this.setE(1, this.fetchb()); return;
+      case 0xC7: this.modrm(); this.setE(osz, this.fetchs(osz)); return;
+      case 0xC8: { // ENTER
+        const size = this.fetchw(), lvl = this.fetchb() & 31;
+        this.push(this.getR(5, osz), osz);
+        const frame = r[4] & 0xFFFF;
+        if (lvl > 0) {
+          let bp = r[5] & 0xFFFF;
+          for (let i = 1; i < lvl; i++) { bp = (bp - osz) & 0xFFFF; this.push(this.rs(this.sb[2] + bp, osz), osz); }
+          this.push(frame, osz);
+        }
+        this.setR(5, osz, frame);
+        r[4] = (r[4] & ~0xFFFF) | (((r[4] & 0xFFFF) - size) & 0xFFFF); return;
+      }
+      case 0xC9: r[4] = (r[4] & ~0xFFFF) | (r[5] & 0xFFFF); this.setR(5, osz, this.pop(osz)); return;
+      case 0xCA: { const n = this.fetchw(); this.ip = this.pop(osz) & 0xFFFF; this.setSeg(1, this.pop(osz) & 0xFFFF); r[4] = (r[4] & ~0xFFFF) | (((r[4] & 0xFFFF) + n) & 0xFFFF); return; }
+      case 0xCB: this.ip = this.pop(osz) & 0xFFFF; this.setSeg(1, this.pop(osz) & 0xFFFF); return;
+      case 0xCC: this.intr(3); return;
+      case 0xCD: this.intr(this.fetchb()); return;
+      case 0xCE: if (this.getOF()) this.intr(4); return;
+      case 0xCF: {
+        this.ip = this.pop(osz) & 0xFFFF; this.setSeg(1, this.pop(osz) & 0xFFFF);
+        const f = this.pop(osz); this.setFlags(f & 0xFFFF); return;
+      }
+      case 0xD4: { const b = this.fetchb(); if (b === 0) { this.ip = startIP; this.intr(0); return; } const al = r[0] & 0xFF; const q = (al / b) | 0, rem = al % b; r[0] = (r[0] & ~0xFFFF) | (q << 8) | rem; this.fop = 0; this.fres = q & 0xFF ? (r[0] & 0xFF) : r[0] & 0xFF; this.fres = r[0] & 0xFF; this.fsz = 1; this.cfx = this.ofx = this.afx = 0; return; }
+      case 0xD5: { const b = this.fetchb(); const al = ((r[0] & 0xFF) + (((r[0] >> 8) & 0xFF) * b)) & 0xFF; r[0] = (r[0] & ~0xFFFF) | al; this.fop = 0; this.fres = al; this.fsz = 1; this.cfx = this.ofx = this.afx = 0; return; }
+      case 0xD6: r[0] = (r[0] & ~0xFF) | (this.getCF() ? 0xFF : 0); return;
+      case 0xD7: { const off = this.a32 ? ((r[3] + (r[0] & 0xFF)) | 0) : (((r[3] & 0xFFFF) + (r[0] & 0xFF)) & 0xFFFF); r[0] = (r[0] & ~0xFF) | this.rb(this.sb[this.ov >= 0 ? this.ov : 3] + off); return; }
+      case 0xD8: case 0xD9: case 0xDA: case 0xDB: case 0xDC: case 0xDD: case 0xDE: case 0xDF:
+        this.modrm(); return; // no FPU: swallow
+      case 0xE0: case 0xE1: case 0xE2: case 0xE3: {
+        const d = this.fetchsb(); let take;
+        if (op === 0xE3) take = this.a32 ? r[1] === 0 : (r[1] & 0xFFFF) === 0;
+        else {
+          let c;
+          if (this.a32) { r[1] = (r[1] - 1) | 0; c = r[1]; } else { c = ((r[1] & 0xFFFF) - 1) & 0xFFFF; r[1] = (r[1] & ~0xFFFF) | c; }
+          take = c !== 0;
+          if (op === 0xE0) take = take && !this.getZF(); else if (op === 0xE1) take = take && !!this.getZF();
+        }
+        if (take) this.ip = (this.ip + d) & 0xFFFF; return;
+      }
+      case 0xE4: { const p = this.fetchb(); r[0] = (r[0] & ~0xFF) | this.sys.inb(p); return; }
+      case 0xE5: { const p = this.fetchb(); this.setR(0, osz, osz === 2 ? this.sys.inw(p) : this.sys.ind(p)); return; }
+      case 0xE6: { const p = this.fetchb(); this.sys.outb(p, r[0] & 0xFF); return; }
+      case 0xE7: { const p = this.fetchb(); if (osz === 2) this.sys.outw(p, r[0] & 0xFFFF); else this.sys.outd(p, r[0] >>> 0); return; }
+      case 0xE8: { const d = this.fetchs(osz); this.push(this.ip, osz); this.ip = (this.ip + (osz === 2 ? (d << 16) >> 16 : d)) & 0xFFFF; return; }
+      case 0xE9: { const d = this.fetchs(osz); this.ip = (this.ip + (osz === 2 ? (d << 16) >> 16 : d)) & 0xFFFF; return; }
+      case 0xEA: { const off = this.fetchs(osz), sg = this.fetchw(); this.setSeg(1, sg); this.ip = off & 0xFFFF; return; }
+      case 0xEB: { const d = this.fetchsb(); this.ip = (this.ip + d) & 0xFFFF; return; }
+      case 0xEC: r[0] = (r[0] & ~0xFF) | this.sys.inb(r[2] & 0xFFFF); return;
+      case 0xED: this.setR(0, osz, osz === 2 ? this.sys.inw(r[2] & 0xFFFF) : this.sys.ind(r[2] & 0xFFFF)); return;
+      case 0xEE: this.sys.outb(r[2] & 0xFFFF, r[0] & 0xFF); return;
+      case 0xEF: if (osz === 2) this.sys.outw(r[2] & 0xFFFF, r[0] & 0xFFFF); else this.sys.outd(r[2] & 0xFFFF, r[0] >>> 0); return;
+      case 0xF1: this.intr(1); return;
+      case 0xF4: this.halted = true; return;
+      case 0xF5: { const c = this.getCF(); this.setCO(c ^ 1, this.getOF()); return; }
+      case 0xF6: case 0xF7: this.grp3(op & 1 ? osz : 1, startIP); return;
+      case 0xF8: this.setCO(0, this.getOF()); return;
+      case 0xF9: this.setCO(1, this.getOF()); return;
+      case 0xFA: this.fIF = 0; return;
+      case 0xFB: this.fIF = 1; this.noirq = 1; return;
+      case 0xFC: this.fDF = 0; return;
+      case 0xFD: this.fDF = 1; return;
+      case 0xFE: {
+        this.modrm();
+        if (this.reg === 0) this.setE(1, this.inc(this.getE(1), 1));
+        else if (this.reg === 1) this.setE(1, this.dec(this.getE(1), 1));
+        else throw new EmuError('invalid FE /' + this.reg);
+        return;
+      }
+      case 0xFF: this.grp5(osz); return;
+    }
+    throw new EmuError('Unimplemented opcode ' + op.toString(16).toUpperCase());
+  }
+
+  imul2(a, b, sz) { // signed a*b, truncated, sets CF/OF on overflow
+    let res, ovf;
+    if (sz < 4) {
+      const p = a * b; res = this.m(p, sz); ovf = p !== this.sx(res, sz);
+    } else {
+      const ua = a >>> 0, ub = b >>> 0;
+      const [lo, hi0] = this.mul32(ua, ub);
+      let hi = hi0; if (a < 0) hi = (hi - ub) >>> 0; if (b < 0) hi = (hi - ua) >>> 0;
+      res = lo; ovf = !((hi === 0 && (lo & 0x80000000) === 0) || (hi === 0xFFFFFFFF && (lo & 0x80000000) !== 0));
+    }
+    this.fop = 0; this.fres = res; this.fsz = sz; this.cfx = this.ofx = ovf ? 1 : 0; this.afx = 0;
+    return res;
+  }
+
+  grp3(sz, startIP) {
+    this.modrm();
+    const r = this.r;
+    switch (this.reg) {
+      case 0: case 1: { const imm = sz === 1 ? this.fetchb() : this.fetchs(sz); this.alu(4, this.getE(sz), imm, sz); return; }
+      case 2: this.setE(sz, this.m(~this.getE(sz), sz)); return;
+      case 3: { const a = this.getE(sz); const res = this.m(-a, sz); this.fop = 2; this.fdst = 0; this.fsrc = a; this.fres = res; this.fsz = sz; this.setE(sz, res); return; }
+      case 4: { // MUL
+        const b = this.getE(sz);
+        if (sz === 1) { const p = (r[0] & 0xFF) * b; r[0] = (r[0] & ~0xFFFF) | p; this.fres = p & 0xFF; this.cfx = this.ofx = (p >> 8) ? 1 : 0; this.fsz = 1; }
+        else if (sz === 2) { const p = (r[0] & 0xFFFF) * b; r[0] = (r[0] & ~0xFFFF) | (p & 0xFFFF); r[2] = (r[2] & ~0xFFFF) | ((p >>> 16) & 0xFFFF); this.fres = p & 0xFFFF; this.cfx = this.ofx = (p >>> 16) ? 1 : 0; this.fsz = 2; }
+        else { const [lo, hi] = this.mul32(r[0] >>> 0, b); r[0] = lo | 0; r[2] = hi | 0; this.fres = lo; this.cfx = this.ofx = hi ? 1 : 0; this.fsz = 4; }
+        this.fop = 0; this.afx = 0; return;
+      }
+      case 5: { // IMUL
+        const b = this.sx(this.getE(sz), sz);
+        if (sz === 1) { const p = ((r[0] << 24) >> 24) * b; r[0] = (r[0] & ~0xFFFF) | (p & 0xFFFF); this.fres = p & 0xFF; this.cfx = this.ofx = p !== ((p << 24) >> 24) ? 1 : 0; this.fsz = 1; }
+        else if (sz === 2) { const p = ((r[0] << 16) >> 16) * b; r[0] = (r[0] & ~0xFFFF) | (p & 0xFFFF); r[2] = (r[2] & ~0xFFFF) | ((p >> 16) & 0xFFFF); this.fres = p & 0xFFFF; this.cfx = this.ofx = p !== ((p << 16) >> 16) ? 1 : 0; this.fsz = 2; }
+        else {
+          const a = r[0] | 0, ua = a >>> 0, ub = b >>> 0; const [lo, hi0] = this.mul32(ua, ub);
+          let hi = hi0; if (a < 0) hi = (hi - ub) >>> 0; if (b < 0) hi = (hi - ua) >>> 0;
+          r[0] = lo | 0; r[2] = hi | 0; this.fres = lo; this.fsz = 4;
+          this.cfx = this.ofx = !((hi === 0 && (lo & 0x80000000) === 0) || (hi === 0xFFFFFFFF && (lo & 0x80000000) !== 0)) ? 1 : 0;
+        }
+        this.fop = 0; this.afx = 0; return;
+      }
+      case 6: { // DIV
+        const d = this.getE(sz);
+        if (d === 0) { this.ip = startIP; this.intr(0); return; }
+        if (sz === 1) { const n = r[0] & 0xFFFF, q = Math.floor(n / d); if (q > 0xFF) { this.ip = startIP; this.intr(0); return; } r[0] = (r[0] & ~0xFFFF) | q | ((n % d) << 8); }
+        else if (sz === 2) { const n = ((r[2] & 0xFFFF) * 65536) + (r[0] & 0xFFFF), q = Math.floor(n / d); if (q > 0xFFFF) { this.ip = startIP; this.intr(0); return; } r[0] = (r[0] & ~0xFFFF) | q; r[2] = (r[2] & ~0xFFFF) | (n % d); }
+        else {
+          const n = (BigInt(r[2] >>> 0) << 32n) | BigInt(r[0] >>> 0), bd = BigInt(d), q = n / bd;
+          if (q > 0xFFFFFFFFn) { this.ip = startIP; this.intr(0); return; }
+          r[0] = Number(q) | 0; r[2] = Number(n % bd) | 0;
+        }
+        return;
+      }
+      default: { // IDIV
+        const d = this.sx(this.getE(sz), sz);
+        if (d === 0) { this.ip = startIP; this.intr(0); return; }
+        if (sz === 1) { const n = (r[0] << 16) >> 16, q = Math.trunc(n / d); if (q > 127 || q < -128) { this.ip = startIP; this.intr(0); return; } r[0] = (r[0] & ~0xFFFF) | (q & 0xFF) | (((n % d) & 0xFF) << 8); }
+        else if (sz === 2) { const n = ((r[2] & 0xFFFF) << 16 | (r[0] & 0xFFFF)) | 0, q = Math.trunc(n / d); if (q > 32767 || q < -32768) { this.ip = startIP; this.intr(0); return; } r[0] = (r[0] & ~0xFFFF) | (q & 0xFFFF); r[2] = (r[2] & ~0xFFFF) | ((n % d) & 0xFFFF); }
+        else {
+          const n = (BigInt(r[2]) << 32n) | BigInt(r[0] >>> 0), bd = BigInt(d), q = n / bd;
+          if (q > 0x7FFFFFFFn || q < -0x80000000n) { this.ip = startIP; this.intr(0); return; }
+          r[0] = Number(BigInt.asIntN(32, q)); r[2] = Number(BigInt.asIntN(32, n % bd));
+        }
+        return;
+      }
+    }
+  }
+
+  grp5(osz) {
+    this.modrm();
+    switch (this.reg) {
+      case 0: this.setE(osz, this.inc(this.getE(osz), osz)); return;
+      case 1: this.setE(osz, this.dec(this.getE(osz), osz)); return;
+      case 2: { const t = this.getE(osz); this.push(this.ip, osz); this.ip = t & 0xFFFF; return; }
+      case 3: { if (this.mod === 3) throw new EmuError('CALL FAR reg'); const off = this.rs(this.ea, osz), sg = this.rw(this.ea + osz); this.push(this.seg[1], osz); this.push(this.ip, osz); this.setSeg(1, sg); this.ip = off & 0xFFFF; return; }
+      case 4: this.ip = this.getE(osz) & 0xFFFF; return;
+      case 5: { if (this.mod === 3) throw new EmuError('JMP FAR reg'); const off = this.rs(this.ea, osz), sg = this.rw(this.ea + osz); this.setSeg(1, sg); this.ip = off & 0xFFFF; return; }
+      case 6: { const v = this.getE(osz); this.push(v, osz); return; }
+      default: throw new EmuError('invalid FF /7');
+    }
+  }
+
+  /* ---------------- string instructions ---------------- */
+  stringOp(op) {
+    const r = this.r, a32 = this.a32, rep = this.rep;
+    const sz = (op & 1) ? this.osz : 1;
+    const d = this.fDF ? -sz : sz;
+    const srcBase = this.sb[this.ov >= 0 ? this.ov : 3], dstBase = this.sb[0];
+    let si = a32 ? r[6] : r[6] & 0xFFFF, di = a32 ? r[7] : r[7] & 0xFFFF;
+    let cx = a32 ? r[1] >>> 0 : r[1] & 0xFFFF;
+    const wrap = a32 ? (v => v | 0) : (v => v & 0xFFFF);
+    const kind = op & 0xFE; // A4 movs, A6 cmps, AA stos, AC lods, AE scas
+    const checkZ = rep && (kind === 0xA6 || kind === 0xAE);
+    if (rep && cx === 0) return;
+    // [v1.2] 빠른 경로: 16비트 주소, 정방향, VGA 창을 건드리지 않는 REP MOVS/STOS는 한 번에 처리
+    if (rep && !a32 && !this.fDF && (kind === 0xA4 || kind === 0xAA)) {
+      const len = cx * sz;
+      if (si + (kind === 0xA4 ? len : 0) <= 0x10000 && di + len <= 0x10000) {
+        const dA = (dstBase + di) & 0xFFFFF, sA = (srcBase + si) & 0xFFFFF;
+        if (kind === 0xAA && (dA >>> 17) === 5 && this.vga.fillRun(dA, this.getR(0, sz), sz, cx)) {
+          r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+        }
+        if (dA + len <= 0xA0000 || dA >= 0xC0000 && dA + len <= 0x110000) {
+          if (kind === 0xAA) {
+            const v = this.getR(0, sz), m = this.mem;
+            if (sz === 1) m.fill(v, dA, dA + len);
+            else { for (let k = 0; k < cx; k++) { const p = dA + k * sz; m[p] = v; m[p + 1] = v >> 8; if (sz === 4) { m[p + 2] = v >> 16; m[p + 3] = v >> 24; } } }
+            r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+          }
+          if ((sA + len <= 0xA0000 || sA >= 0xC0000 && sA + len <= 0x110000) && (dA <= sA || dA >= sA + len)) {
+            this.mem.copyWithin(dA, sA, sA + len);
+            r[6] = (r[6] & ~0xFFFF) | ((si + len) & 0xFFFF); r[7] = (r[7] & ~0xFFFF) | ((di + len) & 0xFFFF); r[1] = (r[1] & ~0xFFFF) | 0; this.cyc += cx; return;
+          }
+        }
+      }
+    }
+    // [v1.2] 일반 경로도 반복 횟수만큼 CPU 시간을 소모(전엔 1사이클 취급 → 프레임당 수십억 번 연산하며 멈춤)
+    if (rep) this.cyc += cx;
+    do {
+      switch (kind) {
+        case 0xA4: this.ws(dstBase + di, sz, this.rs(srcBase + si, sz)); si = wrap(si + d); di = wrap(di + d); break;
+        case 0xA6: { const a = this.rs(srcBase + si, sz), b = this.rs(dstBase + di, sz); this.alu(7, a, b, sz); si = wrap(si + d); di = wrap(di + d); break; }
+        case 0xAA: this.ws(dstBase + di, sz, this.getR(0, sz)); di = wrap(di + d); break;
+        case 0xAC: this.setR(0, sz, this.rs(srcBase + si, sz)); si = wrap(si + d); break;
+        case 0xAE: this.alu(7, this.getR(0, sz), this.rs(dstBase + di, sz), sz); di = wrap(di + d); break;
+      }
+      if (rep) {
+        cx = (cx - 1) >>> 0; if (!a32) cx &= 0xFFFF;
+        if (cx === 0) break;
+        if (checkZ) { const z = this.getZF(); if (rep === 0xF3 ? !z : z) break; }
+      }
+    } while (rep);
+    if (a32) { r[6] = si; r[7] = di; if (rep) r[1] = cx | 0; }
+    else { r[6] = (r[6] & ~0xFFFF) | (si & 0xFFFF); r[7] = (r[7] & ~0xFFFF) | (di & 0xFFFF); if (rep) r[1] = (r[1] & ~0xFFFF) | cx; }
+  }
+
+  ioString(op) {
+    const r = this.r, a32 = this.a32, rep = this.rep;
+    const sz = (op & 1) ? this.osz : 1;
+    const d = this.fDF ? -sz : sz;
+    const port = r[2] & 0xFFFF;
+    let si = a32 ? r[6] : r[6] & 0xFFFF, di = a32 ? r[7] : r[7] & 0xFFFF;
+    let cx = a32 ? r[1] >>> 0 : r[1] & 0xFFFF;
+    const srcBase = this.sb[this.ov >= 0 ? this.ov : 3], dstBase = this.sb[0];
+    if (rep && cx === 0) return;
+    if (rep) this.cyc += cx;
+    do {
+      if (op < 0x6E) { // INS
+        const v = sz === 1 ? this.sys.inb(port) : sz === 2 ? this.sys.inw(port) : this.sys.ind(port);
+        this.ws(dstBase + di, sz, v); di = a32 ? (di + d) | 0 : (di + d) & 0xFFFF;
+      } else {
+        const v = this.rs(srcBase + si, sz);
+        if (sz === 1) this.sys.outb(port, v); else if (sz === 2) this.sys.outw(port, v); else this.sys.outd(port, v);
+        si = a32 ? (si + d) | 0 : (si + d) & 0xFFFF;
+      }
+      if (rep) { cx = (cx - 1) >>> 0; if (!a32) cx &= 0xFFFF; }
+    } while (rep && cx !== 0);
+    if (a32) { r[6] = si; r[7] = di; if (rep) r[1] = cx | 0; }
+    else { r[6] = (r[6] & ~0xFFFF) | (si & 0xFFFF); r[7] = (r[7] & ~0xFFFF) | (di & 0xFFFF); if (rep) r[1] = (r[1] & ~0xFFFF) | cx; }
+  }
+
+  /* ---------------- 0F two-byte opcodes ---------------- */
+  op0F() {
+    const op = this.fetchb(), osz = this.osz, r = this.r;
+    if (op >= 0x80 && op <= 0x8F) {
+      const d = this.fetchs(osz); if (this.cond(op & 15)) this.ip = (this.ip + (osz === 2 ? (d << 16) >> 16 : d)) & 0xFFFF; return;
+    }
+    if (op >= 0x90 && op <= 0x9F) { this.modrm(); this.setE(1, this.cond(op & 15) ? 1 : 0); return; }
+    if (op >= 0xC8 && op <= 0xCF) { // BSWAP
+      const i = op & 7, v = r[i]; r[i] = ((v & 0xFF) << 24) | ((v & 0xFF00) << 8) | ((v >>> 8) & 0xFF00) | (v >>> 24); return;
+    }
+    switch (op) {
+      case 0x04: { // emulator HLE trap
+        const n = this.fetchb(); this.sys.hle(n); return;
+      }
+      case 0xA0: this.push(this.seg[4], osz); return;
+      case 0xA1: this.setSeg(4, this.pop(osz) & 0xFFFF); return;
+      case 0xA8: this.push(this.seg[5], osz); return;
+      case 0xA9: this.setSeg(5, this.pop(osz) & 0xFFFF); return;
+      case 0xA2: { // CPUID (report 486-class w/o features)
+        r[0] = 0; r[3] = 0x756e6547; r[2] = 0x49656e69; r[1] = 0x6c65746e; return;
+      }
+      case 0xA3: case 0xAB: case 0xB3: case 0xBB: case 0xBA: this.bitop(op); return;
+      case 0xA4: case 0xA5: case 0xAC: case 0xAD: {
+        this.modrm(); const cnt = (op & 1) ? (r[1] & 0xFF) : this.fetchb();
+        this.setE(osz, this.dshift(op < 0xA8, this.getE(osz), this.getG(osz), cnt & 31, osz)); return;
+      }
+      case 0xAF: { this.modrm(); this.setG(osz, this.imul2(this.sx(this.getG(osz), osz), this.sx(this.getE(osz), osz), osz)); return; }
+      case 0xB0: case 0xB1: { // CMPXCHG
+        this.modrm(); const sz = op & 1 ? osz : 1; const dst = this.getE(sz), acc = this.getR(0, sz);
+        this.alu(7, acc, dst, sz); if (acc === dst) this.setE(sz, this.getG(sz)); else this.setR(0, sz, dst); return;
+      }
+      case 0xC0: case 0xC1: { // XADD
+        this.modrm(); const sz = op & 1 ? osz : 1; const a = this.getE(sz), b = this.getG(sz);
+        const res = this.alu(0, a, b, sz); this.setG(sz, a); this.setE(sz, res); return;
+      }
+      case 0xB2: case 0xB4: case 0xB5: {
+        this.modrm(); if (this.mod === 3) throw new EmuError('LSS/LFS/LGS reg');
+        const off = this.rs(this.ea, osz), sg = this.rw(this.ea + osz);
+        this.setG(osz, off); this.setSeg(op === 0xB2 ? 2 : op === 0xB4 ? 4 : 5, sg); if (op === 0xB2) this.noirq = 1; return;
+      }
+      case 0xB6: this.modrm(); this.setG(osz, this.getE(1)); return;
+      case 0xB7: this.modrm(); this.setG(osz, this.getE(2)); return;
+      case 0xBE: this.modrm(); this.setG(osz, this.m(this.sx(this.getE(1), 1), osz)); return;
+      case 0xBF: this.modrm(); this.setG(osz, this.m(this.sx(this.getE(2), 2), osz)); return;
+      case 0xBC: case 0xBD: {
+        this.modrm(); const v = this.getE(osz); this.matFlags();
+        if (v === 0) { this.zfx = 1; return; }
+        this.zfx = 0; let i;
+        if (op === 0xBC) { i = 0; while (!((v >>> i) & 1)) i++; } else { i = osz * 8 - 1; while (!((v >>> i) & 1)) i--; }
+        this.setG(osz, i); return;
+      }
+      case 0x00: case 0x01: {
+        this.modrm();
+        if (op === 0x01 && this.reg === 4) { this.setE(2, this.cr0 & 0xFFFF); return; } // SMSW
+        throw new EmuError('Protected-mode instruction 0F ' + op.toString(16) + ' /' + this.reg + ' (not supported: real-mode games only)');
+      }
+      case 0x20: { this.modrm(); this.setR(this.rm, 4, this.cr0); return; }
+      case 0x22: {
+        this.modrm(); const v = this.getR(this.rm, 4);
+        if (this.reg === 0 && (v & 1)) throw new EmuError('Program tries to enter 32-bit PROTECTED MODE (DOS extender / DPMI). This emulator only supports real-mode DOS programs.');
+        return;
+      }
+      case 0x21: case 0x23: this.modrm(); return;
+      case 0x08: case 0x09: case 0x0B: return;
+    }
+    throw new EmuError('Unimplemented opcode 0F ' + op.toString(16).toUpperCase());
+  }
+
+  bitop(op) {
+    const osz = this.osz; let bitoff, ea = -1;
+    this.modrm();
+    const bits = osz * 8;
+    let sub;
+    if (op === 0xBA) { sub = this.reg; if (sub < 4) throw new EmuError('invalid 0F BA'); sub -= 4; bitoff = this.fetchb(); }
+    else { sub = op === 0xA3 ? 0 : op === 0xAB ? 1 : op === 0xB3 ? 2 : 3; bitoff = this.getG(osz); }
+    let val, bit;
+    if (this.mod === 3) { bit = bitoff & (bits - 1); val = this.getR(this.rm, osz); }
+    else {
+      let a = this.ea;
+      if (op !== 0xBA) { const so = this.sx(bitoff, osz); a += (so >> (osz === 2 ? 4 : 5)) * osz; bit = bitoff & (bits - 1); } else bit = bitoff & (bits - 1);
+      ea = a; val = this.rs(a, osz);
+    }
+    const cf = (val >>> bit) & 1;
+    if (sub !== 0) {
+      if (sub === 1) val = val | (1 << bit); else if (sub === 2) val = val & ~(1 << bit); else val = val ^ (1 << bit);
+      val = this.m(val, osz);
+      if (ea >= 0) this.ws(ea, osz, val); else this.setR(this.rm, osz, val);
+    }
+    this.setCO(cf, this.getOF());
+  }
+
+  dshift(left, dst, src, cnt, sz) {
+    if (cnt === 0) return dst;
+    const bits = sz * 8, s = SIGN[sz]; let res, cf;
+    if (left) {
+      if (sz === 2) {
+        const v = ((dst << 16) | src) >>> 0; // dst in high
+        res = (((v << cnt) >>> 16) & 0xFFFF); cf = cnt <= 16 ? (dst >>> (16 - cnt)) & 1 : (src >>> (32 - cnt)) & 1;
+      } else { res = ((dst << cnt) | (src >>> (32 - cnt))) >>> 0; cf = (dst >>> (32 - cnt)) & 1; }
+    } else {
+      if (sz === 2) {
+        const v = ((src << 16) | dst) >>> 0;
+        res = ((v >>> cnt) & 0xFFFF); cf = cnt <= 16 ? (dst >>> (cnt - 1)) & 1 : (src >>> (cnt - 17)) & 1;
+      } else { res = ((dst >>> cnt) | (src << (32 - cnt))) >>> 0; cf = (dst >>> (cnt - 1)) & 1; }
+    }
+    this.fop = 0; this.fres = res; this.fsz = sz; this.cfx = cf; this.afx = 0;
+    this.ofx = ((res ^ dst) & s) !== 0 ? 1 : 0;
+    return res;
+  }
+}
+
+
+
+
+/* ===========================================================================
+ *  Hardware devices: PIC 8259, PIT 8254, keyboard controller, VGA
+ * =========================================================================== */
+
+/* ---------------------------- PIC 8259 ---------------------------------- */
+class PIC {
+  constructor(cpu) {
+    this.cpu = cpu;
+    this.chips = [this.mk(0x08), this.mk(0x70)];
+  }
+  mk(base) { return { irr: 0, isr: 0, imr: 0xFF, base, icw: 0, readIsr: false, autoEoi: false, init: false }; }
+  reset() { this.chips = [this.mk(0x08), this.mk(0x70)]; this.chips[0].imr = 0xFF; this.update(); }
+  raise(irq) { const c = this.chips[irq >> 3]; c.irr |= 1 << (irq & 7); this.update(); }
+  lower(irq) { const c = this.chips[irq >> 3]; c.irr &= ~(1 << (irq & 7)); }
+  // highest-priority requested irq on a chip, or -1
+  best(c) {
+    const req = c.irr & ~c.imr;
+    for (let i = 0; i < 8; i++) {
+      const bit = 1 << i;
+      if (c.isr & bit) return -1;      // higher/equal priority in service
+      if (req & bit) return i;
+    }
+    return -1;
+  }
+  update() {
+    const m = this.chips[0], s = this.chips[1];
+    let line = this.best(m) >= 0;
+    if (!line) { /* cascade handled via irq2 */ }
+    // slave pending forces master irq2
+    if (this.best(s) >= 0) { m.irr |= 4; } else { m.irr &= ~4; }
+    line = this.best(m) >= 0;
+    this.cpu.irqLine = line;
+  }
+  ack() {
+    const m = this.chips[0], s = this.chips[1];
+    const i = this.best(m);
+    if (i < 0) { this.update(); return -1; }
+    if (i === 2) {
+      const j = this.best(s);
+      if (j < 0) { this.update(); return -1; }
+      s.irr &= ~(1 << j); if (!s.autoEoi) s.isr |= 1 << j;
+      m.irr &= ~4; if (!m.autoEoi) m.isr |= 4;
+      this.update(); return s.base + j;
+    }
+    m.irr &= ~(1 << i); if (!m.autoEoi) m.isr |= 1 << i;
+    this.update(); return m.base + i;
+  }
+  write(port, v) {
+    const c = this.chips[port >= 0xA0 ? 1 : 0];
+    if ((port & 1) === 0) {
+      if (v & 0x10) { c.init = true; c.icw = 1; c.imr = 0; c.isr = 0; c.irr = 0; c.autoEoi = false; }
+      else if ((v & 0x18) === 0) { // OCW2
+        const cmd = v >> 5;
+        if (cmd === 1) { // non-specific EOI
+          for (let i = 0; i < 8; i++) if (c.isr & (1 << i)) { c.isr &= ~(1 << i); break; }
+        } else if (cmd === 3) c.isr &= ~(1 << (v & 7));
+        else if (cmd === 7) c.isr &= ~(1 << (v & 7));
+        this.update();
+      } else if ((v & 0x18) === 0x08) { // OCW3
+        if (v & 2) c.readIsr = !!(v & 1);
+      }
+    } else {
+      if (c.init) {
+        if (c.icw === 1) { c.base = v & 0xF8; c.icw = 2; }
+        else if (c.icw === 2) { c.icw = 3; /* cascade; ICW4 follows if needed */ c.icw = 4; }
+        else if (c.icw === 4) { c.autoEoi = !!(v & 2); c.init = false; c.icw = 0; }
+      } else { c.imr = v; this.update(); }
+    }
+  }
+  read(port) {
+    const c = this.chips[port >= 0xA0 ? 1 : 0];
+    if ((port & 1) === 0) return c.readIsr ? c.isr : c.irr;
+    return c.imr;
+  }
+}
+
+/* ---------------------------- PIT 8254 ---------------------------------- */
+const PIT_HZ = 1193182;
+class PIT {
+  constructor(sys) {
+    this.sys = sys;
+    this.ch = [0, 1, 2].map(() => ({ reload: 0x10000, count: 0x10000, mode: 3, access: 3, lo: true, latch: -1, rlatch: 0, gate: true, out: false, hi: false, wlow: 0, bcd: false, frac: 0, loaded: true }));
+    this.ch[2].gate = false;
+    this.time = 0; // total PIT ticks (float)
+    this.speakerOn = false; this.spkGate = false;
+  }
+  write(port, v) {
+    if (port === 0x43) {
+      const c = v >> 6;
+      if (c === 3) return;
+      const ch = this.ch[c], acc = (v >> 4) & 3;
+      if (acc === 0) { ch.latch = this.readCount(c); ch.rlatch = 0; return; }
+      ch.access = acc; ch.mode = (v >> 1) & 7; if (ch.mode > 5) ch.mode -= 4; ch.lo = true; ch.hi = false; ch.loaded = false;
+      if (ch.mode === 0) ch.out = false; else ch.out = true;
+      return;
+    }
+    const ch = this.ch[port - 0x40];
+    if (ch.access === 1) this.setReload(ch, v);
+    else if (ch.access === 2) this.setReload(ch, v << 8);
+    else {
+      if (ch.lo) { ch.wlow = v; ch.lo = false; }
+      else { this.setReload(ch, ch.wlow | (v << 8)); ch.lo = true; }
+    }
+  }
+  setReload(ch, v) {
+    ch.reload = v === 0 ? 0x10000 : v;
+    ch.count = ch.reload; ch.frac = 0; ch.loaded = true;
+    if (ch.mode === 0) ch.out = false;
+    this.sys.onPitChange();
+  }
+  readCount(c) {
+    const ch = this.ch[c];
+    return Math.floor(ch.count) & 0xFFFF;
+  }
+  read(port) {
+    const c = port - 0x40, ch = this.ch[c];
+    let v;
+    if (ch.latch >= 0) { v = ch.latch; if (ch.access === 3) { if (ch.rlatch === 0) { ch.rlatch = 1; return v & 0xFF; } ch.rlatch = 0; ch.latch = -1; return (v >> 8) & 0xFF; } ch.latch = -1; return ch.access === 2 ? v >> 8 : v & 0xFF; }
+    v = this.readCount(c);
+    if (ch.access === 1) return v & 0xFF;
+    if (ch.access === 2) return v >> 8;
+    ch.rlatch ^= 1;
+    return ch.rlatch ? v & 0xFF : v >> 8;
+  }
+  // advance by 'ticks' PIT clocks
+  advance(ticks) {
+    if (!(ticks > 0) || !isFinite(ticks)) return;
+    this.time += ticks;
+    // channel 0
+    const ch = this.ch[0];
+    if (ch.loaded) {
+      let t = ticks;
+      while (t > 0) {
+        if (ch.count > t) { ch.count -= t; t = 0; }
+        else {
+          t -= ch.count;
+          this.sys.pic.raise(0);
+          if (ch.mode === 0 || ch.mode === 1 || ch.mode === 4 || ch.mode === 5) { ch.count = 0x10000; ch.loaded = ch.mode === 0 ? false : true; if (!ch.loaded) break; }
+          else ch.count = ch.mode === 3 ? ch.reload : ch.reload;
+          if (ch.mode === 3 && (ch.reload & 1) === 0) { /* square wave: irq once per full period */ }
+        }
+      }
+    }
+    // channel 2 free-running counter (for timing loops / speaker)
+    const c2 = this.ch[2];
+    if (c2.gate && c2.loaded) {
+      let c = c2.count - ticks;
+      while (c <= 0) c += c2.reload;
+      c2.count = c;
+    }
+    // channel 1 refresh toggler (port 61 bit 4)
+  }
+  gate2(on) { this.ch[2].gate = on; }
+  get spkFreq() { const c = this.ch[2]; return PIT_HZ / (c.reload || 0x10000); }
+}
+
+/* --------------------------- Keyboard ctrl ------------------------------ */
+const KEYMAP = { // KeyboardEvent.code -> [scancode, extended]
+  Escape: [0x01], Digit1: [0x02], Digit2: [0x03], Digit3: [0x04], Digit4: [0x05], Digit5: [0x06], Digit6: [0x07], Digit7: [0x08],
+  Digit8: [0x09], Digit9: [0x0A], Digit0: [0x0B], Minus: [0x0C], Equal: [0x0D], Backspace: [0x0E], Tab: [0x0F],
+  KeyQ: [0x10], KeyW: [0x11], KeyE: [0x12], KeyR: [0x13], KeyT: [0x14], KeyY: [0x15], KeyU: [0x16], KeyI: [0x17], KeyO: [0x18], KeyP: [0x19],
+  BracketLeft: [0x1A], BracketRight: [0x1B], Enter: [0x1C], ControlLeft: [0x1D], KeyA: [0x1E], KeyS: [0x1F], KeyD: [0x20], KeyF: [0x21],
+  KeyG: [0x22], KeyH: [0x23], KeyJ: [0x24], KeyK: [0x25], KeyL: [0x26], Semicolon: [0x27], Quote: [0x28], Backquote: [0x29],
+  ShiftLeft: [0x2A], Backslash: [0x2B], KeyZ: [0x2C], KeyX: [0x2D], KeyC: [0x2E], KeyV: [0x2F], KeyB: [0x30], KeyN: [0x31], KeyM: [0x32],
+  Comma: [0x33], Period: [0x34], Slash: [0x35], ShiftRight: [0x36], NumpadMultiply: [0x37], AltLeft: [0x38], Space: [0x39], CapsLock: [0x3A],
+  F1: [0x3B], F2: [0x3C], F3: [0x3D], F4: [0x3E], F5: [0x3F], F6: [0x40], F7: [0x41], F8: [0x42], F9: [0x43], F10: [0x44],
+  NumLock: [0x45], ScrollLock: [0x46], Numpad7: [0x47], Numpad8: [0x48], Numpad9: [0x49], NumpadSubtract: [0x4A], Numpad4: [0x4B],
+  Numpad5: [0x4C], Numpad6: [0x4D], NumpadAdd: [0x4E], Numpad1: [0x4F], Numpad2: [0x50], Numpad3: [0x51], Numpad0: [0x52], NumpadDecimal: [0x53],
+  IntlBackslash: [0x56], F11: [0x57], F12: [0x58],
+  NumpadEnter: [0x1C, 1], ControlRight: [0x1D, 1], NumpadDivide: [0x35, 1], AltRight: [0x38, 1], Home: [0x47, 1], ArrowUp: [0x48, 1],
+  PageUp: [0x49, 1], ArrowLeft: [0x4B, 1], ArrowRight: [0x4D, 1], End: [0x4F, 1], ArrowDown: [0x50, 1], PageDown: [0x51, 1],
+  Insert: [0x52, 1], Delete: [0x53, 1],
+};
+
+class Keyboard {
+  constructor(sys) {
+    this.sys = sys; this.queue = []; this.data = 0; this.obf = false; this.cmd = 0; this.down = new Set();
+    this.a20 = true; this.pending = 0; this.sysFlag = 1;
+  }
+  reset() { this.queue = []; this.obf = false; this.data = 0; this.down.clear(); }
+  key(code, isDown) {
+    const k = KEYMAP[code]; if (!k) return false;
+    if (isDown) { if (this.down.has(code)) { /* typematic repeat: send make again like real hardware */ } this.down.add(code); }
+    else { if (!this.down.has(code)) return true; this.down.delete(code); }
+    const sc = k[0] | (isDown ? 0 : 0x80);
+    if (k[1]) this.queue.push(0xE0);
+    this.queue.push(sc);
+    if (this.queue.length > 64) this.queue.splice(0, this.queue.length - 64);
+    this.pump();
+    return true;
+  }
+  pump() {
+    if (!this.obf && this.queue.length) {
+      this.data = this.queue.shift(); this.obf = true; this.sys.pic.raise(1);
+    }
+  }
+  readData() {
+    const v = this.data; this.obf = false; this.sys.pic.lower(1);
+    // next byte shortly after
+    if (this.queue.length) this.sys.scheduleKbd();
+    return v;
+  }
+  status() { return (this.obf ? 1 : 0) | 4 | 0x10; }
+  writeCmd(v) {
+    this.cmd = v;
+    if (v === 0xAA) { this.queue.unshift(0x55); this.pump(); }
+    else if (v === 0xAB) { this.queue.unshift(0); this.pump(); }
+    else if (v === 0xD1) this.pending = 0xD1;
+    else if (v === 0xFE || v === 0xF0) { /* reset pulse ignored */ }
+  }
+  writeData(v) {
+    if (this.pending === 0xD1) { this.a20 = !!(v & 2); this.pending = 0; return; }
+    // keyboard commands
+    if (v === 0xFF) { this.queue.push(0xFA, 0xAA); this.pump(); }
+    else if (v === 0xF2) { this.queue.push(0xFA, 0xAB, 0x83); this.pump(); }
+    else { this.queue.push(0xFA); this.pump(); }
+  }
+}
+
+/* ================================ VGA ==================================== */
+const EGA64 = (() => {
+  const t = [];
+  for (let i = 0; i < 64; i++) {
+    const R = 2 * ((i >> 2) & 1) + ((i >> 5) & 1), G = 2 * ((i >> 1) & 1) + ((i >> 4) & 1), B = 2 * (i & 1) + ((i >> 3) & 1);
+    t.push([R * 21, G * 21, B * 21]);
+  }
+  return t;
+})();
+function defaultVGAPalette() {
+  const p = [];
+  const cga = [[0,0,0],[0,0,42],[0,42,0],[0,42,42],[42,0,0],[42,0,42],[42,21,0],[42,42,42],[21,21,21],[21,21,63],[21,63,21],[21,63,63],[63,21,21],[63,21,63],[63,63,21],[63,63,63]];
+  for (const c of cga) p.push(c.slice());
+  const gray = [0,5,8,11,14,17,20,24,28,32,36,40,45,50,56,63];
+  for (const g of gray) p.push([g, g, g]);
+  // 9 sets of 24 hue steps: (hi,mid,lo intensity) x (3 saturation levels)
+  const lv = [[63, 31], [45, 14] , [28, 0]];
+  const sets = [[0, 0, 0]];
+  const ramp = (v, lo, hi) => [v];
+  const ints = [63, 31, 18]; // max intensity per group
+  const sat = [0, 31, 45];   // min component
+  for (let g = 0; g < 3; g++) {
+    const hi = ints[g];
+    for (let s = 0; s < 3; s++) {
+      const lo = Math.floor(hi * [0, 0.5, 0.72][s] * (s === 0 ? 0 : 1)) ; // saturation
+      const mn = s === 0 ? 0 : Math.floor(hi * [0, 0.5, 0.72][s]);
+      const half = Math.floor(hi * (1 - 0) );
+      for (let h = 0; h < 24; h++) {
+        const seg = Math.floor(h / 4), f = h % 4, up = Math.round(mn + (hi - mn) * f / 4), dn = Math.round(hi - (hi - mn) * f / 4);
+        let rgb;
+        switch (seg) {
+          case 0: rgb = [hi, up, mn]; break; case 1: rgb = [dn, hi, mn]; break; case 2: rgb = [mn, hi, up]; break;
+          case 3: rgb = [mn, dn, hi]; break; case 4: rgb = [up, mn, hi]; break; default: rgb = [hi, mn, dn]; break;
+        }
+        p.push(rgb);
+      }
+    }
+  }
+  while (p.length < 256) p.push([0, 0, 0]);
+  return p.slice(0, 256);
+}
+
+// Standard register sets for the supported BIOS modes
+const MODES = {
+  0x03: { misc: 0x67, sr: [0x00, 0x03, 0x00, 0x02], gc: [0, 0, 0, 0, 0, 0x10, 0x0E, 0, 0xFF], text: true, cols: 80, rows: 25, ch: 16,
+    crtc: [0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F, 0, 0x4F, 0x0D, 0x0E, 0, 0, 0, 0, 0x9C, 0x8E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x0C, 0, 0x0F, 0x08, 0] },
+  0x01: { misc: 0x67, sr: [0x08, 0x03, 0x00, 0x02], gc: [0, 0, 0, 0, 0, 0x10, 0x0E, 0, 0xFF], text: true, cols: 40, rows: 25, ch: 16,
+    crtc: [0x2D, 0x27, 0x28, 0x90, 0x2B, 0xA0, 0xBF, 0x1F, 0, 0x4F, 0x0D, 0x0E, 0, 0, 0, 0, 0x9C, 0x8E, 0x8F, 0x14, 0x1F, 0x96, 0xB9, 0xA3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x0C, 0, 0x0F, 0x08, 0] },
+  0x0D: { misc: 0x63, sr: [0x09, 0x0F, 0x00, 0x06], gc: [0, 0, 0, 0, 0, 0, 0x05, 0x0F, 0xFF],
+    crtc: [0x2D, 0x27, 0x28, 0x90, 0x2B, 0x80, 0xBF, 0x1F, 0, 0xC0, 0, 0, 0, 0, 0, 0, 0x9C, 0x8E, 0x8F, 0x14, 0, 0x96, 0xB9, 0xE3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x01, 0, 0x0F, 0, 0] },
+  0x0E: { misc: 0x63, sr: [0x01, 0x0F, 0x00, 0x06], gc: [0, 0, 0, 0, 0, 0, 0x05, 0x0F, 0xFF],
+    crtc: [0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0, 0xC0, 0, 0, 0, 0, 0, 0, 0x9C, 0x8E, 0x8F, 0x28, 0, 0x96, 0xB9, 0xE3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x01, 0, 0x0F, 0, 0] },
+  0x10: { misc: 0xA3, sr: [0x01, 0x0F, 0x00, 0x06], gc: [0, 0, 0, 0, 0, 0, 0x05, 0x0F, 0xFF],
+    crtc: [0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0, 0x40, 0, 0, 0, 0, 0, 0, 0x83, 0x85, 0x5D, 0x28, 0x0F, 0x63, 0xBA, 0xE3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x01, 0, 0x0F, 0, 0] },
+  0x12: { misc: 0xE3, sr: [0x01, 0x0F, 0x00, 0x06], gc: [0, 0, 0, 0, 0, 0, 0x05, 0x0F, 0xFF],
+    crtc: [0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0x0B, 0x3E, 0, 0x40, 0, 0, 0, 0, 0, 0, 0xEA, 0x8C, 0xDF, 0x28, 0, 0xE7, 0x04, 0xE3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x01, 0, 0x0F, 0, 0] },
+  0x13: { misc: 0x63, sr: [0x01, 0x0F, 0x00, 0x0E], gc: [0, 0, 0, 0, 0, 0x40, 0x05, 0x0F, 0xFF],
+    crtc: [0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0, 0x41, 0, 0, 0, 0, 0, 0, 0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3, 0xFF],
+    ac: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0x41, 0, 0x0F, 0, 0] },
+};
+MODES[0x00] = MODES[0x01]; MODES[0x02] = MODES[0x03];
+
+class VGA {
+  constructor(sys) {
+    this.sys = sys;
+    this.vram = new Uint8Array(256 * 1024);      // interleaved: index = addr*4 + plane
+    this.dac = new Uint8Array(768);              // 6-bit
+    this.pal32 = new Uint32Array(256);           // ABGR
+    this.sr = new Uint8Array(8); this.gc = new Uint8Array(16); this.crtc = new Uint8Array(32); this.ac = new Uint8Array(32);
+    this.misc = 0x63; this.srIdx = 0; this.gcIdx = 0; this.crtcIdx = 0; this.acIdx = 0; this.acFlip = false;
+    this.latch = new Uint8Array(4);
+    this.dacMask = 0xFF; this.dacWriteIdx = 0; this.dacReadIdx = 0; this.dacCnt = 0; this.dacMode = 0;
+    this.font = new Uint8Array(256 * 16);        // 8x16 glyphs
+    this.mode = 3; this.frame = 0; this.dirty = true;
+    this.width = 640; this.height = 400; this.imgData = null; this.out = new Uint32Array(1024 * 768);
+    this.setModeRegs(3, true);
+    this.loadDefaultPalette(false);
+    this.updateFast();
+  }
+
+  /* -------- palette -------- */
+  setDac(i, r, g, b) {
+    this.dac[i * 3] = r & 63; this.dac[i * 3 + 1] = g & 63; this.dac[i * 3 + 2] = b & 63;
+    const R = (r << 2) | ((r & 63) >> 4), G = (g << 2) | ((g & 63) >> 4), B = (b << 2) | ((b & 63) >> 4);
+    this.pal32[i] = (0xFF000000 | ((B & 255) << 16) | ((G & 255) << 8) | (R & 255)) >>> 0;
+  }
+  loadDefaultPalette(ega) {
+    const p = defaultVGAPalette();
+    for (let i = 0; i < 256; i++) this.setDac(i, p[i][0], p[i][1], p[i][2]);
+    if (ega) for (let i = 0; i < 64; i++) this.setDac(i, EGA64[i][0], EGA64[i][1], EGA64[i][2]);
+  }
+
+  /* -------- mode setting (BIOS) -------- */
+  setModeRegs(mode, clear) {
+    const md = MODES[mode & 0x7F];
+    if (!md) return false;
+    this.misc = md.misc;
+    for (let i = 0; i < 4; i++) this.sr[i + 1] = md.sr[i];
+    this.sr[0] = 3;
+    for (let i = 0; i < 25; i++) this.crtc[i] = md.crtc[i];
+    for (let i = 0; i < 9; i++) this.gc[i] = md.gc[i];
+    for (let i = 0; i < 21; i++) this.ac[i] = md.ac[i];
+    this.mode = mode & 0x7F; this.curModeInfo = md;
+    this.latch.fill(0);
+    if (clear) this.vram.fill(0);
+    if (md.text) { for (let i = 0; i < 0x8000; i++) { this.vram[i * 4] = 0x20; this.vram[i * 4 + 1] = 7; } }
+    this.loadDefaultPalette(this.mode !== 0x13);
+    this.dacMask = 0xFF;
+    this.updateFast();
+    this.dirty = true;
+    return true;
+  }
+
+  /* -------- CPU memory access -------- */
+  mapBase() { switch ((this.gc[6] >> 2) & 3) { case 0: return [0xA0000, 0x20000]; case 1: return [0xA0000, 0x10000]; case 2: return [0xB0000, 0x8000]; default: return [0xB8000, 0x8000]; } }
+  updateFast() {
+    const mm = (this.gc[6] >> 2) & 3;
+    this.mapStart = mm === 0 ? 0xA0000 : mm === 1 ? 0xA0000 : mm === 2 ? 0xB0000 : 0xB8000;
+    this.mapLen = mm === 0 ? 0x20000 : mm === 1 ? 0x10000 : 0x8000;
+    this.chain4 = !!(this.sr[4] & 8);
+    this.oddEven = !(this.sr[4] & 4) && !!(this.gc[5] & 0x10) && !!(this.gc[6] & 2);
+    this.writeMode = this.gc[5] & 3; this.readMode = (this.gc[5] >> 3) & 1;
+    this.mapMask = this.sr[2] & 15;
+    this.fastWrite = this.writeMode === 0 && this.gc[1] === 0 && (this.gc[3] & 0x1F) === 0 && this.gc[8] === 0xFF;
+    this.fastWrite1 = this.writeMode === 2 && (this.gc[3] & 0x18) === 0 && this.gc[8] === 0xFF;
+  }
+  fillRun(a, v, sz, cnt) {   // [v1.2] REP STOS가 VGA 창을 채울 때의 빠른 경로
+    const off = a - this.mapStart, len = cnt * sz;
+    if (off < 0 || off + len > this.mapLen) return false;
+    const vr = this.vram;
+    if (this.chain4) {
+      if (off + len > 0x40000) return false;
+      if (sz === 1) vr.fill(v & 0xFF, off, off + len);
+      else for (let k = 0; k < len; k++) vr[off + k] = (v >> ((k % sz) * 8)) & 0xFF;
+      this.dirty = true; return true;
+    }
+    if (!this.oddEven && this.fastWrite) {
+      const mm = this.mapMask;
+      for (let k = 0; k < len; k++) {
+        const val = (v >> ((k % sz) * 8)) & 0xFF, b = ((off + k) & 0xFFFF) << 2;
+        if (mm & 1) vr[b] = val; if (mm & 2) vr[b + 1] = val; if (mm & 4) vr[b + 2] = val; if (mm & 8) vr[b + 3] = val;
+      }
+      this.dirty = true; return true;
+    }
+    return false;
+  }
+  rb(a) {
+    let off = a - this.mapStart;
+    if (off < 0 || off >= this.mapLen) return 0xFF;
+    const v = this.vram;
+    if (this.chain4) { const base = off & ~3; this.latch[0] = v[base]; this.latch[1] = v[base + 1]; this.latch[2] = v[base + 2]; this.latch[3] = v[base + 3]; return v[off & 0x3FFFF]; }
+    let plane, addr;
+    if (this.oddEven) { addr = off >> 1; plane = (off & 1) | (this.gc[4] & 2); addr &= 0xFFFF; const b = addr << 2; this.latch[0] = v[b]; this.latch[1] = v[b + 1]; this.latch[2] = v[b + 2]; this.latch[3] = v[b + 3]; return v[b + plane]; }
+    addr = off & 0xFFFF; const b = addr << 2;
+    const l = this.latch; l[0] = v[b]; l[1] = v[b + 1]; l[2] = v[b + 2]; l[3] = v[b + 3];
+    if (this.readMode === 0) return l[this.gc[4] & 3];
+    // read mode 1: color compare
+    const cc = this.gc[2] & 15, cdc = this.gc[7] & 15; let res = 0xFF;
+    for (let p = 0; p < 4; p++) if (cdc & (1 << p)) res &= ((cc >> p) & 1) ? l[p] : ~l[p];
+    return res & 0xFF;
+  }
+  wb(a, val) {
+    const off = a - this.mapStart;
+    if (off < 0 || off >= this.mapLen) return;
+    const v = this.vram;
+    this.dirty = true;
+    if (this.chain4) { v[off & 0x3FFFF] = val; return; }
+    if (this.oddEven) {
+      const addr = (off >> 1) & 0xFFFF, plane = off & 1;
+      if (this.mapMask & (1 << plane)) v[(addr << 2) | plane] = val;
+      if (this.mapMask & (4 << plane)) v[(addr << 2) | plane | 2] = val;
+      return;
+    }
+    const b = (off & 0xFFFF) << 2, mm = this.mapMask;
+    if (this.fastWrite) {
+      if (mm & 1) v[b] = val; if (mm & 2) v[b + 1] = val; if (mm & 4) v[b + 2] = val; if (mm & 8) v[b + 3] = val; return;
+    }
+    const gc = this.gc, l = this.latch, func = (gc[3] >> 3) & 3, rot = gc[3] & 7;
+    let bm = gc[8], sr = gc[0], esr = gc[1];
+    const wm = this.writeMode;
+    if (wm === 1) { if (mm & 1) v[b] = l[0]; if (mm & 2) v[b + 1] = l[1]; if (mm & 4) v[b + 2] = l[2]; if (mm & 8) v[b + 3] = l[3]; return; }
+    let d = val;
+    if (wm === 0 || wm === 3) d = rot ? (((val >> rot) | (val << (8 - rot))) & 0xFF) : val;
+    if (wm === 3) { bm &= d; }
+    for (let p = 0; p < 4; p++) {
+      if (!(mm & (1 << p))) continue;
+      let data;
+      if (wm === 0) data = (esr & (1 << p)) ? ((sr & (1 << p)) ? 0xFF : 0) : d;
+      else if (wm === 2) data = (val & (1 << p)) ? 0xFF : 0;
+      else data = (sr & (1 << p)) ? 0xFF : 0;
+      switch (func) { case 1: data &= l[p]; break; case 2: data |= l[p]; break; case 3: data ^= l[p]; break; }
+      v[b + p] = (data & bm) | (l[p] & ~bm);
+    }
+  }
+
+  /* -------- I/O ports -------- */
+  vtime() { // timing for status register
+    const t = this.sys.pit.time % 17030; // ~70Hz frame in PIT ticks
+    return t;
+  }
+  inb(p) {
+    switch (p) {
+      case 0x3C0: return this.acIdx;
+      case 0x3C1: return this.ac[this.acIdx & 31];
+      case 0x3C2: return 0x10;
+      case 0x3C4: return this.srIdx;
+      case 0x3C5: return this.sr[this.srIdx & 7];
+      case 0x3C6: return this.dacMask;
+      case 0x3C7: return this.dacMode;
+      case 0x3C8: return this.dacWriteIdx;
+      case 0x3C9: { const v = this.dac[this.dacReadIdx * 3 + this.dacCnt]; if (++this.dacCnt === 3) { this.dacCnt = 0; this.dacReadIdx = (this.dacReadIdx + 1) & 255; } return v; }
+      case 0x3CA: return 0;
+      case 0x3CC: return this.misc;
+      case 0x3CE: return this.gcIdx;
+      case 0x3CF: return this.gc[this.gcIdx & 15];
+      case 0x3B4: case 0x3D4: return this.crtcIdx;
+      case 0x3B5: case 0x3D5: return this.crtc[this.crtcIdx & 31];
+      case 0x3BA: case 0x3DA: {
+        this.acFlip = false;
+        const t = this.vtime(); let s = 0;
+        if (t > 15700) s |= 8;                     // vertical retrace
+        if (t > 15700 || (t % 38) > 30) s |= 1;    // display disabled (blanking)
+        return s;
+      }
+    }
+    return 0xFF;
+  }
+  outb(p, v) {
+    switch (p) {
+      case 0x3C0:
+        if (!this.acFlip) this.acIdx = v & 0x3F; else { const i = this.acIdx & 31; this.ac[i] = v; this.dirty = true; }
+        this.acFlip = !this.acFlip; return;
+      case 0x3C2: this.misc = v; this.dirty = true; return;
+      case 0x3C4: this.srIdx = v & 7; return;
+      case 0x3C5: this.sr[this.srIdx] = v; this.updateFast(); this.dirty = true; return;
+      case 0x3C6: this.dacMask = v; return;
+      case 0x3C7: this.dacReadIdx = v; this.dacCnt = 0; this.dacMode = 3; return;
+      case 0x3C8: this.dacWriteIdx = v; this.dacCnt = 0; this.dacMode = 0; return;
+      case 0x3C9:
+        this.dacTmp = this.dacTmp || [0, 0, 0]; this.dacTmp[this.dacCnt++] = v & 63;
+        if (this.dacCnt === 3) { this.setDac(this.dacWriteIdx, this.dacTmp[0], this.dacTmp[1], this.dacTmp[2]); this.dacCnt = 0; this.dacWriteIdx = (this.dacWriteIdx + 1) & 255; this.dirty = true; }
+        return;
+      case 0x3CE: this.gcIdx = v & 15; return;
+      case 0x3CF: this.gc[this.gcIdx] = v; this.updateFast(); return;
+      case 0x3B4: case 0x3D4: this.crtcIdx = v & 31; return;
+      case 0x3B5: case 0x3D5: {
+        const i = this.crtcIdx;
+        if (i < 8 && (this.crtc[0x11] & 0x80)) { if (i === 7) this.crtc[7] = (this.crtc[7] & ~0x10) | (v & 0x10); return; }
+        this.crtc[i] = v; this.dirty = true; return;
+      }
+    }
+  }
+
+  /* -------- display geometry -------- */
+  geometry() {
+    const c = this.crtc, text = !(this.gc[6] & 1);
+    const hde = c[1] + 1;
+    const vde = (c[0x12] | ((c[7] & 2) << 7) | ((c[7] & 0x40) << 3)) + 1;
+    const maxscan = (c[9] & 0x1F) + 1, dbl = (c[9] & 0x80) ? 2 : 1;
+    const is256 = !!(this.ac[0x10] & 0x40);
+    let w, h;
+    if (text) {
+      const dots = (this.sr[1] & 1) ? 8 : 9;
+      w = hde * dots; h = vde / dbl; // text: each scanline displayed
+      const ch = maxscan; return { text: true, w, h: Math.round(h), cols: hde, rows: Math.floor(vde / (ch * dbl)), ch, dots, is256: false };
+    }
+    w = (hde * 8) >> (is256 ? 1 : 0);
+    h = Math.round(vde / (maxscan * dbl));
+    return { text: false, w, h, is256, lines: maxscan * dbl };
+  }
+
+  /* -------- rendering -------- */
+  render() {
+    const g = this.geometry();
+    let w = g.w, h = g.h;
+    if (!g.text && !this.dirty && this._lastW === w && this._lastH === h) return false;
+    this._lastW = w; this._lastH = h;
+    if (!g.text) this.dirty = false;
+    if (w < 16 || h < 16 || w > 1024 || h > 768) { w = Math.max(16, Math.min(1024, w)); h = Math.max(16, Math.min(768, h)); }
+    this.width = w; this.height = h;
+    const out = this.out;
+    const c = this.crtc, vram = this.vram, pal = this.pal32, mask = this.dacMask;
+    const start = (c[0x0C] << 8) | c[0x0D];
+    const stride = c[0x13] * 2;
+    const lc = c[0x18] | ((c[7] & 0x10) << 4) | ((c[9] & 0x40) << 3);
+    if (g.text) { this.renderText(g, w, h, start); this.frame++; return true; }
+    const lines = g.lines;
+    const ac = this.ac, pan = ac[0x13] & 15;
+    const cs = this.ac[0x14] & 15, mc = ac[0x10];
+    const dwordMode = !!(c[0x14] & 0x40), byteMode = !!(c[0x17] & 0x40);
+    if (g.is256) {
+      const pelPan = (pan & 6) >> 1;
+      for (let y = 0; y < h; y++) {
+        const raw = y * lines; let rowAddr;
+        if (raw > lc) rowAddr = (raw - lc - 1) / lines * stride | 0; else rowAddr = start + y * stride;
+        const o = y * w;
+        const split = raw > lc;
+        const pp = split && (mc & 0x20) ? 0 : pelPan;
+        for (let x = 0; x < w; x++) {
+          const xx = x + pp;
+          const idx = (((rowAddr + (xx >> 2)) & 0xFFFF) << 2) | (xx & 3);
+          out[o + x] = pal[vram[idx] & mask];
+        }
+      }
+    } else {
+      const p54 = (mc & 0x80) ? true : false, planeEn = ac[0x12] & 15;
+      const lut = this.acLut || (this.acLut = new Uint32Array(16));
+      for (let i = 0; i < 16; i++) {
+        let v = ac[i] & 0x3F;
+        if (p54) v = (v & 0x0F) | ((cs & 3) << 4); else v = v;
+        v |= (cs & 0x0C) << 4; if (p54) v = (ac[i] & 0x0F) | (cs << 4);
+        lut[i] = pal[v & mask];
+      }
+      for (let y = 0; y < h; y++) {
+        const raw = y * lines; let rowAddr;
+        const split = raw > lc;
+        if (split) rowAddr = (raw - lc - 1) / lines * stride | 0; else rowAddr = start + y * stride;
+        const pp = split && (mc & 0x20) ? 0 : (pan & 7);
+        const o = y * w;
+        for (let x = 0; x < w; x++) {
+          const xx = x + pp;
+          const b = (((rowAddr + (xx >> 3)) & 0xFFFF) << 2), bit = 7 - (xx & 7);
+          const pix = (((vram[b] >> bit) & 1)) | (((vram[b + 1] >> bit) & 1) << 1) | (((vram[b + 2] >> bit) & 1) << 2) | (((vram[b + 3] >> bit) & 1) << 3);
+          out[o + x] = lut[pix & planeEn];
+        }
+      }
+    }
+    this.frame++;
+    return true;
+  }
+
+  renderText(g, w, h, start) {
+    const out = this.out, vram = this.vram, c = this.crtc, ac = this.ac, pal = this.pal32;
+    const cols = g.cols, rows = Math.max(1, g.rows), chh = g.ch, dots = g.dots, stride = c[0x13] * 2;
+    const blinkOn = !!(ac[0x10] & 8);
+    const phase = (this.frame >> 4) & 1, cphase = (this.frame >> 3) & 1;
+    // attribute -> color via attribute palette
+    const lut = new Uint32Array(16);
+    for (let i = 0; i < 16; i++) lut[i] = pal[(ac[i] & 0x3F) | ((ac[0x14] & 0x0C) << 4)];
+    const curStart = c[0x0A] & 0x1F, curEnd = c[0x0B] & 0x1F, curOff = (c[0x0E] << 8) | c[0x0F], curDisabled = !!(c[0x0A] & 0x20);
+    const font = this.font;
+    const lineGraphics = !!(ac[0x10] & 4);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const cell = (start + row * stride + col) & 0xFFFF, b = cell << 2;
+        const ch = vram[b], at = vram[b + 1];
+        let fg = at & 15, bg = at >> 4, hide = false;
+        if (blinkOn) { bg = (at >> 4) & 7; if ((at & 0x80) && phase) hide = true; }
+        const isCursor = !curDisabled && cell === curOff && cphase;
+        for (let y = 0; y < chh; y++) {
+          let bits = font[ch * 16 + (y < 16 ? y : 15)];
+          if (isCursor && y >= curStart && y <= curEnd) bits = 0xFF;
+          const oy = (row * chh + y) * w + col * dots;
+          if (oy + dots > out.length || row * chh + y >= h) continue;
+          const fgc = lut[fg], bgc = lut[bg];
+          for (let x = 0; x < 8; x++) out[oy + x] = (bits & (0x80 >> x)) && !hide ? fgc : bgc;
+          if (dots === 9) out[oy + 8] = (lineGraphics && ch >= 0xC0 && ch <= 0xDF && (bits & 1)) && !hide ? fgc : bgc;
+        }
+      }
+    }
+  }
+}
+
+
+
+
+/* ===========================================================================
+ *  Sound: OPL2 (AdLib) FM synth, Sound Blaster 2.0 DSP + 8237 DMA, PC speaker
+ * =========================================================================== */
+
+const OPL_RATE = 49716;
+const SINE = new Float32Array(1024);
+for (let i = 0; i < 1024; i++) SINE[i] = Math.sin((i + 0.5) / 1024 * 2 * Math.PI);
+const MULT = [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15];
+const KSLROM = [0, 32, 40, 45, 48, 51, 53, 55, 56, 58, 59, 60, 61, 62, 63, 64];
+const KSLSHIFT = [8, 1, 2, 0];
+const FBTAB = [0, 1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2];
+const SLOT_OFF = [0, 1, 2, 3, 4, 5, -1, -1, 6, 7, 8, 9, 10, 11, -1, -1, 12, 13, 14, 15, 16, 17]; // 레지스터 오프셋 -> 슬롯 0..17
+const CH_MOD = [0, 1, 2, 6, 7, 8, 12, 13, 14]; // operator index of modulator for channels 0..8
+const DB2LIN = new Float32Array(1024);
+for (let i = 0; i < 1024; i++) DB2LIN[i] = Math.pow(10, -(i * 0.1) / 20); // index in 0.1 dB steps
+
+class OPLOp {
+  constructor() {
+    this.am = 0; this.vib = 0; this.eg = 0; this.ksr = 0; this.mult = 1; this.ksl = 0; this.tl = 0;
+    this.ar = 0; this.dr = 0; this.sl = 0; this.rr = 0; this.wave = 0;
+    this.phase = 0; this.att = 96; this.stage = 0; // 0 off 1 attack 2 decay 3 sustain 4 release
+    this.out = 0; this.prev = 0; this.keyOn = false;
+  }
+}
+
+class OPL2 {
+  constructor() {
+    this.ops = []; for (let i = 0; i < 18; i++) this.ops.push(new OPLOp());
+    this.fnum = new Uint16Array(9); this.block = new Uint8Array(9); this.kon = new Uint8Array(9);
+    this.fb = new Uint8Array(9); this.cnt = new Uint8Array(9);
+    this.reg = new Uint8Array(256); this.idx = 0;
+    this.waveEn = false; this.noteSel = 0; this.amDepth = 0; this.vibDepth = 0;
+    this.lfoAm = 0; this.lfoVib = 0; this.amPhase = 0; this.vibPhase = 0;
+    this.t1 = 0; this.t2 = 0; this.t1cnt = 0; this.t2cnt = 0; this.t1run = false; this.t2run = false; this.t1mask = false; this.t2mask = false;
+    this.status = 0; this.accT1 = 0; this.accT2 = 0;
+    this.resAcc = 0; this.lastL = 0; this.nextL = 0;
+  }
+  writeIdx(v) { this.idx = v; }
+  write(r, v) {
+    r &= 0xFF; this.reg[r] = v;
+    if (r === 0x01) { this.waveEn = !!(v & 0x20); return; }
+    if (r === 0x02) { this.t1 = v; return; }
+    if (r === 0x03) { this.t2 = v; return; }
+    if (r === 0x04) {
+      if (v & 0x80) { this.status = 0; return; }
+      this.t1mask = !!(v & 0x40); this.t2mask = !!(v & 0x20);
+      if ((v & 1) && !this.t1run) { this.t1cnt = 0; }
+      if ((v & 2) && !this.t2run) { this.t2cnt = 0; }
+      this.t1run = !!(v & 1); this.t2run = !!(v & 2);
+      return;
+    }
+    if (r === 0x08) { this.noteSel = (v >> 6) & 1; return; }
+    if (r === 0xBD) { this.amDepth = (v >> 7) & 1; this.vibDepth = (v >> 6) & 1; return; }
+    if (r >= 0x20 && r <= 0x35) { const o = SLOT_OFF[r - 0x20]; if (o < 0) return; const p = this.ops[o]; p.am = v >> 7 & 1; p.vib = v >> 6 & 1; p.eg = v >> 5 & 1; p.ksr = v >> 4 & 1; p.mult = MULT[v & 15]; return; }
+    if (r >= 0x40 && r <= 0x55) { const o = SLOT_OFF[r - 0x40]; if (o < 0) return; const p = this.ops[o]; p.ksl = v >> 6; p.tl = v & 63; return; }
+    if (r >= 0x60 && r <= 0x75) { const o = SLOT_OFF[r - 0x60]; if (o < 0) return; const p = this.ops[o]; p.ar = v >> 4; p.dr = v & 15; return; }
+    if (r >= 0x80 && r <= 0x95) { const o = SLOT_OFF[r - 0x80]; if (o < 0) return; const p = this.ops[o]; p.sl = v >> 4; p.rr = v & 15; return; }
+    if (r >= 0xE0 && r <= 0xF5) { const o = SLOT_OFF[r - 0xE0]; if (o < 0) return; this.ops[o].wave = this.waveEn ? v & 3 : 0; return; }
+    if (r >= 0xA0 && r <= 0xA8) { const c = r - 0xA0; this.fnum[c] = (this.fnum[c] & 0x300) | v; return; }
+    if (r >= 0xB0 && r <= 0xB8) {
+      const c = r - 0xB0; this.fnum[c] = (this.fnum[c] & 0xFF) | ((v & 3) << 8); this.block[c] = (v >> 2) & 7;
+      const on = (v >> 5) & 1;
+      if (on && !this.kon[c]) { this.keyOn(c, true); } else if (!on && this.kon[c]) { this.keyOn(c, false); }
+      this.kon[c] = on; return;
+    }
+    if (r >= 0xC0 && r <= 0xC8) { const c = r - 0xC0; this.fb[c] = (v >> 1) & 7; this.cnt[c] = v & 1; return; }
+  }
+  keyOn(c, on) {
+    for (const o of [this.ops[CH_MOD[c]], this.ops[CH_MOD[c] + 3]]) {
+      if (on) { o.stage = 1; o.phase = 0; if (this.effRate(o, o.ar, c) >= 60) { o.att = 0; o.stage = 2; } }
+      else if (o.stage) o.stage = 4;
+    }
+  }
+  effRate(o, rate, c) {
+    if (rate === 0) return 0;
+    const f = this.fnum[c], b = this.block[c];
+    const kc = (b << 1) | ((f >> (this.noteSel ? 8 : 9)) & 1);
+    const rks = o.ksr ? kc : kc >> 2;
+    return Math.min(63, rate * 4 + rks);
+  }
+  readStatus() { return (this.status & 0x60) | (this.status ? 0x80 : 0); }
+  advanceTimers(ticksPit) {
+    // timers in PIT ticks: t1 = 80us -> 95.46 ticks; t2 = 320us
+    if (this.t1run) { this.accT1 += ticksPit; const per = (256 - this.t1) * 95.4546; while (this.accT1 >= per) { this.accT1 -= per; if (!this.t1mask) this.status |= 0x40; } } else this.accT1 = 0;
+    if (this.t2run) { this.accT2 += ticksPit; const per = (256 - this.t2) * 381.818; while (this.accT2 >= per) { this.accT2 -= per; if (!this.t2mask) this.status |= 0x20; } } else this.accT2 = 0;
+  }
+
+  // one native sample
+  tick() {
+    // LFOs
+    this.amPhase += 3.7 / OPL_RATE; if (this.amPhase >= 1) this.amPhase -= 1;
+    this.vibPhase += 6.1 / OPL_RATE; if (this.vibPhase >= 1) this.vibPhase -= 1;
+    const tri = this.amPhase < 0.5 ? this.amPhase * 4 - 1 : 3 - this.amPhase * 4; // -1..1
+    const amDb = (tri * 0.5 + 0.5) * (this.amDepth ? 4.8 : 1.0);
+    const vibStep = Math.floor(this.vibPhase * 8) & 7; const vibMul = [0, 1, 2, 1, 0, -1, -2, -1][vibStep] / 2 * (this.vibDepth ? 0.0139 : 0.0069);
+    let mix = 0;
+    for (let c = 0; c < 9; c++) {
+      const m = this.ops[CH_MOD[c]], ca = this.ops[CH_MOD[c] + 3];
+      if (m.stage === 0 && ca.stage === 0) continue;
+      const f = this.fnum[c], b = this.block[c];
+      const base = f * (1 << b) / 1048576;
+      const fbAmt = FBTAB[this.fb[c]];
+      const o1 = this.opOut(m, c, base, amDb, vibMul, (m.out + m.prev) * 0.5 * fbAmt);
+      let out;
+      if (this.cnt[c] === 0) out = this.opOut(ca, c, base, amDb, vibMul, o1 * 2);
+      else out = o1 + this.opOut(ca, c, base, amDb, vibMul, 0);
+      mix += out;
+    }
+    return mix;
+  }
+  opOut(o, c, base, amDb, vibMul, modCycles) {
+    if (o.stage === 0) { o.prev = o.out; o.out = 0; return 0; }
+    // envelope
+    const fs = OPL_RATE;
+    switch (o.stage) {
+      case 1: { const r = this.effRate(o, o.ar, c); if (r === 0) break; const T = 2.826 * Math.pow(2, -(r - 4) / 4); const k = 6 / (T * fs); o.att -= o.att * k + 0.002 * (r / 4); if (o.att <= 0.05) { o.att = 0; o.stage = 2; } break; }
+      case 2: { const r = this.effRate(o, o.dr, c); if (r) { const T = 39.28 * Math.pow(2, -(r - 4) / 4); o.att += 96 / (T * fs); } const sl = o.sl === 15 ? 93 : o.sl * 3; if (o.att >= sl) { o.att = sl; o.stage = 3; } break; }
+      case 3: { if (!o.eg) { const r = this.effRate(o, o.rr, c); if (r) { const T = 39.28 * Math.pow(2, -(r - 4) / 4); o.att += 96 / (T * fs); } if (o.att >= 96) { o.att = 96; o.stage = 0; } } break; }
+      case 4: { const rr = o.rr; const r = this.effRate(o, rr === 0 ? 0 : rr, c); if (r) { const T = 39.28 * Math.pow(2, -(r - 4) / 4); o.att += 96 / (T * fs); } if (o.att >= 96) { o.att = 96; o.stage = 0; } break; }
+    }
+    // phase
+    o.phase += base * o.mult * (o.vib ? 1 + vibMul : 1); o.phase -= Math.floor(o.phase);
+    // attenuation
+    let ksl = 0;
+    if (o.ksl) { const fn = this.fnum[c]; let k = (KSLROM[fn >> 6] << 2) - ((8 - this.block[c]) << 5); if (k < 0) k = 0; ksl = (k >> KSLSHIFT[o.ksl]) * 0.1875; }
+    let att = o.att + o.tl * 0.75 + ksl + (o.am ? amDb : 0);
+    if (att >= 90) { o.prev = o.out; o.out = 0; return 0; }
+    let p = o.phase + modCycles; p -= Math.floor(p);
+    let s;
+    const idx = (p * 1024) | 0;
+    switch (o.wave) {
+      case 0: s = SINE[idx]; break;
+      case 1: s = idx < 512 ? SINE[idx] : 0; break;
+      case 2: s = Math.abs(SINE[idx]); break;
+      default: s = (idx & 256) ? 0 : Math.abs(SINE[idx & 511]); break;
+    }
+    const v = s * DB2LIN[Math.min(1023, (att * 10) | 0)];
+    o.prev = o.out; o.out = v;
+    return v;
+  }
+  // generate 'n' samples at host rate into out (mono float, added)
+  generate(out, n, rate, gain) {
+    const step = OPL_RATE / rate;
+    for (let i = 0; i < n; i++) {
+      this.resAcc += step;
+      while (this.resAcc >= 1) { this.lastL = this.nextL; this.nextL = this.tick() * gain; this.resAcc -= 1; }
+      out[i] += this.lastL + (this.nextL - this.lastL) * this.resAcc;
+    }
+  }
+}
+
+/* ------------------------------ 8237 DMA --------------------------------- */
+class DMA {
+  constructor() {
+    this.addr = new Uint16Array(4); this.count = new Uint16Array(4); this.page = new Uint8Array(4);
+    this.mode = new Uint8Array(4); this.mask = [1, 1, 1, 1]; this.flip = false;
+    this.cur = new Uint32Array(4); this.rem = new Int32Array(4); this.status = 0;
+  }
+  write(p, v) {
+    if (p >= 0 && p <= 7) {
+      const ch = p >> 1;
+      if (p & 1) { if (!this.flip) this.count[ch] = (this.count[ch] & 0xFF00) | v; else this.count[ch] = (this.count[ch] & 0xFF) | (v << 8); }
+      else { if (!this.flip) this.addr[ch] = (this.addr[ch] & 0xFF00) | v; else this.addr[ch] = (this.addr[ch] & 0xFF) | (v << 8); }
+      this.flip = !this.flip;
+      this.cur[ch] = this.addr[ch]; this.rem[ch] = this.count[ch] + 1; this.status &= ~(1 << ch);
+      return;
+    }
+    switch (p) {
+      case 0x0A: this.mask[v & 3] = (v & 4) ? 1 : 0; break;
+      case 0x0B: this.mode[v & 3] = v; break;
+      case 0x0C: this.flip = false; break;
+      case 0x0D: this.flip = false; this.mask = [1, 1, 1, 1]; break;
+      case 0x0F: for (let i = 0; i < 4; i++) this.mask[i] = (v >> i) & 1; break;
+      case 0x81: this.page[2] = v; break; case 0x83: this.page[1] = v; break; case 0x82: this.page[3] = v; break;
+    }
+  }
+  read(p) {
+    if (p >= 0 && p <= 7) {
+      const ch = p >> 1, val = (p & 1) ? (this.rem[ch] - 1) & 0xFFFF : (this.cur[ch] & 0xFFFF);
+      const r = this.flip ? val >> 8 : val & 0xFF; this.flip = !this.flip; return r;
+    }
+    if (p === 0x08) { const st = this.status; this.status &= 0xF0; return st; }
+    if (p === 0x81) return this.page[2]; if (p === 0x83) return this.page[1]; if (p === 0x82) return this.page[3];
+    return 0;
+  }
+  linear(ch) { return (this.page[ch] << 16) | (this.cur[ch] & 0xFFFF); }
+}
+
+/* ------------------------- Sound Blaster 2.0 DSP ------------------------- */
+class SoundBlaster {
+  constructor(sys, base = 0x220, irq = 7, dma = 1) {
+    this.sys = sys; this.base = base; this.irq = irq; this.dma = dma;
+    this.reset();
+  }
+  reset() {
+    this.outq = []; this.cmd = -1; this.args = []; this.need = 0; this.speaker = false;
+    this.tc = 0xD0; this.rate = 8000; this.blockLen = 0x7FF; this.playing = false; this.auto = false; this.paused = false;
+    this.left = 0; this.irqPending = false; this.acc = 0; this.dac = 128; this.testReg = 0; this.e2v = 0xAA; this.e2c = 0;
+    this.pcm = new Float32Array(16384); this.pcmW = 0; this.pcmR = 0; this.lastS = 0; this.resFrac = 0; this.blockLeft = 0; this.prevS = 0; this.curS = 0; this.lp = 0;
+  }
+  readPort(p) {
+    switch (p - this.base) {
+      case 0xA: return this.outq.length ? this.outq.shift() : 0xFF;
+      case 0xC: return 0x00;                                  // always ready to accept
+      case 0xE: if (this.irqPending) { this.irqPending = false; this.sys.pic.lower(this.irq); } return this.outq.length ? 0x80 : 0x00;
+      case 0x6: return 0xFF;
+    }
+    return 0xFF;
+  }
+  writePort(p, v) {
+    switch (p - this.base) {
+      case 0x6: if (v === 0) { this.reset(); this.outq.push(0xAA); } return;
+      case 0xC: this.dspWrite(v); return;
+    }
+  }
+  dspWrite(v) {
+    if (this.cmd >= 0) {
+      this.args.push(v);
+      if (this.args.length >= this.need) { const c = this.cmd; this.cmd = -1; this.exec(c, this.args); }
+      return;
+    }
+    const need = { 0x10: 1, 0x14: 2, 0x1C: 0, 0x40: 1, 0x48: 2, 0xE0: 1, 0xE4: 1, 0xE2: 1, 0x80: 2, 0x91: 0, 0x90: 0, 0x24: 2, 0x20: 0, 0x1D: 0, 0xD0: 0, 0xD1: 0, 0xD3: 0, 0xD4: 0, 0xDA: 0, 0xE1: 0, 0xF2: 0, 0xE8: 0, 0xD8: 0, 0x45: 0, 0x47: 0, 0xDC: 0, 0xF8: 0 }[v];
+    if (need === undefined) return; // unknown: ignore
+    if (need === 0) { this.exec(v, []); return; }
+    this.cmd = v; this.args = []; this.need = need;
+  }
+  exec(c, a) {
+    switch (c) {
+      case 0x10: this.dac = a[0]; this.lastS = (a[0] - 128) / 128; break;
+      case 0x40: this.tc = a[0]; this.rate = Math.floor(1000000 / (256 - a[0])); break;
+      case 0x48: this.blockLen = a[0] | (a[1] << 8); break;
+      case 0x14: this.start(false, (a[0] | (a[1] << 8)) + 1); break;
+      case 0x1C: case 0x90: case 0x91: this.start(true, this.blockLen + 1); break;
+      case 0xD0: this.paused = true; break;
+      case 0xD4: this.paused = false; break;
+      case 0xDA: this.auto = false; break;
+      case 0xD1: this.speaker = true; break;
+      case 0xD3: this.speaker = false; break;
+      case 0xD8: this.outq.push(this.speaker ? 0xFF : 0x00); break;
+      case 0xE1: this.outq.push(2, 1); break;
+      case 0xE0: this.outq.push((~a[0]) & 0xFF); break;
+      case 0xE4: this.testReg = a[0]; break;
+      case 0xE2: { // DSP "DMA identification": value derived from the data byte is written into memory through the DMA channel
+        // (Creative's CT-VOICE driver uses it to compute its own jump-table entries at start-up)
+        const T = [[1, -2, -4, 8, -16, 32, 64, -128, -106], [-1, 2, -4, 8, 16, -32, 64, -128, 165], [-1, 2, 4, -8, 16, -32, -64, 128, -151], [1, -2, 4, -8, -16, 32, -64, 128, 90]][this.e2c & 3];
+        for (let i = 0; i < 8; i++) if ((a[0] >> i) & 1) this.e2v += T[i];
+        this.e2v += T[8]; this.e2c++;
+        const dma = this.sys.dma, ch = this.dma;
+        if (dma.rem[ch] > 0) {
+          this.sys.mem[((dma.page[ch] << 16) | (dma.cur[ch] & 0xFFFF)) & 0xFFFFF] = this.e2v & 0xFF;
+          dma.cur[ch] = (dma.cur[ch] + 1) & 0xFFFF;
+          if (--dma.rem[ch] <= 0) { dma.status |= 1 << ch; dma.mask[ch] = 1; }
+        }
+        break;
+      }
+      case 0xE8: this.outq.push(this.testReg); break;
+      case 0xF2: this.raiseIrq(); break;
+      case 0x80: break;
+      case 0xDC: case 0xF8: break;
+    }
+  }
+  start(auto, len) { this.playing = true; this.auto = auto; this.left = len; this.blockLeft = len; this.paused = false; }
+  raiseIrq() { this.irqPending = true; this.sys.pic.raise(this.irq); }
+  // advance by emulated seconds; pulls bytes from memory through the DMA controller
+  advance(dt) {
+    if (!this.playing || this.paused) return;
+    const dma = this.sys.dma, ch = this.dma, mem = this.sys.mem;
+    this.acc += this.rate * dt;
+    let n = Math.floor(this.acc); this.acc -= n;
+    while (n-- > 0 && this.playing) {
+      if (dma.rem[ch] <= 0) { // DMA already finished (single-cycle): no more data, DSP outputs silence
+        this.pushPcm(0);
+      } else {
+        const a = (dma.page[ch] << 16) | (dma.cur[ch] & 0xFFFF);
+        const b = mem[a & 0xFFFFF];
+        this.pushPcm((b - 128) / 128);
+        dma.cur[ch] = (dma.cur[ch] + 1) & 0xFFFF; dma.rem[ch]--;
+        if (dma.rem[ch] <= 0) { // terminal count
+          dma.status |= 1 << ch;
+          if (dma.mode[ch] & 0x10) { dma.cur[ch] = dma.addr[ch]; dma.rem[ch] = dma.count[ch] + 1; }   // auto-init reloads
+          else dma.mask[ch] = 1;                                                                         // single mode: channel masked, count reads 0xFFFF
+        }
+      }
+      if (--this.left <= 0) {
+        this.raiseIrq();
+        if (this.auto) this.left = this.blockLen + 1; else { this.playing = false; }
+      }
+    }
+  }
+  pushPcm(s) {
+    const nw = (this.pcmW + 1) & 16383;
+    if (nw === this.pcmR) this.pcmR = (this.pcmR + 1) & 16383; // overflow: drop oldest
+    this.pcm[this.pcmW] = s; this.pcmW = nw; this.lastS = s;
+  }
+  // mix into 'out' at host rate (nearest/linear between DSP samples)
+  generate(out, n, hostRate, gain) {
+    if (!this.speaker && !this.playing && this.pcmR === this.pcmW) return;
+    const step = this.rate / hostRate;
+    for (let i = 0; i < n; i++) {
+      this.resFrac += step;
+      while (this.resFrac >= 1) {
+        this.resFrac -= 1; this.prevS = this.curS || 0;
+        if (this.pcmR !== this.pcmW) { this.curS = this.pcm[this.pcmR]; this.pcmR = (this.pcmR + 1) & 16383; }
+        else this.curS = (this.curS || 0) * 0.98;   // 데이터가 모자라면 마지막 값에서 서서히 0으로(지직 소리 방지)
+      }
+      const fr = this.resFrac;   // 샘플 사이를 선형 보간
+      // 1차 저역 통과로 8비트 PCM 계단 소리 완화
+      const x = (this.prevS || 0) + ((this.curS || 0) - (this.prevS || 0)) * fr;
+      this.lp = (this.lp || 0) + (x - (this.lp || 0)) * 0.55;
+      out[i] += this.lp * gain;
+    }
+  }
+}
+
+/* ------------------------------ PC speaker ------------------------------- */
+class Speaker {
+  constructor(sys) { this.sys = sys; this.phase = 0; }
+  generate(out, n, rate, gain) {
+    const k = this.sys.kb61 & 3;
+    if (k !== 3) return;
+    const f = this.sys.pit.spkFreq; if (f < 20 || f > 20000) return;
+    const inc = f / rate;
+    for (let i = 0; i < n; i++) { this.phase += inc; if (this.phase >= 1) this.phase -= 1; out[i] += (this.phase < 0.5 ? gain : -gain); }
+  }
+}
+
+
+
+
+/* ===========================================================================
+ *  High-level BIOS / DOS services (INT 10h/11h/12h/13h/15h/16h/1Ah/20h/21h/27h/2Fh/33h)
+ *  + in-memory FAT-less virtual file system + EXE/COM loader + memory arena
+ * =========================================================================== */
+
+/* ----------------------------- Virtual FS -------------------------------- */
+class VNode {
+  constructor(name, isDir, parent) {
+    this.name = name; this.isDir = isDir; this.parent = parent;
+    this.children = isDir ? new Map() : null; this.aliases = isDir ? new Map() : null;
+    this.data = isDir ? null : new Uint8Array(0); this.size = 0; this.alias = name.toUpperCase();
+    this.mtime = new Date(); this.attr = isDir ? 0x10 : 0x20;
+  }
+}
+function make83(name, dir) {
+  const up = name.toUpperCase().replace(/[^A-Z0-9_$~!#%&\-{}()@'`^.]/g, '_');
+  const dot = up.lastIndexOf('.');
+  let base = dot > 0 ? up.slice(0, dot) : up, ext = dot > 0 ? up.slice(dot + 1) : '';
+  base = base.replace(/\./g, '_');
+  if (base.length <= 8 && ext.length <= 3 && name.toUpperCase().replace(/ /g, '_') === up && (dot < 0 || up.indexOf('.') === dot)) return up;
+  for (let n = 1; n < 1000; n++) {
+    const suf = '~' + n, cand = base.slice(0, 8 - suf.length) + suf + (ext ? '.' + ext.slice(0, 3) : '');
+    if (!dir.aliases.has(cand) && !dir.children.has(cand)) return cand;
+  }
+  return up.slice(0, 8);
+}
+class VFS {
+  constructor() { this.root = new VNode('', true, null); this.dirty = new Set(); this.deleted = new Set(); }
+  realPath(n) { const a = []; while (n && n.parent) { a.unshift(n.name); n = n.parent; } return a.join('\\'); }
+  attached(n) { while (n && n.parent) { if (n.parent.children.get(n.name.toUpperCase()) !== n) return false; n = n.parent; } return true; }
+  tomb(n) { this.deleted.add(this.realPath(n) + (n.isDir ? '\\' : '')); this.dirty.delete(n); }
+  tombTree(n) { if (n.isDir) for (const c of n.children.values()) this.tombTree(c); this.tomb(n); }
+  touchTree(n) { this.dirty.add(n); if (n.isDir) for (const c of n.children.values()) this.touchTree(c); }
+  childOf(dir, name) {
+    const u = name.toUpperCase();
+    return dir.children.get(u) || dir.aliases.get(u) || null;
+  }
+  add(dir, name, isDir) {
+    const n = new VNode(name, isDir, dir);
+    dir.children.set(name.toUpperCase(), n);
+    n.alias = make83(name, dir); if (n.alias !== name.toUpperCase()) dir.aliases.set(n.alias, n);
+    return n;
+  }
+  // parts: array of path components (no drive); returns node or null
+  walk(parts, from) {
+    let n = from || this.root;
+    for (const p of parts) {
+      if (p === '' || p === '.') continue;
+      if (p === '..') { n = n.parent || n; continue; }
+      if (!n.isDir) return null;
+      n = this.childOf(n, p); if (!n) return null;
+    }
+    return n;
+  }
+  addFile(path, data) { // path like "GAME/WOLF3D.EXE"
+    const parts = path.split(/[\\/]+/).filter(Boolean); let d = this.root;
+    for (let i = 0; i < parts.length - 1; i++) d = this.childOf(d, parts[i]) || this.add(d, parts[i], true);
+    const name = parts[parts.length - 1];
+    let f = this.childOf(d, name);
+    if (f && f.isDir) return null;
+    if (!f) f = this.add(d, name, false);
+    f.data = data; f.size = data.length; return f;
+  }
+  fullPath(n) { const a = []; while (n && n.parent) { a.unshift(n.alias); n = n.parent; } return a.join('\\'); }
+  list(dir) { return [...dir.children.values()]; }
+  all(node = this.root, out = []) { for (const c of node.children.values()) { if (c.isDir) this.all(c, out); else out.push(c); } return out; }
+}
+function wildMatch(pat, name) { // pat/name are 8.3 uppercase strings ("A*.B?")
+  const sp = x => { const i = x.lastIndexOf('.'); return i < 0 ? [x, ''] : [x.slice(0, i), x.slice(i + 1)]; };
+  const [pb, pe] = sp(pat), [nb, ne] = sp(name);
+  const m = (p, s) => { const re = new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.?') + '$'); return re.test(s); };
+  return m(pb, nb) && m(pe, ne);
+}
+
+/* ---------------------------- Memory arena ------------------------------- */
+class Arena {
+  constructor(first, top) { this.first = first; this.top = top; this.blocks = [{ seg: first, size: top - first, owner: 0 }]; }
+  reset() { this.blocks = [{ seg: this.first, size: this.top - this.first, owner: 0 }]; }
+  largest() { let m = 0; for (const b of this.blocks) if (!b.owner && b.size > m) m = b.size; return m; }
+  alloc(paras, owner) {
+    for (let i = 0; i < this.blocks.length; i++) {
+      const b = this.blocks[i];
+      if (!b.owner && b.size >= paras) {
+        if (b.size > paras) this.blocks.splice(i + 1, 0, { seg: b.seg + paras, size: b.size - paras, owner: 0 });
+        b.size = paras; b.owner = owner || 0xFFFF; return b.seg;
+      }
+    }
+    return -1;
+  }
+  find(seg) { return this.blocks.findIndex(b => b.seg === seg && b.owner); }
+  free(seg) { const i = this.find(seg); if (i < 0) return false; this.blocks[i].owner = 0; this.coalesce(); return true; }
+  freeOwner(owner) { for (const b of this.blocks) if (b.owner === owner) b.owner = 0; this.coalesce(); }
+  coalesce() {
+    for (let i = 0; i + 1 < this.blocks.length;) {
+      if (!this.blocks[i].owner && !this.blocks[i + 1].owner) { this.blocks[i].size += this.blocks[i + 1].size; this.blocks.splice(i + 1, 1); } else i++;
+    }
+  }
+  resize(seg, paras) { // returns max possible if fail, or -1 on success
+    const i = this.find(seg); if (i < 0) return 0;
+    const b = this.blocks[i], nx = this.blocks[i + 1];
+    if (paras <= b.size) {
+      if (paras < b.size) { const rest = b.size - paras; b.size = paras; if (nx && !nx.owner) { nx.seg -= rest; nx.size += rest; } else this.blocks.splice(i + 1, 0, { seg: b.seg + paras, size: rest, owner: 0 }); }
+      return -1;
+    }
+    const avail = b.size + (nx && !nx.owner ? nx.size : 0);
+    if (paras > avail) return avail;
+    const need = paras - b.size; nx.size -= need; nx.seg += need; if (nx.size === 0) this.blocks.splice(i + 1, 1); b.size = paras; return -1;
+  }
+}
+
+/* ----------------------------- Scancode table ---------------------------- */
+const SC_NORMAL = '\0\x1b1234567890-=\x08\tqwertyuiop[]\r\0asdfghjkl;\'`\0\\zxcvbnm,./\0*\0 ';
+const SC_SHIFT = '\0\x1b!@#$%^&*()_+\x08\0QWERTYUIOP{}\r\0ASDFGHJKL:"~\0|ZXCVBNM<>?\0*\0 ';
+
+/* ================================== DOS =================================== */
+class DOS {
+  constructor(sys) {
+    this.sys = sys; this.cpu = sys.cpu; this.mem = sys.mem; this.vfs = new VFS();
+    this.arena = new Arena(0x0800, 0xA000);
+    this.cwd = []; this.files = new Map(); this.nextHandle = 5; this.dta = 0; this.curPSP = 0; this.exitCode = 0;
+    this.finds = new Map(); this.nextFind = 1; this.ctx = []; this.lineBuf = null; this.mouse = this.newMouse();
+    this.env = { BLASTER: 'A220 I7 D1 T3', PATH: 'C:\\', COMSPEC: 'C:\\COMMAND.COM', PROMPT: '$P$G' };
+    this.consoleBuf = ''; this.missed = new Map(); this.log = []; this.calls = []; this.callDup = 0;
+  }
+
+  /* --------------- diagnostics --------------- */
+  miss(tag) { this.missed.set(tag, (this.missed.get(tag) || 0) + 1); }
+  trace(msg) { this.log.push(msg); if (this.log.length > 60) this.log.shift(); }
+
+  /* --------------- low-level helpers --------------- */
+  get r() { return this.cpu.r; }
+  ax() { return this.cpu.r[0] & 0xFFFF; }
+  setAX(v) { const r = this.cpu.r; r[0] = (r[0] & ~0xFFFF) | (v & 0xFFFF); }
+  setAL(v) { const r = this.cpu.r; r[0] = (r[0] & ~0xFF) | (v & 0xFF); }
+  setAH(v) { const r = this.cpu.r; r[0] = (r[0] & ~0xFF00) | ((v & 0xFF) << 8); }
+  setReg16(i, v) { const r = this.cpu.r; r[i] = (r[i] & ~0xFFFF) | (v & 0xFFFF); }
+  AL() { return this.cpu.r[0] & 0xFF; } AH() { return (this.cpu.r[0] >> 8) & 0xFF; }
+  BX() { return this.cpu.r[3] & 0xFFFF; } CX() { return this.cpu.r[1] & 0xFFFF; } DX() { return this.cpu.r[2] & 0xFFFF; }
+  SI() { return this.cpu.r[6] & 0xFFFF; } DI() { return this.cpu.r[7] & 0xFFFF; } BP() { return this.cpu.r[5] & 0xFFFF; }
+  DS() { return this.cpu.seg[3]; } ES() { return this.cpu.seg[0]; }
+  flagsAddr() { return this.cpu.sb[2] + (this.cpu.r[4] & 0xFFFF) + 4; }
+  setCF(c) { const a = this.flagsAddr(); let f = this.mem[a] | (this.mem[a + 1] << 8); f = c ? f | 1 : f & ~1; this.mem[a] = f; this.mem[a + 1] = f >> 8; }
+  setZF(z) { const a = this.flagsAddr(); let f = this.mem[a] | (this.mem[a + 1] << 8); f = z ? f | 0x40 : f & ~0x40; this.mem[a] = f; this.mem[a + 1] = f >> 8; }
+  ok() { this.setCF(0); }
+  err(code) { this.setAX(code); this.setCF(1); }
+  retry() { // re-execute the INT instruction later (used for blocking calls)
+    const sp = this.cpu.sb[2] + (this.cpu.r[4] & 0xFFFF); const ip = (this.mem[sp] | (this.mem[sp + 1] << 8)) - 2;
+    this.mem[sp] = ip; this.mem[sp + 1] = ip >> 8; this.cpu.yielded = true;
+  }
+  rdz(seg, off) { let a = (seg << 4) + off, s = ''; for (let i = 0; i < 260; i++) { const c = this.mem[(a + i) & 0xFFFFF]; if (!c) break; s += String.fromCharCode(c); } return s; }
+  w16(a, v) { this.mem[a] = v; this.mem[a + 1] = v >> 8; }
+  r16(a) { return this.mem[a] | (this.mem[a + 1] << 8); }
+  w32(a, v) { this.mem[a] = v; this.mem[a + 1] = v >> 8; this.mem[a + 2] = v >> 16; this.mem[a + 3] = v >> 24; }
+  r32(a) { return (this.mem[a] | (this.mem[a + 1] << 8) | (this.mem[a + 2] << 16) | (this.mem[a + 3] << 24)) >>> 0; }
+
+  /* --------------- BIOS data area & boot --------------- */
+  initBIOS() {
+    const m = this.mem; m.fill(0, 0, 0xA0000);
+    const ROM = 0xF0000;
+    m.fill(0, ROM, 0x100000);
+    m[ROM + 0xFF] = 0xCF; // default IRET
+    for (let n = 0; n < 256; n++) { const a = ROM + 0x100 + n * 8; m[a] = 0x0F; m[a + 1] = 0x04; m[a + 2] = n; m[a + 3] = 0xCF; }
+    // INT 8 timer: tick + chain INT 1Ch
+    const t = ROM + 0x100 + 8 * 8; m[t + 3] = 0xCD; m[t + 4] = 0x1C; m[t + 5] = 0xCF;
+    // callback return stub
+    m[ROM + 0xE000] = 0x0F; m[ROM + 0xE001] = 0x04; m[ROM + 0xE002] = 0xFE;
+    for (let n = 0; n < 256; n++) { const a = n * 4; this.w16(a, 0x100 + n * 8); this.w16(a + 2, 0xF000); }
+    // INT 1C default and INT 1B/23/24 -> IRET
+    for (const n of [0x1B, 0x1C, 0x23, 0x24, 0x28, 0x2A]) { this.w16(n * 4, 0xFF); this.w16(n * 4 + 2, 0xF000); }
+    // fonts: 8x16 at F000:A000, 8x8 at F000:B000
+    for (let i = 0; i < 4096; i++) m[ROM + 0xA000 + i] = this.sys.vga.font[i];
+    for (let c = 0; c < 256; c++) for (let y = 0; y < 8; y++) m[ROM + 0xB000 + c * 8 + y] = this.sys.vga.font[c * 16 + y * 2];
+    this.w16(0x1F * 4, 0xB000); this.w16(0x1F * 4 + 2, 0xF000);   // INT 1F: upper half 8x8 font
+    this.w16(0x43 * 4, 0xA000); this.w16(0x43 * 4 + 2, 0xF000);   // INT 43: 8x16 font
+    // BDA
+    const b = 0x400;
+    this.w16(b + 0x10, 0x0021); this.w16(b + 0x13, 640);
+    this.w16(b + 0x1A, 0x1E); this.w16(b + 0x1C, 0x1E); this.w16(b + 0x80, 0x1E); this.w16(b + 0x82, 0x3E);
+    m[b + 0x49] = 3; this.w16(b + 0x4A, 80); this.w16(b + 0x4C, 0x1000); this.w16(b + 0x63, 0x3D4); m[b + 0x84] = 24; this.w16(b + 0x85, 16);
+    this.w16(b + 0x60, 0x0D0E);
+    this.sys.vga.setModeRegs(3, true);
+    m[b + 0x10] = 0x21; m[b + 0x17] = 0;
+    this.arena.reset(); this.files.clear(); this.nextHandle = 5; this.finds.clear(); this.ctx = []; this.mouse = this.newMouse();
+    this.cwd = [];
+  }
+  newMouse() { return { present: false, x: 320, y: 100, mx: 0, my: 0, buttons: 0, show: -1, minx: 0, maxx: 639, miny: 0, maxy: 199, press: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], rel: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], handler: null, mask: 0, inCb: false, pend: [], ratioX: 8, ratioY: 16 }; }
+
+  /* --------------- text output / console --------------- */
+  pageOff() { return (this.r16(0x44E) >> 1); }
+  curPos() { const p = this.mem[0x462]; return [this.mem[0x450 + p * 2], this.mem[0x451 + p * 2]]; }
+  setCurPos(col, row) {
+    const p = this.mem[0x462]; this.mem[0x450 + p * 2] = col; this.mem[0x451 + p * 2] = row;
+    if (!this.isGfx()) { const cols = this.r16(0x44A); const pos = this.pageOff() + row * cols + col; this.sys.vga.crtc[0x0E] = pos >> 8; this.sys.vga.crtc[0x0F] = pos & 255; }
+  }
+  isGfx() { return !(this.sys.vga.gc[6] & 1) ? false : true; }
+  cols() { return this.r16(0x44A) || 80; }
+  rows() { return (this.mem[0x484] || 24) + 1; }
+  tput(col, row, ch, attr) { const cell = this.pageOff() + row * this.cols() + col; const v = this.sys.vga.vram; v[(cell & 0xFFFF) << 2] = ch; if (attr >= 0) v[((cell & 0xFFFF) << 2) + 1] = attr; this.sys.vga.dirty = true; }
+  tget(col, row) { const cell = this.pageOff() + row * this.cols() + col; const v = this.sys.vga.vram; return [v[(cell & 0xFFFF) << 2], v[((cell & 0xFFFF) << 2) + 1]]; }
+  scroll(top, left, bot, right, n, attr, up) {
+    if (this.isGfx()) { this.gscroll(top, left, bot, right, n, attr, up); return; }
+    const h = bot - top + 1; if (n === 0 || n > h) n = h;
+    const get = (c, r) => this.tget(c, r);
+    if (up) {
+      for (let r = top; r <= bot - n; r++) for (let c = left; c <= right; c++) { const [ch, at] = get(c, r + n); this.tput(c, r, ch, at); }
+      for (let r = bot - n + 1; r <= bot; r++) for (let c = left; c <= right; c++) this.tput(c, r, 0x20, attr);
+    } else {
+      for (let r = bot; r >= top + n; r--) for (let c = left; c <= right; c++) { const [ch, at] = get(c, r - n); this.tput(c, r, ch, at); }
+      for (let r = top; r < top + n; r++) for (let c = left; c <= right; c++) this.tput(c, r, 0x20, attr);
+    }
+  }
+  gdims() { const g = this.sys.vga.geometry(); return [g.w, g.h]; }
+  gput(x, y, c) {
+    const v = this.sys.vga, [w, h] = this.gdims(); if (x < 0 || y < 0 || x >= w || y >= h) return;
+    if (v.mode === 0x13) { v.vram[y * 320 + x] = c; } else {
+      const stride = v.crtc[0x13] * 2, a = (y * stride + (x >> 3)) & 0xFFFF, bit = 0x80 >> (x & 7);
+      for (let p = 0; p < 4; p++) { const i = (a << 2) | p; if ((c >> p) & 1) v.vram[i] |= bit; else v.vram[i] &= ~bit; }
+    }
+    v.dirty = true;
+  }
+  gget(x, y) {
+    const v = this.sys.vga, [w, h] = this.gdims(); if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+    if (v.mode === 0x13) return v.vram[y * 320 + x];
+    const stride = v.crtc[0x13] * 2, a = (y * stride + (x >> 3)) & 0xFFFF, bit = 7 - (x & 7); let c = 0;
+    for (let p = 0; p < 4; p++) c |= ((v.vram[(a << 2) | p] >> bit) & 1) << p; return c;
+  }
+  gchar(col, row, ch, fg) {
+    const font = this.sys.vga.font;
+    for (let y = 0; y < 8; y++) { const bits = font[ch * 16 + y * 2]; for (let x = 0; x < 8; x++) if (bits & (0x80 >> x)) this.gput(col * 8 + x, row * 8 + y, fg); else if (false) this.gput(col * 8 + x, row * 8 + y, 0); }
+  }
+  gscroll(top, left, bot, right, n, attr, up) {
+    const h = bot - top + 1; if (n === 0 || n > h) n = h;
+    const x0 = left * 8, x1 = (right + 1) * 8;
+    if (up) {
+      for (let y = top * 8; y < (bot + 1 - n) * 8; y++) for (let x = x0; x < x1; x++) this.gput(x, y, this.gget(x, y + n * 8));
+      for (let y = (bot + 1 - n) * 8; y < (bot + 1) * 8; y++) for (let x = x0; x < x1; x++) this.gput(x, y, attr & 0xFF);
+    } else {
+      for (let y = (bot + 1) * 8 - 1; y >= (top + n) * 8; y--) for (let x = x0; x < x1; x++) this.gput(x, y, this.gget(x, y - n * 8));
+      for (let y = top * 8; y < (top + n) * 8; y++) for (let x = x0; x < x1; x++) this.gput(x, y, attr & 0xFF);
+    }
+  }
+  teletype(ch, color = 7) {
+    let [col, row] = this.curPos(); const cols = this.isGfx() ? Math.floor(this.gdims()[0] / 8) : this.cols(), rows = this.isGfx() ? Math.floor(this.gdims()[1] / 8) : this.rows();
+    const gfx = this.isGfx(), attr = gfx ? color : (this.curAttr(col, row));
+    if (ch === 7) { /* bell */ }
+    else if (ch === 8) { if (col > 0) col--; }
+    else if (ch === 10) { row++; }
+    else if (ch === 13) { col = 0; }
+    else {
+      if (gfx) this.gchar(col, row, ch, color || 15); else this.tput(col, row, ch, -1);
+      col++;
+      if (col >= cols) { col = 0; row++; }
+    }
+    if (row >= rows) { row = rows - 1; this.scroll(0, 0, rows - 1, cols - 1, 1, gfx ? 0 : (this.mem[0x4FF] || 7), true); }
+    this.setCurPos(col, row);
+  }
+  curAttr(col, row) { return this.tget(col, row)[1]; }
+  print(s) { for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); this.teletype(c & 0xFF, 7); } }
+
+  /* --------------- keyboard buffer (BDA ring) --------------- */
+  kbPush(ascii, scan) {
+    const head = this.r16(0x41A), tail = this.r16(0x41C); let nt = tail + 2; if (nt >= 0x3E) nt = 0x1E;
+    if (nt === head) return; this.mem[0x400 + tail] = ascii; this.mem[0x400 + tail + 1] = scan; this.w16(0x41C, nt);
+  }
+  kbPeek() { const h = this.r16(0x41A); if (h === this.r16(0x41C)) return -1; return this.mem[0x400 + h] | (this.mem[0x401 + h] << 8); }
+  kbPop() { const h = this.r16(0x41A); if (h === this.r16(0x41C)) return -1; const v = this.mem[0x400 + h] | (this.mem[0x401 + h] << 8); let nh = h + 2; if (nh >= 0x3E) nh = 0x1E; this.w16(0x41A, nh); return v; }
+  int9() {
+    const kb = this.sys.kb; if (!kb.obf) return;
+    const sc = kb.readData(); const m = this.mem;
+    if (sc === 0xE0) { this.e0 = true; return; }
+    const ext = this.e0; this.e0 = false;
+    const brk = sc & 0x80, c = sc & 0x7F; let fl = m[0x417];
+    const bit = { 0x2A: 2, 0x36: 1, 0x1D: 4, 0x38: 8 }[c];
+    if (bit) { m[0x417] = brk ? fl & ~bit : fl | bit; return; }
+    if (brk) return;
+    if (c === 0x3A) { m[0x417] = fl ^ 0x40; return; } if (c === 0x45) { m[0x417] = fl ^ 0x20; return; } if (c === 0x46) { m[0x417] = fl ^ 0x10; return; }
+    fl = m[0x417];
+    let ascii = 0; const shift = (fl & 3) !== 0, caps = (fl & 0x40) !== 0, ctrl = (fl & 4) !== 0, alt = (fl & 8) !== 0;
+    if (c < SC_NORMAL.length && !(c >= 0x47 && !ext && false)) {
+      let ch = (shift ? SC_SHIFT : SC_NORMAL).charCodeAt(c) || 0; const isAlpha = c >= 0x10 && c <= 0x32 && /[a-z]/i.test(String.fromCharCode(ch));
+      if (caps && isAlpha) ch = shift ? String.fromCharCode(ch).toLowerCase().charCodeAt(0) : String.fromCharCode(ch).toUpperCase().charCodeAt(0);
+      ascii = ch; if (ctrl && isAlpha) ascii = String.fromCharCode(ch).toUpperCase().charCodeAt(0) - 64; if (alt) ascii = 0; if (ext && c === 0x35) ascii = 0x2F;
+    } else if (c === 0x4A) ascii = 0x2D; else if (c === 0x4E) ascii = 0x2B;
+    if (ctrl && c === 0x1C) ascii = 10;
+    this.kbPush(ascii, c);
+  }
+
+  /* --------------- HLE dispatcher --------------- */
+  hle(n) {
+    if (n !== 8 && n !== 9 && !(n >= 0x0A && n <= 0x0F) && !(n >= 0x70 && n <= 0x77)) {
+      let t = n.toString(16).toUpperCase() + 'h AX=' + this.ax().toString(16);
+      if (n === 0x21) { const ah = this.AH(); if (ah === 0x3D || ah === 0x3C || ah === 0x4B || ah === 0x43 || ah === 0x41 || ah === 0x3B) t += ' "' + this.rdz(this.DS(), this.DX()) + '"'; }
+      if (this.calls.length && this.calls[this.calls.length - 1] === t) this.callDup++; else { this.calls.push(t); this.callDup = 0; if (this.calls.length > 60) this.calls.shift(); }
+    }
+    switch (n) {
+      case 0x08: { const t = (this.r32(0x46C) + 1) >>> 0; this.w32(0x46C, t); this.sys.pic.write(0x20, 0x20); return; }
+      case 0x09: this.int9(); this.sys.pic.write(0x20, 0x20); return;
+      case 0x0A: case 0x0B: case 0x0C: case 0x0D: case 0x0E: case 0x0F: this.sys.pic.write(0x20, 0x20); return;
+      case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x77: this.sys.pic.write(0xA0, 0x20); this.sys.pic.write(0x20, 0x20); return;
+      case 0x10: this.int10(); return;
+      case 0x11: this.setAX(this.r16(0x410)); return;
+      case 0x12: this.setAX(this.r16(0x413)); return;
+      case 0x13: this.miss('INT13 디스크 호출 AH=' + this.AH().toString(16)); this.setAH(1); this.setCF(1); return;
+      case 0x14: case 0x17: this.setAH(0x80); return;
+      case 0x15: this.int15(); return;
+      case 0x16: this.int16(); return;
+      case 0x1A: this.int1a(); return;
+      case 0x20: this.terminate(0); return;
+      case 0x21: this.int21(); return;
+      case 0x27: this.terminate(0, true); return;
+      case 0x2F: this.int2f(); return;
+      case 0x33: this.int33(); return;
+      case 0xFE: this.callbackReturn(); return;
+      default:
+        if (n >= 0x20) this.miss('INT ' + n.toString(16) + 'h 호출 (처리기 없음)'); else if (n < 8) this.miss('CPU 예외 ' + n + ' (기본 처리기)');
+        return;
+    }
+  }
+
+  /* --------------- INT 10h video --------------- */
+  setVideoMode(mode, noClear) {
+    const v = this.sys.vga, m = this.mem;
+    if (mode === 0x07) mode = 3; if (mode === 0x00) mode = 1; if (mode === 0x02) mode = 3;
+    if (!v.setModeRegs(mode, !noClear)) return false;
+    const md = v.curModeInfo; m[0x449] = mode;
+    this.mem.fill(0, 0x450, 0x460);
+    if (md.text) { this.w16(0x44A, md.cols); m[0x484] = md.rows - 1; this.w16(0x485, md.ch); this.w16(0x44C, md.cols * md.rows * 2); this.w16(0x460, 0x0D0E); }
+    else { const g = v.geometry(); this.w16(0x44A, g.w >> 3); m[0x484] = (g.h >> 3) - 1; this.w16(0x485, 8); this.w16(0x44C, 0x4000); }
+    this.w16(0x44E, 0); m[0x462] = 0; m[0x465] = 0x29; m[0x4FF] = 7;
+    v.crtc[0x0E] = 0; v.crtc[0x0F] = 0;
+    if (!md.text) { v.crtc[0x0A] = 0x20; }
+    return true;
+  }
+  int10() {
+    const r = this.cpu.r, ah = this.AH(), al = this.AL(), v = this.sys.vga, m = this.mem;
+    switch (ah) {
+      case 0x00: this.setVideoMode(al & 0x7F, !!(al & 0x80)); return;
+      case 0x01: v.crtc[0x0A] = (this.CX() >> 8) & 0x3F; v.crtc[0x0B] = this.CX() & 0x1F; this.w16(0x460, this.CX()); return;
+      case 0x02: { const pg = (r[3] >> 8) & 7; m[0x450 + pg * 2] = r[2] & 0xFF; m[0x451 + pg * 2] = (r[2] >> 8) & 0xFF; if (pg === m[0x462]) this.setCurPos(r[2] & 0xFF, (r[2] >> 8) & 0xFF); return; }
+      case 0x03: { const pg = (r[3] >> 8) & 7; this.setReg16(2, m[0x450 + pg * 2] | (m[0x451 + pg * 2] << 8)); this.setReg16(1, this.r16(0x460)); return; }
+      case 0x05: m[0x462] = al & 7; return;
+      case 0x06: case 0x07: this.scroll((r[1] >> 8) & 0xFF, r[1] & 0xFF, (r[2] >> 8) & 0xFF, r[2] & 0xFF, al, (r[3] >> 8) & 0xFF, ah === 6); return;
+      case 0x08: { const [col, row] = this.curPos(); if (this.isGfx()) { this.setAX(0); return; } const [c, a] = this.tget(col, row); this.setAX(c | (a << 8)); return; }
+      case 0x09: case 0x0A: {
+        let [col, row] = this.curPos(); const n = this.CX(), attr = r[3] & 0xFF; const gfx = this.isGfx(), cols = gfx ? this.gdims()[0] >> 3 : this.cols();
+        for (let i = 0; i < n; i++) { const cc = col + i; if (gfx) this.gchar(cc % cols, row, al, attr || 15); else this.tput(cc % cols, row + Math.floor(cc / cols), al, ah === 9 ? attr : -1); }
+        return;
+      }
+      case 0x0B: return;
+      case 0x0C: this.gput(this.CX(), this.DX(), al); return;
+      case 0x0D: this.setAL(this.gget(this.CX(), this.DX())); return;
+      case 0x0E: this.teletype(al, r[3] & 0xFF); return;
+      case 0x0F: this.setAX((this.cols() << 8) | m[0x449]); this.setReg16(3, (m[0x462] << 8) | (r[3] & 0xFF)); return;
+      case 0x10: this.int10pal(al); return;
+      case 0x11: if (al === 0x30) {
+        const bh = (r[3] >> 8) & 0xFF; const tbl = { 0: [0xF000, 0xB000, 8], 1: [0xF000, 0xB000, 8], 2: [0xF000, 0xA000, 14], 3: [0xF000, 0xB000, 8], 6: [0xF000, 0xA000, 16], 7: [0xF000, 0xA000, 16] }[bh] || [0xF000, 0xA000, 16];
+        this.cpu.setSeg(0, tbl[0]); this.setReg16(5, tbl[1]); this.setReg16(1, tbl[2]); r[2] = (r[2] & ~0xFF) | (this.rows() - 1);
+      } return;
+      case 0x12: { const bl = r[3] & 0xFF; if (bl === 0x10) { this.setReg16(3, 3); this.setReg16(1, 0x0009); } else if (bl === 0x30 || bl === 0x31 || bl === 0x32 || bl === 0x33 || bl === 0x34 || bl === 0x36) this.setAL(0x12); return; }
+      case 0x13: {
+        const mode = al, attr = r[3] & 0xFF, len = this.CX(), row = (r[2] >> 8) & 0xFF, col = r[2] & 0xFF; const base = (this.cpu.seg[0] << 4) + this.BP();
+        const [oc, orow] = this.curPos(); this.setCurPos(col, row);
+        for (let i = 0; i < len; i++) {
+          const ch = m[(base + (mode & 2 ? i * 2 : i)) & 0xFFFFF]; const at = (mode & 2) ? m[(base + i * 2 + 1) & 0xFFFFF] : attr;
+          const [cc, cr] = this.curPos(); if (ch === 13 || ch === 10 || ch === 8 || ch === 7) this.teletype(ch, at); else { if (this.isGfx()) this.gchar(cc, cr, ch, at); else this.tput(cc, cr, ch, at); this.advance(); }
+        }
+        if (!(mode & 1)) this.setCurPos(oc, orow); return;
+      }
+      case 0x1A: if (al === 0) { this.setAX(0x1A1A & 0xFFFF); r[0] = (r[0] & ~0xFFFF) | 0x1A; this.setReg16(3, 0x0008); } return;
+      case 0x1B: this.setAL(0x1B); return;
+      case 0x4F: this.setAX(0x014F); return;
+      case 0xFE: case 0xFF: return;
+    }
+    this.miss('INT10 AH=' + ah.toString(16) + ' AL=' + al.toString(16) + ' (미구현)');
+  }
+  advance() { let [c, r] = this.curPos(); c++; if (c >= this.cols()) { c = 0; r++; if (r >= this.rows()) { r = this.rows() - 1; this.scroll(0, 0, r, this.cols() - 1, 1, 7, true); } } this.setCurPos(c, r); }
+  int10pal(al) {
+    const v = this.sys.vga, r = this.cpu.r, base = (this.cpu.seg[0] << 4);
+    switch (al) {
+      case 0x00: v.ac[(r[3]) & 0x1F] = (r[3] >> 8) & 0xFF; v.dirty = true; return;
+      case 0x01: v.ac[0x11] = (r[3] >> 8) & 0xFF; return;
+      case 0x02: for (let i = 0; i < 16; i++) v.ac[i] = this.mem[(base + this.DX() + i) & 0xFFFFF]; v.ac[0x11] = this.mem[(base + this.DX() + 16) & 0xFFFFF]; v.dirty = true; return;
+      case 0x03: v.ac[0x10] = (v.ac[0x10] & ~8) | ((r[3] & 1) << 3); return;
+      case 0x07: r[3] = (r[3] & ~0xFF00) | (v.ac[r[3] & 0x1F] << 8); return;
+      case 0x08: r[3] = (r[3] & ~0xFF00) | (v.ac[0x11] << 8); return;
+      case 0x09: for (let i = 0; i < 16; i++) this.mem[(base + this.DX() + i) & 0xFFFFF] = v.ac[i]; this.mem[(base + this.DX() + 16) & 0xFFFFF] = v.ac[0x11]; return;
+      case 0x10: v.setDac(this.BX() & 255, (r[2] >> 8) & 63, (r[1] >> 8) & 63, r[1] & 63); v.dirty = true; return;
+      case 0x12: { let i = this.BX(); const n = this.CX(); let a = base + this.DX(); for (let k = 0; k < n; k++, a += 3) v.setDac((i + k) & 255, this.mem[a & 0xFFFFF], this.mem[(a + 1) & 0xFFFFF], this.mem[(a + 2) & 0xFFFFF]); v.dirty = true; return; }
+      case 0x13: return;
+      case 0x15: { const i = this.BX() & 255; r[2] = (r[2] & ~0xFF00) | (v.dac[i * 3] << 8); r[1] = (r[1] & ~0xFFFF) | (v.dac[i * 3 + 1] << 8) | v.dac[i * 3 + 2]; return; }
+      case 0x17: { const i = this.BX(), n = this.CX(); let a = base + this.DX(); for (let k = 0; k < n; k++, a += 3) { const j = ((i + k) & 255) * 3; this.mem[a & 0xFFFFF] = v.dac[j]; this.mem[(a + 1) & 0xFFFFF] = v.dac[j + 1]; this.mem[(a + 2) & 0xFFFFF] = v.dac[j + 2]; } return; }
+      case 0x1A: r[3] = (r[3] & ~0xFFFF) | 0; return;
+      case 0x1B: return;
+    }
+  }
+
+  /* --------------- INT 15h/16h/1Ah --------------- */
+  int15() {
+    const ah = this.AH();
+    switch (ah) {
+      case 0x4F: this.setCF(1); return;
+      case 0x86: return;
+      case 0x88: this.setAX(0); this.ok(); return;
+      case 0xC0: this.setAH(0x86); this.setCF(1); return;
+      case 0x24: case 0x87: case 0xE8: case 0xC2: default: this.miss('INT15 AH=' + ah.toString(16) + ' (미지원 응답)'); this.setAH(0x86); this.setCF(1); return;
+    }
+  }
+  int16() {
+    const ah = this.AH();
+    switch (ah) {
+      case 0x00: case 0x10: { const k = this.kbPop(); if (k < 0) { this.retry(); return; } this.setAX(k); return; }
+      case 0x01: case 0x11: { const k = this.kbPeek(); if (k < 0) { this.setZF(1); } else { this.setZF(0); this.setAX(k); } return; }
+      case 0x02: case 0x12: this.setAL(this.mem[0x417]); if (ah === 0x12) this.setAH(this.mem[0x418]); return;
+      case 0x05: this.kbPush(this.AL(), this.AH() === 5 ? (this.cpu.r[1] >> 8) & 0xFF : 0); this.kbPush(this.CX() & 0xFF, (this.CX() >> 8) & 0xFF); this.setAL(0); return;
+      case 0x03: return;
+    }
+    this.miss('INT16 AH=' + ah.toString(16) + ' (미구현)');
+  }
+  int1a() {
+    const ah = this.AH(), d = new Date();
+    switch (ah) {
+      case 0x00: { const t = this.r32(0x46C); this.setReg16(1, t >>> 16); this.setReg16(2, t & 0xFFFF); this.setAL(0); return; }
+      case 0x02: { const b = x => ((x / 10 | 0) << 4) | (x % 10); this.setReg16(1, (b(d.getHours()) << 8) | b(d.getMinutes())); this.setReg16(2, b(d.getSeconds()) << 8); this.ok(); return; }
+      case 0x04: { const b = x => ((x / 10 | 0) << 4) | (x % 10); this.setReg16(1, (b(Math.floor(d.getFullYear() / 100)) << 8) | b(d.getFullYear() % 100)); this.setReg16(2, (b(d.getMonth() + 1) << 8) | b(d.getDate())); this.ok(); return; }
+      case 0x01: return;
+    }
+    this.miss('INT1A AH=' + ah.toString(16) + ' (미구현)');
+  }
+
+  /* --------------- Mouse INT 33h --------------- */
+  int33() {
+    const mo = this.mouse, r = this.cpu.r, ax = this.ax();
+    if (!mo.present && ax !== 0) { return; }
+    switch (ax) {
+      case 0x0000: case 0x0021: if (!mo.present) { this.setAX(0); this.setReg16(3, 0); return; } mo.show = -1; mo.handler = null; mo.mask = 0; this.setAX(0xFFFF); this.setReg16(3, 2); return;
+      case 0x0001: mo.show++; return;
+      case 0x0002: mo.show--; return;
+      case 0x0003: this.setReg16(3, mo.buttons); this.setReg16(1, mo.x); this.setReg16(2, mo.y); return;
+      case 0x0004: mo.x = this.CX(); mo.y = this.DX(); return;
+      case 0x0005: case 0x0006: { const b = this.BX() & 3, i = b === 2 ? 1 : b === 1 ? 1 : 0; const arr = ax === 5 ? mo.press : mo.rel; const e = arr[this.BX() > 2 ? 0 : this.BX()]; this.setAX(mo.buttons); this.setReg16(3, e[0]); this.setReg16(1, e[1]); this.setReg16(2, e[2]); e[0] = 0; return; }
+      case 0x0007: mo.minx = this.CX(); mo.maxx = this.DX(); mo.x = Math.min(mo.maxx, Math.max(mo.minx, mo.x)); return;
+      case 0x0008: mo.miny = this.CX(); mo.maxy = this.DX(); mo.y = Math.min(mo.maxy, Math.max(mo.miny, mo.y)); return;
+      case 0x000B: this.setReg16(1, mo.mx & 0xFFFF); this.setReg16(2, mo.my & 0xFFFF); mo.mx = 0; mo.my = 0; return;
+      case 0x000C: mo.mask = this.CX(); mo.handler = mo.mask ? [this.cpu.seg[0], this.DX()] : null; return;
+      case 0x000F: mo.ratioX = this.CX() || 8; mo.ratioY = this.DX() || 16; return;
+      case 0x0014: { const old = mo.handler, om = mo.mask; mo.mask = this.CX(); mo.handler = mo.mask ? [this.cpu.seg[0], this.DX()] : null; this.setReg16(1, om); if (old) { this.cpu.setSeg(0, old[0]); this.setReg16(2, old[1]); } return; }
+      case 0x0015: this.setReg16(3, 20); return;
+      case 0x0018: case 0x0019: case 0x001A: case 0x001C: case 0x001D: case 0x0009: case 0x000A: case 0x0010: case 0x0013: case 0x0016: case 0x0017: case 0x001B: return;
+      case 0x0024: this.setReg16(3, 0x0626); this.setReg16(1, 0x0400); return;
+      case 0x001E: return;
+    }
+    this.miss('INT33 AX=' + ax.toString(16) + ' (미구현)');
+  }
+  mouseSetBounds(w, h) { const mo = this.mouse; mo.minx = 0; mo.maxx = w - 1; mo.miny = 0; mo.maxy = h - 1; }
+  mouseEvent(dx, dy, buttons) { // buttons: bitmask (1 left, 2 right, 4 mid)
+    const mo = this.mouse; if (!mo.present) return;
+    let mask = 0;
+    if (dx || dy) {
+      mo.mx += dx; mo.my += dy; const g = this.sys.vga.mode === 0x13 ? 2 : 1;
+      mo.x = Math.max(mo.minx, Math.min(mo.maxx, mo.x + dx * g)); mo.y = Math.max(mo.miny, Math.min(mo.maxy, mo.y + dy)); mask |= 1;
+    }
+    const ch = buttons ^ mo.buttons;
+    for (let b = 0; b < 3; b++) if (ch & (1 << b)) {
+      const press = !!(buttons & (1 << b)); const e = (press ? mo.press : mo.rel)[b]; e[0]++; e[1] = mo.x; e[2] = mo.y;
+      mask |= 1 << (1 + b * 2 + (press ? 0 : 1));
+    }
+    mo.buttons = buttons;
+    if (mo.handler && (mask & mo.mask)) mo.pend.push(mask & mo.mask);
+  }
+  mousePump() { // start a callback into the program's handler if possible
+    const mo = this.mouse; if (!mo.present || !mo.handler || mo.inCb || !mo.pend.length || !this.cpu.fIF) return;
+    const c = this.cpu, mask = mo.pend.shift();
+    mo.saved = { r: Int32Array.from(c.r), seg: Uint16Array.from(c.seg), ip: c.ip, flags: c.getFlags() };
+    mo.inCb = true;
+    c.r[0] = mask; c.r[3] = mo.buttons; c.r[1] = mo.x; c.r[2] = mo.y; c.r[6] = mo.mx & 0xFFFF; c.r[7] = mo.my & 0xFFFF;
+    c.farCallTo(mo.handler[0], mo.handler[1], 0xF000, 0xE000);
+    c.halted = false;
+  }
+  callbackReturn() {
+    // executed as part of "0F 04 FE" reached via RETF from the user mouse handler: restore state
+    const mo = this.mouse, c = this.cpu;
+    if (mo.saved) { c.r.set(mo.saved.r); for (let i = 0; i < 6; i++) c.setSeg(i, mo.saved.seg[i]); c.ip = mo.saved.ip; c.setFlags(mo.saved.flags); mo.saved = null; }
+    mo.inCb = false;
+  }
+
+  int2f() {
+    const ax = this.ax();
+    switch (ax) {
+      case 0x1680: this.setAL(0); return;
+      case 0x4300: this.setAL(0); return;           // no XMS
+      case 0x1600: this.setAL(0); return;           // no Windows
+      case 0x1687: return;                          // no DPMI (AX unchanged => not present)
+      case 0x4680: return;
+      case 0xB800: case 0xB700: return;
+    }
+    this.miss('INT2F AX=' + ax.toString(16) + ' (응답 없음)');
+  }
+
+  /* --------------- INT 21h --------------- */
+  parsePath(s) { // returns {parts[], drive}
+    s = s.replace(/\//g, '\\'); let drive = 2;
+    if (/^[A-Za-z]:/.test(s)) { drive = s.charCodeAt(0) & 0x5F; drive -= 0x41; s = s.slice(2); }
+    const abs = s.startsWith('\\'); const parts = s.split('\\').filter(x => x !== '');
+    return { drive, parts: abs ? parts : [...this.cwd, ...parts] };
+  }
+  lookup(s) { const p = this.parsePath(s); return this.vfs.walk(p.parts); }
+  splitParent(s) {
+    const p = this.parsePath(s); if (!p.parts.length) return null; const name = p.parts.pop(); const dir = this.vfs.walk(p.parts); return dir && dir.isDir ? { dir, name } : null;
+  }
+  dosDate(d) { return ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(); }
+  dosTime(d) { return (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1); }
+  newHandle(obj) { let h = 5; while (this.files.has(h)) h++; if (h >= 255) return -1; this.files.set(h, obj); return h; }
+
+  int21() {
+    const c = this.cpu, r = c.r, ah = this.AH(), al = this.AL();
+    switch (ah) {
+      case 0x00: this.terminate(0); return;
+      case 0x01: { const k = this.kbPop(); if (k < 0) { this.retry(); return; } const ch = k & 0xFF; this.teletype(ch); this.setAL(ch); return; }
+      case 0x02: this.teletype(r[2] & 0xFF); return;
+      case 0x03: case 0x04: case 0x05: return;
+      case 0x06: { const dl = r[2] & 0xFF; if (dl === 0xFF) { const k = this.kbPop(); if (k < 0) { this.setZF(1); this.setAL(0); } else { this.setZF(0); this.setAL(k & 0xFF); } } else this.teletype(dl); return; }
+      case 0x07: case 0x08: { const k = this.kbPop(); if (k < 0) { this.retry(); return; } this.setAL(k & 0xFF); return; }
+      case 0x09: { let a = (this.DS() << 4) + this.DX(); for (let i = 0; i < 65536; i++) { const ch = this.mem[(a + i) & 0xFFFFF]; if (ch === 0x24) break; this.teletype(ch); } return; }
+      case 0x0A: this.bufInput(); return;
+      case 0x0B: this.setAL(this.kbPeek() >= 0 ? 0xFF : 0); return;
+      case 0x0C: { while (this.kbPop() >= 0); const n = al; if (n === 1 || n === 6 || n === 7 || n === 8) { this.setAH(n); this.int21(); } return; }
+      case 0x0D: return;
+      case 0x0E: this.setAL(5); return;
+      case 0x19: this.setAL(2); return;
+      case 0x1A: this.dta = (this.DS() << 4) + this.DX(); this.dtaSeg = this.DS(); this.dtaOff = this.DX(); return;
+      case 0x1B: case 0x1C: this.setAL(1); this.setReg16(1, 512); this.setReg16(2, 0xFFFF); return;
+      case 0x25: { const a = al * 4; this.w16(a, this.DX()); this.w16(a + 2, this.DS()); return; }
+      case 0x26: this.makePSP(this.DX()); return;
+      case 0x29: return;
+      case 0x2A: { const d = new Date(); this.setReg16(1, d.getFullYear()); this.setReg16(2, ((d.getMonth() + 1) << 8) | d.getDate()); this.setAL(d.getDay()); return; }
+      case 0x2B: this.setAL(0); return;
+      case 0x2C: { const d = new Date(); this.setReg16(1, (d.getHours() << 8) | d.getMinutes()); this.setReg16(2, (d.getSeconds() << 8) | Math.floor(d.getMilliseconds() / 10)); return; }
+      case 0x2D: this.setAL(0); return;
+      case 0x2E: return;
+      case 0x2F: c.setSeg(0, this.dtaSeg || 0x0800); this.setReg16(3, this.dtaOff || 0x80); return;
+      case 0x30: this.setAX(al === 1 ? 0x0005 | (0x10 << 8) : 0x0005); this.setReg16(3, 0xFF00); this.setReg16(1, 0); return;
+      case 0x31: this.terminate(al, true); return;
+      case 0x33: if (al === 0) this.setReg16(2, (r[2] & 0xFF00)); else if (al === 6) { this.setReg16(3, 0x0005); this.setReg16(2, 0x1000); } else if (al === 5) {} return;
+      case 0x34: c.setSeg(0, 0x0060); this.setReg16(3, 0); return;
+      case 0x35: { const a = al * 4; this.setReg16(3, this.r16(a)); c.setSeg(0, this.r16(a + 2)); return; }
+      case 0x36: this.setAX(32); this.setReg16(3, 0x7FFF); this.setReg16(1, 512); this.setReg16(2, 0x7FFF); return;
+      case 0x37: if (al === 0) { this.setAL(0); this.setReg16(2, 0x2F); } return;
+      case 0x38: if (al === 0) { for (let i = 0; i < 34; i++) this.mem[(this.DS() << 4) + this.DX() + i] = 0; this.mem[(this.DS() << 4) + this.DX() + 2] = 0x24; this.setReg16(3, 1); this.ok(); } return;
+      case 0x39: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); if (!sp) return this.err(3); if (this.vfs.childOf(sp.dir, sp.name)) return this.err(5); this.vfs.dirty.add(this.vfs.add(sp.dir, sp.name, true)); this.ok(); return; }
+      case 0x3A: { const n = this.lookup(this.rdz(this.DS(), this.DX())); if (!n || !n.isDir) return this.err(3); if (n.children.size) return this.err(5); this.vfs.tomb(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias); this.ok(); return; }
+      case 0x3B: { const p = this.parsePath(this.rdz(this.DS(), this.DX())); const n = this.vfs.walk(p.parts); if (!n || !n.isDir) return this.err(3); this.cwd = this.resolveParts(n); this.ok(); return; }
+      case 0x3C: case 0x5B: return this.createFile(ah === 0x5B);
+      case 0x3D: return this.openFile();
+      case 0x3E: { const h = this.BX(); if (h < 5) return this.ok(); const f = this.files.get(h); if (!f) return this.err(6); this.files.delete(h); this.ok(); return; }
+      case 0x3F: return this.readFile();
+      case 0x40: return this.writeFile();
+      case 0x41: { const sp = this.splitParent(this.rdz(this.DS(), this.DX())); const n = sp && this.vfs.childOf(sp.dir, sp.name); if (!n || n.isDir) return this.err(2); sp.dir.children.delete(n.name.toUpperCase()); sp.dir.aliases.delete(n.alias); this.vfs.tomb(n); this.ok(); return; }
+      case 0x42: return this.seekFile();
+      case 0x43: { const n = this.lookup(this.rdz(this.DS(), this.DX())); if (!n) return this.err(2); if (al === 0) { this.setReg16(1, n.attr); this.ok(); } else this.ok(); return; }
+      case 0x44: return this.ioctl();
+      case 0x45: { const f = this.files.get(this.BX()); if (this.BX() < 5) { const h = this.newHandle({ dev: this.BX() }); this.setAX(h); this.ok(); return; } if (!f) return this.err(6); const h = this.newHandle(Object.assign({}, f)); if (h < 0) return this.err(4); this.setAX(h); this.ok(); return; }
+      case 0x46: { const f = this.files.get(this.BX()); const dst = this.CX(); if (!f && this.BX() >= 5) return this.err(6); if (this.BX() >= 5) this.files.set(dst, Object.assign({}, f)); this.ok(); return; }
+      case 0x47: { const s = this.cwd.join('\\'); const a = (this.DS() << 4) + this.SI(); for (let i = 0; i < s.length; i++) this.mem[a + i] = s.charCodeAt(i); this.mem[a + s.length] = 0; this.setAX(0x0100); this.ok(); return; }
+      case 0x48: { const n = this.BX(); const s = this.arena.alloc(n, this.curPSP || 0xFFFF); if (s < 0) { this.setReg16(3, this.arena.largest()); return this.err(8); } this.setAX(s); this.ok(); return; }
+      case 0x49: if (!this.arena.free(this.ES())) return this.err(9); this.ok(); return;
+      case 0x4A: { const res = this.arena.resize(this.ES(), this.BX()); if (res === 0) return this.err(9); if (res > 0) { this.setReg16(3, res); return this.err(8); } this.ok(); return; }
+      case 0x4B: return this.exec();
+      case 0x4C: this.terminate(al); return;
+      case 0x4D: this.setAX(this.exitCode); return;
+      case 0x4E: return this.findFirst();
+      case 0x4F: return this.findNext();
+      case 0x50: this.curPSP = this.BX(); return;
+      case 0x51: case 0x62: this.setReg16(3, this.curPSP); return;
+      case 0x52: c.setSeg(0, 0x0060); this.setReg16(3, 0); return;
+      case 0x54: this.setAL(0); return;
+      case 0x56: { const a = this.splitParent(this.rdz(this.DS(), this.DX())); const n = a && this.vfs.childOf(a.dir, a.name); const b = this.splitParent(this.rdz(this.ES(), this.DI())); if (!n || !b) return this.err(2); this.vfs.tombTree(n); a.dir.children.delete(n.name.toUpperCase()); a.dir.aliases.delete(n.alias); n.name = b.name; n.parent = b.dir; b.dir.children.set(b.name.toUpperCase(), n); n.alias = make83(b.name, b.dir); if (n.alias !== b.name.toUpperCase()) b.dir.aliases.set(n.alias, n); this.vfs.touchTree(n); this.ok(); return; }
+      case 0x57: { const f = this.files.get(this.BX()); if (!f || !f.node) return this.err(6); if (al === 0) { this.setReg16(1, this.dosTime(f.node.mtime)); this.setReg16(2, this.dosDate(f.node.mtime)); } this.ok(); return; }
+      case 0x58: if (al === 0) this.setAX(0); else if (al === 2) this.setAL(0); this.ok(); return;
+      case 0x5D: case 0x5E: case 0x5F: this.miss('INT21 AH=' + ah.toString(16) + ' (미구현)'); return this.err(1);
+      case 0x63: this.setAL(0); return;
+      case 0x65: this.miss('INT21 AH=65 (미구현)'); this.err(1); return;
+      case 0x66: this.setReg16(3, 437); this.ok(); return;
+      case 0x67: this.ok(); return;
+      case 0x68: case 0x6A: this.ok(); return;
+      case 0x71: this.err(0x7100); return;
+      default: this.miss('INT21 AH=' + ah.toString(16) + ' AL=' + al.toString(16) + ' (미구현)'); this.err(1); return;
+    }
+  }
+  resolveParts(n) { const a = []; while (n && n.parent) { a.unshift(n.alias); n = n.parent; } return a; }
+
+  bufInput() {
+    const a = (this.DS() << 4) + this.DX(), max = this.mem[a];
+    if (!this.lineBuf) this.lineBuf = '';
+    for (;;) {
+      const k = this.kbPop(); if (k < 0) { this.retry(); return; }
+      const ch = k & 0xFF;
+      if (ch === 13) { this.mem[a + 1] = this.lineBuf.length; for (let i = 0; i < this.lineBuf.length; i++) this.mem[a + 2 + i] = this.lineBuf.charCodeAt(i); this.mem[a + 2 + this.lineBuf.length] = 13; this.teletype(13); this.teletype(10); this.lineBuf = null; return; }
+      if (ch === 8) { if (this.lineBuf.length) { this.lineBuf = this.lineBuf.slice(0, -1); this.teletype(8); this.teletype(32); this.teletype(8); } }
+      else if (ch >= 32 && this.lineBuf.length < max - 1) { this.lineBuf += String.fromCharCode(ch); this.teletype(ch); }
+    }
+  }
+
+  /* --- files --- */
+  devName(s) { const u = s.toUpperCase().replace(/^.*\\/, '').replace(/\..*$/, ''); return ['CON', 'NUL', 'PRN', 'AUX', 'COM1', 'LPT1'].includes(u) ? u : null; }
+  openFile() {
+    const path = this.rdz(this.DS(), this.DX()), mode = this.AL() & 7;
+    const dev = this.devName(path);
+    if (dev) { const h = this.newHandle({ dev: dev === 'CON' ? 1 : 9, name: dev }); this.setAX(h); return this.ok(); }
+    if (/EMMXXXX0/i.test(path)) { this.trace('EMS 드라이버 확인(EMMXXXX0) → 없음 응답'); return this.err(2); }
+    const n = this.lookup(path);
+    if (!n) { this.trace('열기 실패: ' + path); return this.err(this.parsePathExists(path) ? 2 : 3); }
+    if (n.isDir) return this.err(5);
+    const h = this.newHandle({ node: n, pos: 0, mode, path }); if (h < 0) return this.err(4);
+    this.setAX(h); this.ok();
+  }
+  parsePathExists(path) { const p = this.parsePath(path); p.parts.pop(); const d = this.vfs.walk(p.parts); return !!d && d.isDir; }
+  createFile(isNew) {
+    const path = this.rdz(this.DS(), this.DX()); const dev = this.devName(path);
+    if (dev) { const h = this.newHandle({ dev: 9, name: dev }); this.setAX(h); return this.ok(); }
+    const sp = this.splitParent(path); if (!sp) return this.err(3);
+    let n = this.vfs.childOf(sp.dir, sp.name);
+    if (n && n.isDir) return this.err(5);
+    if (n && isNew) return this.err(80);
+    if (!n) n = this.vfs.add(sp.dir, sp.name, false);
+    n.data = new Uint8Array(1024); n.size = 0; n.mtime = new Date();
+    const h = this.newHandle({ node: n, pos: 0, mode: 2, path }); if (h < 0) return this.err(4);
+    this.vfs.dirty.add(n); this.setAX(h); this.ok();
+  }
+  readFile() {
+    const h = this.BX(), n = this.CX(), a = (this.DS() << 4) + this.DX(), f = this.files.get(h);
+    if (h === 0 || (f && f.dev === 0)) { // stdin: read one line
+      let got = 0;
+      for (;;) { const k = this.kbPeek(); if (k < 0) break; this.kbPop(); const ch = k & 0xFF; this.teletype(ch); this.mem[(a + got++) & 0xFFFFF] = ch; if (ch === 13) { this.teletype(10); this.mem[(a + got++) & 0xFFFFF] = 10; this.setAX(got); return this.ok(); } if (got >= n) break; }
+      if (got === 0) { this.retry(); return; }
+      this.setAX(got); return this.ok();
+    }
+    if (h < 5) { this.setAX(0); return this.ok(); }
+    if (!f) return this.err(6);
+    if (f.dev !== undefined) { this.setAX(0); return this.ok(); }
+    const nd = f.node; const cnt = Math.max(0, Math.min(n, nd.size - f.pos));
+    if (((a >>> 17) === 5) || (((a + cnt) >>> 17) === 5)) { for (let i = 0; i < cnt; i++) this.cpu.wb(a + i, nd.data[f.pos + i]); }
+    else this.mem.set(nd.data.subarray(f.pos, f.pos + cnt), a & 0xFFFFF);
+    f.pos += cnt; this.setAX(cnt); this.ok();
+  }
+  writeFile() {
+    const h = this.BX(), n = this.CX(), a = (this.DS() << 4) + this.DX(), f = this.files.get(h);
+    if (h === 1 || h === 2 || (f && f.dev !== undefined && f.dev !== 9)) { for (let i = 0; i < n; i++) this.teletype(this.mem[(a + i) & 0xFFFFF]); this.setAX(n); return this.ok(); }
+    if (h < 5 || (f && f.dev === 9)) { this.setAX(n); return this.ok(); }
+    if (!f) return this.err(6);
+    if (f.mode === 0) return this.err(5);
+    const nd = f.node;
+    if (n === 0) { nd.size = f.pos; this.setAX(0); return this.ok(); }
+    const need = f.pos + n;
+    if (need > nd.data.length) { const nb = new Uint8Array(Math.max(need, nd.data.length * 2)); nb.set(nd.data.subarray(0, nd.size)); nd.data = nb; }
+    if (f.pos > nd.size) nd.data.fill(0, nd.size, f.pos);
+    for (let i = 0; i < n; i++) nd.data[f.pos + i] = this.mem[(a + i) & 0xFFFFF];
+    f.pos += n; if (f.pos > nd.size) nd.size = f.pos; nd.mtime = new Date(); this.vfs.dirty.add(nd); this.setAX(n); this.ok();
+  }
+  seekFile() {
+    const f = this.files.get(this.BX()); if (!f || !f.node) { if (this.BX() < 5) { this.setAX(0); this.setReg16(2, 0); return this.ok(); } return this.err(6); }
+    const off = ((this.CX() << 16) | this.DX()) | 0, al = this.AL(); let p;
+    if (al === 0) p = off >>> 0; else if (al === 1) p = f.pos + off; else p = f.node.size + off;
+    if (p < 0) return this.err(131); f.pos = p; this.setAX(p & 0xFFFF); this.setReg16(2, (p >>> 16) & 0xFFFF); this.ok();
+  }
+  ioctl() {
+    const al = this.AL(), h = this.BX();
+    switch (al) {
+      case 0: { if (h < 5) { this.setReg16(2, h === 0 ? 0x80D3 : 0x80D3); return this.ok(); } const f = this.files.get(h); if (!f) return this.err(6); this.setReg16(2, f.dev !== undefined ? 0x80D3 : 0x0002); return this.ok(); }
+      case 1: return this.ok();
+      case 6: this.setAL(h < 5 || (this.files.get(h) && this.files.get(h).dev !== undefined) ? 0xFF : 0xFF); return this.ok();
+      case 7: this.setAL(0xFF); return this.ok();
+      case 8: this.setAX(1); return this.ok();
+      case 9: this.setReg16(2, 0); return this.ok();
+      case 0x0B: return this.ok();
+      default: return this.err(1);
+    }
+  }
+  findFirst() {
+    const path = this.rdz(this.DS(), this.DX()), attr = this.CX();
+    const p = this.parsePath(path); const pat = (p.parts.pop() || '*.*').toUpperCase(); const dir = this.vfs.walk(p.parts);
+    if (!dir || !dir.isDir) return this.err(3);
+    const list = [];
+    if (/[*?]/.test(pat)) { for (const n of this.vfs.list(dir)) if (wildMatch(pat, n.alias) && (!n.isDir || (attr & 0x10))) list.push(n); }
+    else { const n = this.vfs.childOf(dir, pat); if (n) list.push(n); }
+    if (!list.length) return this.err(2);
+    const id = this.nextFind++; this.finds.set(id, list);
+    this.mem[this.dta] = id & 255; this.mem[this.dta + 1] = id >> 8; this.mem[this.dta + 2] = 0; this.mem[this.dta + 3] = 0;
+    this.fillDTA(list[0]); this.mem[this.dta + 2] = 1; this.ok();
+  }
+  findNext() {
+    const id = this.mem[this.dta] | (this.mem[this.dta + 1] << 8), list = this.finds.get(id), idx = this.mem[this.dta + 2];
+    if (!list || idx >= list.length) return this.err(18);
+    this.fillDTA(list[idx]); this.mem[this.dta + 2] = idx + 1; this.ok();
+  }
+  fillDTA(n) {
+    const d = this.dta, m = this.mem; m[d + 0x15] = n.attr; this.w16(d + 0x16, this.dosTime(n.mtime)); this.w16(d + 0x18, this.dosDate(n.mtime)); this.w32(d + 0x1A, n.isDir ? 0 : n.size);
+    const s = n.alias; for (let i = 0; i < s.length; i++) m[d + 0x1E + i] = s.charCodeAt(i); m[d + 0x1E + s.length] = 0;
+  }
+
+  /* --------------- process management --------------- */
+  makePSP(seg, parent = 0, envSeg = 0, cmd = '') {
+    const a = seg << 4, m = this.mem; m.fill(0, a, a + 256);
+    m[a] = 0xCD; m[a + 1] = 0x20; this.w16(a + 2, this.arena.top); m[a + 5] = 0x9A; // far call dispatcher (unused)
+    this.w32(a + 0x0A, this.r32(0x22 * 4)); this.w32(a + 0x0E, this.r32(0x23 * 4)); this.w32(a + 0x12, this.r32(0x24 * 4));
+    this.w16(a + 0x16, parent); m.fill(0xFF, a + 0x18, a + 0x2C); for (let i = 0; i < 5; i++) m[a + 0x18 + i] = i;
+    this.w16(a + 0x2C, envSeg); this.w16(a + 0x32, 20); this.w16(a + 0x34, 0x18); this.w16(a + 0x36, seg);
+    m[a + 0x50] = 0xCD; m[a + 0x51] = 0x21; m[a + 0x52] = 0xCB;
+    m.fill(0x20, a + 0x5D, a + 0x6C); m.fill(0x20, a + 0x6D, a + 0x7C);
+    m[a + 0x80] = Math.min(cmd.length, 126); for (let i = 0; i < Math.min(cmd.length, 126); i++) m[a + 0x81 + i] = cmd.charCodeAt(i); m[a + 0x81 + Math.min(cmd.length, 126)] = 13;
+  }
+  buildEnv(progPath) {
+    let s = ''; for (const k of Object.keys(this.env)) s += k + '=' + this.env[k] + '\0'; s += '\0';
+    const bytes = []; for (const ch of s) bytes.push(ch.charCodeAt(0)); bytes.push(1, 0); for (const ch of progPath) bytes.push(ch.charCodeAt(0)); bytes.push(0);
+    const paras = Math.ceil(bytes.length / 16) + 1; const seg = this.arena.alloc(paras, 0xFFFF);
+    for (let i = 0; i < bytes.length; i++) this.mem[(seg << 4) + i] = bytes[i];
+    return seg;
+  }
+  // Load an EXE/COM node as a new process. Returns {cs,ip,ss,sp,psp} or throws.
+  loadProgram(node, cmdTail = '', parentPSP = 0) {
+    const data = node.data.subarray(0, node.size), m = this.mem;
+    const isExe = data.length >= 2 && ((data[0] === 0x4D && data[1] === 0x5A) || (data[0] === 0x5A && data[1] === 0x4D));
+    const path = 'C:\\' + this.vfs.fullPath(node);
+    const env = this.buildEnv(path);
+    let psp, res;
+    if (isExe) {
+      const rd = o => data[o] | (data[o + 1] << 8);
+      const last = rd(2), pages = rd(4), nrel = rd(6), hdr = rd(8) * 16, minA = rd(10), maxA = rd(12), ss = rd(14), sp = rd(16), ip = rd(20), cs = rd(22), relOff = rd(24);
+      let size = (pages - (last ? 1 : 0)) * 512 + (last || 0) - hdr; if (size < 0) size = 0;
+      const imgParas = Math.ceil(size / 16);
+      let want = imgParas + 0x10 + minA; const maxWant = maxA === 0xFFFF ? 0xFFFF : imgParas + 0x10 + maxA;
+      const large = this.arena.largest();
+      if (large < want) throw new Error('Not enough memory (need ' + want * 16 + ' bytes)');
+      psp = this.arena.alloc(Math.min(large, maxWant), env === 0 ? 0xFFFF : 0xFFFF);
+      this.arena.blocks[this.arena.find(psp)].owner = psp; this.arena.blocks[this.arena.find(env)].owner = psp;
+      this.makePSP(psp, parentPSP, env, cmdTail);
+      const load = psp + 0x10; m.set(data.subarray(hdr, hdr + size), load << 4);
+      for (let i = 0; i < nrel; i++) { const o = relOff + i * 4, ro = rd(o), rs = rd(o + 2); const a = ((load + rs) << 4) + ro; this.w16(a, this.r16(a) + load); }
+      res = { cs: load + cs, ip, ss: load + ss, sp, psp };
+    } else {
+      const large = this.arena.largest(); if (large < 0x1000) throw new Error('Not enough memory');
+      psp = this.arena.alloc(large, 0xFFFF); this.arena.blocks[this.arena.find(psp)].owner = psp; this.arena.blocks[this.arena.find(env)].owner = psp;
+      this.makePSP(psp, parentPSP, env, cmdTail);
+      m.set(data.subarray(0, Math.min(data.length, 0xFF00)), (psp << 4) + 0x100);
+      this.w16((psp << 4) + 0xFFFE, 0);
+      res = { cs: psp, ip: 0x100, ss: psp, sp: 0xFFFE, psp };
+    }
+    return res;
+  }
+  startProgram(node, cmdTail = '') {
+    this.initBIOS(); this.sys.resetDevices();
+    const res = this.loadProgram(node, cmdTail, 0);
+    this.curPSP = res.psp; this.dta = (res.psp << 4) + 0x80; this.dtaSeg = res.psp; this.dtaOff = 0x80;
+    this.enterProgram(res, true);
+    this.sys.running = true; this.sys.exitInfo = null;
+  }
+  enterProgram(res, fresh) {
+    const c = this.cpu;
+    c.reset(); c.fIF = 1;
+    c.setSeg(1, res.cs); c.ip = res.ip; c.setSeg(2, res.ss); c.r[4] = res.sp;
+    c.setSeg(3, res.psp); c.setSeg(0, res.psp); c.setSeg(4, res.psp); c.setSeg(5, res.psp);
+    c.r[0] = 0; c.r[1] = 0xFF; c.r[2] = res.psp; c.r[3] = 0; c.r[5] = 0x91C; c.r[6] = res.ip; c.r[7] = res.sp;
+  }
+  exec() {
+    const al = this.AL(), path = this.rdz(this.DS(), this.DX()); const n = this.lookup(path);
+    if (!n || n.isDir) return this.err(2);
+    const pb = (this.ES() << 4) + this.BX(); const ts = this.r16(pb + 4), to = this.r16(pb + 2); const ta = (this.r16(pb + 4) << 4) + this.r16(pb + 2);
+    const len = this.mem[ta]; let tail = ''; for (let i = 0; i < len; i++) tail += String.fromCharCode(this.mem[ta + 1 + i]);
+    if (al !== 0) return this.err(1);
+    const c = this.cpu, saved = { r: Int32Array.from(c.r), seg: Uint16Array.from(c.seg), ip: c.ip, flags: c.getFlags(), psp: this.curPSP, dta: this.dta, dtaSeg: this.dtaSeg, dtaOff: this.dtaOff };
+    let res;
+    try { res = this.loadProgram(n, tail.trimStart(), this.curPSP); } catch (e) { return this.err(8); }
+    saved.flags &= ~1; this.ctx.push(saved);
+    this.curPSP = res.psp; this.dta = (res.psp << 4) + 0x80; this.dtaSeg = res.psp; this.dtaOff = 0x80;
+    this.enterProgram(res);
+  }
+  terminate(code, keep) {
+    this.exitCode = code & 0xFF;
+    if (!keep && this.curPSP) this.arena.freeOwner(this.curPSP);
+    if (this.ctx.length) {
+      const s = this.ctx.pop(), c = this.cpu;
+      c.r.set(s.r); for (let i = 0; i < 6; i++) c.setSeg(i, s.seg[i]); c.ip = s.ip; c.setFlags(s.flags);
+      this.curPSP = s.psp; this.dta = s.dta; this.dtaSeg = s.dtaSeg; this.dtaOff = s.dtaOff;
+      // registers were captured inside the INT 21h/4Bh handler: IP points at the stub's IRET, so it unwinds the frame
+      this.setAX(this.exitCode); this.setCF(0); return;
+    }
+    this.sys.running = false; this.sys.exitInfo = { code: this.exitCode };
+    this.cpu.halted = true; this.cpu.yielded = true;
+  }
+}
+
+
+
+
+/* ===========================================================================
+ *  Machine: wires CPU + devices + DOS together, I/O port bus, run loop, audio mix
+ * =========================================================================== */
+const _isNode = typeof module !== 'undefined';
+
+
+class Machine {
+  constructor() {
+    this.mem = new Uint8Array(0x110000 + 16);
+    this.vga = new VGA(this);
+    this.cpu = new CPU(this);
+    this.pic = new PIC(this.cpu);
+    this.pit = new PIT(this);
+    this.kb = new Keyboard(this);
+    this.dma = new DMA();
+    this.opl = new OPL2();
+    this.sb = new SoundBlaster(this, 0x220, 7, 1);
+    this.spk = new Speaker(this);
+    this.dos = new DOS(this);
+    this.ipsCap = 120e6; this.ips = 30e6;             // emulated instructions per second (v1.2: 초고사양 486DX4급 이상, 호스트 속도에 맞춰 자동 조절)
+    this.running = false; this.exitInfo = null; this.error = null;
+    this.kb61 = 0; this.refresh = 0; this.a20 = false;
+    this.cmos = new Uint8Array(128); this.cmosIdx = 0;
+    this.soundOn = { opl: true, sb: true, speaker: true };
+    this.stats = { mips: 0 };
+    this.lastCyc = 0; this.ioCyc = 14; this.unknownPorts = new Map(); this.ioR = new Uint32Array(65536); this.ioW = new Uint32Array(65536);
+  }
+
+  resetDevices() {
+    this.pic.reset(); this.kb.reset();
+    this.pit = new PIT(this); this.sb.reset(); this.dma = new DMA(); this.opl = new OPL2();
+    this.pic.chips[0].imr = 0xFC; // timer + keyboard enabled like after BIOS POST
+    this.pic.chips[0].base = 0x08; this.pic.chips[1].base = 0x70; this.pic.chips[1].imr = 0xFF;
+    this.pic.update(); this.error = null; this.lastCyc = this.cpu.cyc; this.unknownPorts.clear(); this.ioR.fill(0); this.ioW.fill(0);
+  }
+
+  /* ----------------------------- clock ----------------------------- */
+  // The CPU cycle counter (cpu.cyc) is the master clock. Devices are brought up to date lazily,
+  // both at chunk boundaries and whenever a port is accessed, so polling loops see correct timing.
+  sync() {
+    const d = this.cpu.cyc - this.lastCyc; if (d <= 0) return;
+    this.lastCyc = this.cpu.cyc;
+    const ticks = PIT_HZ / this.ips * d;
+    this.pit.advance(ticks); this.opl.advanceTimers(ticks); this.sb.advance(d / this.ips);
+  }
+  unknownPort(p, w) { const k = (w ? 'W ' : 'R ') + p.toString(16); this.unknownPorts.set(k, (this.unknownPorts.get(k) || 0) + 1); }
+
+  /* ----------------------------- port bus ----------------------------- */
+  inb(p) {
+    p &= 0xFFFF; this.ioR[p]++; this.cpu.cyc += this.ioCyc; this.sync();
+    if (p >= 0x3B0 && p <= 0x3DF) return this.vga.inb(p);
+    switch (p) {
+      case 0x20: case 0x21: case 0xA0: case 0xA1: return this.pic.read(p);
+      case 0x40: case 0x41: case 0x42: return this.pit.read(p);
+      case 0x60: return this.kb.readData();
+      case 0x61: {
+        this.refresh ^= 0x10; const c2 = this.pit.ch[2]; const out = c2.count < c2.reload / 2 ? 0x20 : 0;
+        return (this.kb61 & 0x0F) | this.refresh | out;
+      }
+      case 0x64: return this.kb.status();
+      case 0x70: return this.cmosIdx;
+      case 0x71: return this.cmosRead();
+      case 0x92: return this.a20 ? 2 : 0;
+      case 0x201: return 0xFF;
+      case 0x388: return this.opl.readStatus();
+      case 0x389: return 0xFF;
+    }
+    if (p >= 0x220 && p <= 0x22F) { const o = p - 0x220; if (o === 8) return this.opl.readStatus(); if (o === 9) return 0xFF; return this.sb.readPort(p); }
+    if (p < 0x10 || (p >= 0x80 && p < 0x90)) return this.dma.read(p);
+    this.unknownPort(p, false);
+    return 0xFF;
+  }
+  cmosRead() {
+    const d = new Date(), b = x => ((x / 10 | 0) << 4) | (x % 10);
+    switch (this.cmosIdx) { case 0: return b(d.getSeconds()); case 2: return b(d.getMinutes()); case 4: return b(d.getHours()); case 6: return d.getDay() + 1; case 7: return b(d.getDate()); case 8: return b(d.getMonth() + 1); case 9: return b(d.getFullYear() % 100); case 0x0A: return 0; case 0x0B: return 2; case 0x0D: return 0x80; case 0x15: return 0x80; case 0x16: return 2; }
+    return 0;
+  }
+  outb(p, v) {
+    p &= 0xFFFF; v &= 0xFF; this.ioW[p]++; this.cpu.cyc += this.ioCyc; this.sync();
+    if (p >= 0x3B0 && p <= 0x3DF) { this.vga.outb(p, v); return; }
+    switch (p) {
+      case 0x20: case 0x21: case 0xA0: case 0xA1: this.pic.write(p, v); return;
+      case 0x40: case 0x41: case 0x42: case 0x43: this.pit.write(p, v); return;
+      case 0x60: this.kb.writeData(v); return;
+      case 0x61: this.kb61 = v; this.pit.gate2(!!(v & 1)); return;
+      case 0x64: this.kb.writeCmd(v); if (v === 0xDD) this.a20 = false; if (v === 0xDF) this.a20 = true; return;
+      case 0x70: this.cmosIdx = v & 0x7F; return;
+      case 0x92: this.a20 = !!(v & 2); return;
+      case 0x388: this.opl.writeIdx(v); return;
+      case 0x389: this.opl.write(this.opl.idx, v); return;
+    }
+    if (p >= 0x220 && p <= 0x22F) {
+      const o = p - 0x220;
+      if (o === 8) { this.opl.writeIdx(v); return; } if (o === 9) { this.opl.write(this.opl.idx, v); return; }
+      this.sb.writePort(p, v); return;
+    }
+    if (p < 0x10 || (p >= 0x80 && p < 0x90)) { this.dma.write(p, v); return; }
+    this.unknownPort(p, true);
+  }
+  inw(p) { return this.inb(p) | (this.inb(p + 1) << 8); }
+  ind(p) { return (this.inw(p) | (this.inw(p + 2) << 16)) >>> 0; }
+  outw(p, v) { this.outb(p, v & 0xFF); this.outb(p + 1, (v >> 8) & 0xFF); }
+  outd(p, v) { this.outw(p, v & 0xFFFF); this.outw(p + 2, (v >>> 16) & 0xFFFF); }
+  hle(n) { this.dos.hle(n); }
+  onPitChange() {}
+  scheduleKbd() {}
+
+  /* ------------------------------ run loop ------------------------------ */
+  // Run for 'ms' of emulated time. Returns number of instructions executed.
+  runFor(ms, budget) {
+    this.starved = false;
+    if (!this.running) return 0;
+    const total = Math.floor(this.ips * ms / 1000), CH = 256, cpu = this.cpu;
+    this.ioCyc = Math.max(1, Math.round(this.ips / 1e6));   // ~1 us per ISA port access
+    const start = cpu.cyc, target = start + total;
+    if (this.lastCyc > cpu.cyc || this.lastCyc === 0) this.lastCyc = cpu.cyc;
+    const tEnd = budget ? performance.now() + budget : 0; let kk = 0;
+    try {
+      while (cpu.cyc < target && this.running) {
+        if (tEnd && (++kk & 3) === 0 && performance.now() > tEnd) { this.starved = true; break; }   // 시간 예산 초과: 화면/입력이 얼지 않도록 다음 프레임으로
+        const n = cpu.run(CH);
+        if (n < CH) cpu.cyc += CH - n;   // idle (HLT / waiting for input) still advances time
+        this.sync();
+        this.kb.pump();
+        if (this.dos.mouse.pend.length) this.dos.mousePump();
+      }
+    } catch (e) {
+      this.running = false; this.error = e;
+      const c = this.cpu; this.errorCtx = 'CS:IP=' + c.seg[1].toString(16).padStart(4, '0') + ':' + c.ip.toString(16).padStart(4, '0');
+    }
+    return cpu.cyc - start;
+  }
+
+  /* ------------------------------ audio ------------------------------- */
+  mix(out, n, rate) {
+    out.fill(0, 0, n);
+    if (this.soundOn.opl) this.opl.generate(out, n, rate, 0.22);
+    if (this.soundOn.sb) this.sb.generate(out, n, rate, 0.45);
+    if (this.soundOn.speaker) this.spk.generate(out, n, rate, 0.12);
+    for (let i = 0; i < n; i++) { const x = out[i]; if (x > 0.6) out[i] = 0.6 + 0.4 * Math.tanh((x - 0.6) / 0.4); else if (x < -0.6) out[i] = -0.6 - 0.4 * Math.tanh((-x - 0.6) / 0.4); }   // v1.2 소프트 클리핑
+  }
+
+  /* ------------------------------ helpers ------------------------------ */
+  loadFiles(list) { for (const f of list) this.dos.vfs.addFile(f.path, f.data); }
+  findPrograms() {
+    return this.dos.vfs.all().filter(n => /\.(EXE|COM)$/i.test(n.name)).map(n => ({ node: n, path: this.dos.vfs.fullPath(n) })).sort((a, b) => a.path.localeCompare(b.path));
+  }
+  key(code, down) { return this.kb.key(code, down); }
+}
+
+
+
+
+/* ===========================================================================
+ *  Browser UI: file loading (files / folders / drag&drop / ZIP), canvas, audio,
+ *  keyboard, mouse (pointer lock), CP437 font generation, save persistence
+ * =========================================================================== */
+/* ===========================================================================
+ *  Shell: COMMAND.COM 대신 쓰는 간단한 DOS 명령 처리기 (JS로 직접 구현)
+ *  - DIR CD MD RD DEL COPY REN MOVE TYPE CLS ECHO SET PATH VER DATE TIME MEM VOL HELP PAUSE CALL
+ *  - 프로그램 이름(.EXE/.COM/.BAT)을 치면 실행, 끝나면 프롬프트로 복귀
+ * =========================================================================== */
+const SHELL_CMDS = {
+  DIR: 'dir', CD: 'cd', CHDIR: 'cd', MD: 'md', MKDIR: 'md', RD: 'rd', RMDIR: 'rd', DEL: 'del', ERASE: 'del',
+  COPY: 'copy', REN: 'ren', RENAME: 'ren', MOVE: 'move', TYPE: 'type', CLS: 'cls', ECHO: 'echo', SET: 'set',
+  PATH: 'path', VER: 'ver', DATE: 'date', TIME: 'time', MEM: 'mem', VOL: 'vol', HELP: 'help', EXIT: 'exit',
+  PAUSE: 'pause', REM: 'rem', CALL: 'call', LH: 'call', LOADHIGH: 'call', TREE: 'tree', IF: 'unsup', GOTO: 'unsup', FOR: 'unsup',
+};
+class Shell {
+  constructor(machine, hooks) {
+    this.m = machine; this.dos = machine.dos; this.vfs = machine.dos.vfs; this.h = hooks;
+    this.line = ''; this.hist = []; this.hpos = 0; this.queue = [];
+    this.waiting = false; this.paused = false; this.echo = true; this.booted = false; this.cap = null;
+  }
+  /* ---------------- output ---------------- */
+  out(s) {
+    if (this.cap) { this.cap.push(s); return; }
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c === 10) { this.dos.teletype(13); this.dos.teletype(10); } else if (c !== 13) this.dos.teletype(c > 255 ? 63 : c);
+    }
+  }
+  say(s = '') { this.out(s + '\n'); }
+  col() { return this.dos.curPos()[0]; }
+  pathStr() { return 'C:\\' + this.dos.cwd.join('\\'); }
+  prompt() { this.out(this.pathStr() + '>'); }
+
+  /* ---------------- life cycle ---------------- */
+  reinit() { const cwd = this.dos.cwd.slice(); this.dos.initBIOS(); this.dos.cwd = cwd; this.m.resetDevices(); }
+  boot() {
+    this.restoreMeta(); this.reinit();
+    this.say('WebDos[Version 1.2]'); this.say('Type HELP for a list of commands.'); this.say();
+    this.booted = true; this.step();
+  }
+  step() {
+    while (!this.waiting && !this.paused && this.queue.length) { const q = this.queue.shift(); this.execOne(q.text, q.bat); }
+    if (!this.waiting && !this.paused && !this.queue.length) { this.echo = true; this.prompt(); }
+  }
+  notice(msg) {
+    if (!this.booted || this.waiting) return;
+    if (this.col() !== 0) this.out('\n');
+    this.say(msg); if (!this.paused) { this.prompt(); this.out(this.line); }
+  }
+  persist() {
+    try { localStorage.setItem('dosemu.meta', JSON.stringify({ cwd: this.dos.cwd, hist: this.hist.slice(-100), env: this.dos.env })); } catch (e) { }
+  }
+  restoreMeta() {
+    try {
+      const o = JSON.parse(localStorage.getItem('dosemu.meta') || 'null'); if (!o) return;
+      if (Array.isArray(o.hist)) this.hist = o.hist.filter(x => typeof x === 'string').slice(-100);
+      if (o.env && typeof o.env === 'object') for (const k of Object.keys(o.env)) if (typeof o.env[k] === 'string') this.dos.env[k] = o.env[k];
+      if (Array.isArray(o.cwd)) { const n = this.vfs.walk(o.cwd); if (n && n.isDir) this.dos.cwd = this.dos.resolveParts(n); }
+    } catch (e) { }
+  }
+  launch(node, tail) {
+    this.waiting = true; this.line = '';
+    try { this.h.launch(node, tail); } catch (e) { this.waiting = false; this.say('Cannot run program: ' + e.message); }
+  }
+  runFromUI(node, tail) {
+    this.queue = []; this.paused = false;
+    if (!this.waiting) { if (this.col() !== 0) this.out('\n'); this.line = ''; this.dos.cwd = this.dos.resolveParts(node.parent); this.prompt(); this.say(node.alias + tail); }
+    else this.dos.cwd = this.dos.resolveParts(node.parent);
+    this.launch(node, tail);
+    if (!this.waiting) this.step();
+  }
+  programExited(err) {
+    this.waiting = false; this.h.flush();
+    const v = this.m.vga, g = v.geometry();
+    if (!(g.text && v.mode === 3)) this.reinit(); else { this.m.resetDevices(); if (this.col() !== 0) this.out('\n'); }
+    // 프로그램이 폴더를 바꿨을 수 있으니 유효성 확인
+    const n = this.vfs.walk(this.dos.cwd); if (!n || !n.isDir) this.dos.cwd = [];
+    if (err) this.say('Program terminated abnormally. (see the settings panel for details)');
+    this.persist(); this.step();
+  }
+
+  /* ---------------- keyboard ---------------- */
+  eraseOne() {
+    let [c, r] = this.dos.curPos();
+    if (c > 0) c--; else if (r > 0) { r--; c = this.dos.cols() - 1; }
+    this.dos.tput(c, r, 0x20, -1); this.dos.setCurPos(c, r);
+  }
+  setLine(s) { while (this.line.length) { this.line = this.line.slice(0, -1); this.eraseOne(); } this.line = s; this.out(s); }
+  key(e) {
+    if (this.waiting) return false;
+    const k = e.key;
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      if (e.ctrlKey && !e.altKey && (k === 'c' || k === 'C')) { this.line = ''; this.queue = []; this.paused = false; this.say('^C'); this.step(); return true; }
+      return false;
+    }
+    if (this.paused) { if (k === 'Shift' || k === 'Control' || k === 'Alt') return true; this.paused = false; this.out('\n'); this.step(); return true; }
+    if (k === 'Enter') { const l = this.line; this.line = ''; this.out('\n'); this.submit(l); return true; }
+    if (k === 'Backspace') { if (this.line.length) { this.line = this.line.slice(0, -1); this.eraseOne(); } return true; }
+    if (k === 'Escape') { this.setLine(''); return true; }
+    if (k === 'ArrowUp') { if (this.hpos > 0) { this.hpos--; this.setLine(this.hist[this.hpos] || ''); } return true; }
+    if (k === 'ArrowDown') { if (this.hpos < this.hist.length) { this.hpos++; this.setLine(this.hist[this.hpos] || ''); } return true; }
+    if (k === 'Tab') { this.complete(); return true; }
+    if (k.length === 1) { const c = k.charCodeAt(0); if (c >= 32 && c < 127 && this.line.length < 126) { this.line += k; this.out(k); } return true; }
+    return false;
+  }
+  complete() {
+    const m = /(\S*)$/.exec(this.line), word = m ? m[1] : ''; const cut = Math.max(word.lastIndexOf('\\'), word.lastIndexOf(':'));
+    const dirPart = word.slice(0, cut + 1), pre = word.slice(cut + 1).toUpperCase();
+    const dir = this.vfs.walk(this.dos.parsePath(dirPart || '.').parts); if (!dir || !dir.isDir) return;
+    const hit = this.vfs.list(dir).filter(n => n.alias.startsWith(pre)).sort((a, b) => a.alias < b.alias ? -1 : 1);
+    if (!hit.length) return;
+    const add = hit[0].alias.slice(pre.length) + (hit[0].isDir ? '\\' : '');
+    for (const ch of add) { this.line += ch; this.out(ch); }
+  }
+  submit(text) {
+    const t = text.trim();
+    if (t) { if (this.hist[this.hist.length - 1] !== t) this.hist.push(t); if (this.hist.length > 100) this.hist.shift(); }
+    this.hpos = this.hist.length;
+    this.queue.unshift({ text: t, bat: false }); this.step();
+  }
+
+  /* ---------------- command execution ---------------- */
+  execOne(text, bat) {
+    let t = text.trim(), quiet = false;
+    if (t[0] === '@') { quiet = true; t = t.slice(1).trim(); }
+    if (bat && this.echo && !quiet && t && t[0] !== ':') { this.prompt(); this.say(t); }
+    if (!t || t[0] === ':') return;
+    try { this.dispatch(t); } catch (e) { this.cap = null; this.say('Error: ' + e.message); }
+    this.h.flush(); this.persist();
+  }
+  dispatch(t) {
+    if (/^[A-Za-z]:$/.test(t)) { if (t[0].toUpperCase() !== 'C') this.say('Invalid drive specification'); return; }
+    const mm = /^([A-Za-z]+)(?=$|[\s\/\\.])/.exec(t);
+    const name = mm && SHELL_CMDS[mm[1].toUpperCase()] ? mm[1].toUpperCase() : '';
+    if (name) {
+      let rest = t.slice(mm[1].length), cap = null;
+      if (SHELL_CMDS[name] !== 'echo' || true) {
+        const rm = /^(.*?)\s*(>>?)\s*([^\s<>|]+)\s*$/.exec(rest);
+        if (rm) { rest = rm[1]; cap = { append: rm[2] === '>>', path: rm[3] }; }
+      }
+      if (cap) this.cap = [];
+      try { this['c_' + SHELL_CMDS[name]](rest, name); } finally {
+        if (cap) { const text = this.cap.join(''); this.cap = null; this.writeText(cap.path, text, cap.append); }
+      }
+      return;
+    }
+    const sp = t.search(/\s/), tok = sp < 0 ? t : t.slice(0, sp), tail = sp < 0 ? '' : t.slice(sp);
+    if (/^[<>|]/.test(tok)) { this.say('Bad command or file name'); return; }
+    const node = this.findExec(tok);
+    if (!node) { this.say('Bad command or file name'); return; }
+    if (/\.BAT$/i.test(node.name)) { this.runBat(node, tail.trim()); return; }
+    this.launch(node, tail);
+  }
+  findExec(tok) {
+    const hasExt = /\.[A-Za-z0-9]{1,3}$/.test(tok);
+    const names = hasExt ? [tok] : [tok + '.COM', tok + '.EXE', tok + '.BAT'];
+    const dirs = /[\\\/:]/.test(tok) ? [''] : ['', ...String(this.dos.env.PATH || '').split(';').filter(Boolean)];
+    for (const d of dirs) for (const n of names) {
+      const p = d ? d.replace(/\\?$/, '\\') + n : n; const node = this.dos.lookup(p);
+      if (node && !node.isDir && /\.(EXE|COM|BAT)$/i.test(node.name)) return node;
+    }
+    return null;
+  }
+  runBat(node, args) {
+    const text = new TextDecoder('latin1').decode(node.data.subarray(0, node.size));
+    const argv = [node.name, ...args.split(/\s+/).filter(Boolean)], env = this.dos.env;
+    const lines = text.split(/\r?\n/).map(l => l.replace(/%(\d)/g, (_, d) => argv[+d] || '').replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, v) => env[v.toUpperCase()] || ''));
+    this.queue.unshift(...lines.map(x => ({ text: x, bat: true })));
+  }
+  writeText(path, text, append) {
+    if (/^nul$/i.test(path)) return;
+    const sp = this.dos.splitParent(path); if (!sp) { this.say('Invalid path'); return; }
+    let n = this.vfs.childOf(sp.dir, sp.name); if (n && n.isDir) { this.say('Access denied'); return; }
+    const bytes = Uint8Array.from(text.replace(/\n/g, '\r\n'), c => c.charCodeAt(0) & 0xFF);
+    if (!n) n = this.vfs.add(sp.dir, sp.name, false);
+    if (append && n.size) { const o = new Uint8Array(n.size + bytes.length); o.set(n.data.subarray(0, n.size)); o.set(bytes, n.size); n.data = o; } else n.data = bytes;
+    n.size = n.data.length; n.mtime = new Date(); this.vfs.dirty.add(n);
+  }
+
+  /* ---------------- helpers ---------------- */
+  expand(tok, wantDirs) {
+    const parts = this.dos.parsePath(tok).parts, last = parts[parts.length - 1] || '';
+    if (!/[*?]/.test(last)) { const n = this.vfs.walk(parts); return n ? [n] : []; }
+    const dir = this.vfs.walk(parts.slice(0, -1)); if (!dir || !dir.isDir) return [];
+    let pat = last.toUpperCase(); if (!pat.includes('.')) pat += '.*';
+    return this.vfs.list(dir).filter(n => wildMatch(pat, n.alias) && (wantDirs || !n.isDir));
+  }
+  detach(n) { this.vfs.tomb(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias); }
+  moveNode(n, dir, name) {
+    this.vfs.tombTree(n);
+    n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias);
+    n.name = name; n.parent = dir; dir.children.set(name.toUpperCase(), n); n.alias = make83(name, dir);
+    if (n.alias !== name.toUpperCase()) dir.aliases.set(n.alias, n);
+    this.vfs.touchTree(n);
+  }
+  args(a) { return a.replace(/\/[A-Za-z]\b/g, ' ').trim().split(/\s+/).filter(Boolean); }
+  inCwd(n) { for (let x = this.vfs.walk(this.dos.cwd); x; x = x.parent) if (x === n) return true; return false; }
+  fmtDate(d) { const p = x => String(x).padStart(2, '0'); return `${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getFullYear() % 100)}`; }
+  fmtTime(d) { const h = d.getHours(), p = x => String(x).padStart(2, '0'); return `${String(h % 12 || 12).padStart(2, ' ')}:${p(d.getMinutes())}${h < 12 ? 'a' : 'p'}`; }
+  num(n) { return n.toLocaleString('en-US'); }
+
+  /* ---------------- built-in commands ---------------- */
+  c_dir(a) {
+    const wide = /\/w/i.test(a), bare = /\/b/i.test(a); a = a.replace(/\/[A-Za-z]\w*/g, ' ').trim();
+    let dir, pat = '*.*', showDots = true;
+    if (!a) dir = this.vfs.walk(this.dos.cwd);
+    else {
+      const parts = this.dos.parsePath(a).parts, n = this.vfs.walk(parts);
+      if (n && n.isDir) dir = n;
+      else {
+        dir = this.vfs.walk(parts.slice(0, -1)); pat = (parts[parts.length - 1] || '*.*').toUpperCase(); showDots = pat === '*.*';
+        if (!dir || !dir.isDir) { this.say('File not found'); return; }
+        if (!pat.includes('.') && /[*?]/.test(pat)) pat += '.*';
+      }
+    }
+    let list = this.vfs.list(dir).filter(n => wildMatch(pat, n.alias));
+    list.sort((x, y) => (x.isDir !== y.isDir ? (x.isDir ? -1 : 1) : (x.alias < y.alias ? -1 : x.alias > y.alias ? 1 : 0)));
+    const dp = this.dos.resolveParts(dir).join('\\');
+    if (!list.length) { if (!bare) { this.say(' Volume in drive C is WEBDOS'); this.say(' Directory of C:\\' + dp); this.say(); } this.say('File not found'); return; }
+    if (bare) { for (const n of list) this.say(n.alias); return; }
+    this.say(' Volume in drive C is WEBDOS'); this.say(' Directory of C:\\' + dp); this.say();
+    const split = al => { const i = al.lastIndexOf('.'); return i > 0 ? [al.slice(0, i), al.slice(i + 1)] : [al, '']; };
+    let files = 0, bytes = 0, dirs = 0;
+    if (wide) {
+      let row = '';
+      for (const n of list) { const s = n.isDir ? '[' + n.alias + ']' : n.alias; if (n.isDir) dirs++; else { files++; bytes += n.size; } row += s.padEnd(16); if (row.length >= 64) { this.say(row.trimEnd()); row = ''; } }
+      if (row) this.say(row.trimEnd());
+    } else {
+      if (dir.parent && showDots) { const d = this.fmtDate(dir.mtime) + '  ' + this.fmtTime(dir.mtime); this.say('.            <DIR>         ' + d); this.say('..           <DIR>         ' + d); dirs += 2; }
+      for (const n of list) {
+        const [b, e] = split(n.alias), d = this.fmtDate(n.mtime) + '  ' + this.fmtTime(n.mtime);
+        if (n.isDir) { dirs++; this.say(b.padEnd(8) + ' ' + e.padEnd(3) + '  <DIR>         ' + d); }
+        else { files++; bytes += n.size; this.say(b.padEnd(8) + ' ' + e.padEnd(3) + ' ' + this.num(n.size).padStart(13) + '  ' + d); }
+      }
+    }
+    this.say(String(files).padStart(9) + ' file(s) ' + this.num(bytes).padStart(14) + ' bytes');
+    this.say(String(dirs).padStart(9) + ' dir(s)  ' + this.num(1073741824).padStart(14) + ' bytes free');
+  }
+  c_cd(a) {
+    a = a.trim().replace(/^\/d\s*/i, '');
+    if (!a) { this.say(this.pathStr()); return; }
+    const n = this.vfs.walk(this.dos.parsePath(a).parts);
+    if (!n || !n.isDir) { this.say('Invalid directory'); return; }
+    this.dos.cwd = this.dos.resolveParts(n);
+  }
+  c_md(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const sp = this.dos.splitParent(tok); if (!sp || sp.name === '.' || sp.name === '..') { this.say('Unable to create directory'); continue; }
+      if (this.vfs.childOf(sp.dir, sp.name)) { this.say('A subdirectory or file ' + tok + ' already exists'); continue; }
+      this.vfs.dirty.add(this.vfs.add(sp.dir, sp.name, true));
+    }
+  }
+  c_rd(a) {
+    const rec = /\/s/i.test(a), l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const n = this.vfs.walk(this.dos.parsePath(tok).parts);
+      if (!n || !n.isDir || !n.parent) { this.say('Invalid path, not directory,'); this.say('or directory not empty'); continue; }
+      if (n.children.size && !rec) { this.say('Invalid path, not directory,'); this.say('or directory not empty'); continue; }
+      if (this.inCwd(n)) { this.say('Attempt to remove current directory - ' + tok); continue; }
+      this.vfs.tombTree(n); n.parent.children.delete(n.name.toUpperCase()); n.parent.aliases.delete(n.alias);
+    }
+  }
+  c_del(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      let nodes = this.expand(tok, true); if (!nodes.length) { this.say('File not found - ' + tok); continue; }
+      for (const n of nodes) {
+        if (n.isDir) { for (const c of [...n.children.values()]) if (!c.isDir) this.detach(c); } else this.detach(n);
+      }
+    }
+  }
+  c_copy(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    const srcs = this.expand(l[0], false).filter(n => !n.isDir);
+    if (!srcs.length) { this.say('File not found - ' + l[0]); return; }
+    const dst = l[1] || '.', dn = this.vfs.walk(this.dos.parsePath(dst).parts);
+    let count = 0;
+    for (const s of srcs) {
+      let dir, name;
+      if (dn && dn.isDir) { dir = dn; name = s.name; }
+      else { if (srcs.length > 1) { this.say('Cannot copy several files into one file'); break; } const sp = this.dos.splitParent(dst); if (!sp) { this.say('Path not found'); return; } dir = sp.dir; name = sp.name; }
+      let t = this.vfs.childOf(dir, name);
+      if (t === s) { this.say('File cannot be copied onto itself'); continue; }
+      if (t && t.isDir) { this.say('Access denied'); continue; }
+      const data = s.data.slice(0, s.size);
+      if (!t) t = this.vfs.add(dir, name, false);
+      t.data = data; t.size = data.length; t.mtime = new Date(); this.vfs.dirty.add(t); count++;
+    }
+    this.say(String(count).padStart(9) + ' file(s) copied');
+  }
+  c_ren(a) {
+    const l = this.args(a); if (l.length < 2) { this.say('Required parameter missing'); return; }
+    const n = this.vfs.walk(this.dos.parsePath(l[0]).parts);
+    if (!n || !n.parent) { this.say('File not found - ' + l[0]); return; }
+    if (/[\\:\/]/.test(l[1])) { this.say('Invalid parameter'); return; }
+    if (this.vfs.childOf(n.parent, l[1])) { this.say('Duplicate file name or file not found'); return; }
+    this.moveNode(n, n.parent, l[1]);
+  }
+  c_move(a) {
+    const l = this.args(a); if (l.length < 2) { this.say('Required parameter missing'); return; }
+    const srcs = this.expand(l[0], true).filter(n => n.parent);
+    if (!srcs.length) { this.say('File not found - ' + l[0]); return; }
+    const dn = this.vfs.walk(this.dos.parsePath(l[1]).parts); let count = 0;
+    for (const s of srcs) {
+      let dir, name;
+      if (dn && dn.isDir) { dir = dn; name = s.name; } else { if (srcs.length > 1) { this.say('Cannot move several files into one file'); break; } const sp = this.dos.splitParent(l[1]); if (!sp) { this.say('Path not found'); return; } dir = sp.dir; name = sp.name; }
+      if (this.vfs.childOf(dir, name)) { this.say('Cannot move - ' + name + ' already exists'); continue; }
+      for (let x = dir; x; x = x.parent) if (x === s) { this.say('Cannot move a directory into itself'); return; }
+      this.moveNode(s, dir, name); count++;
+    }
+    this.say(String(count).padStart(9) + ' file(s) moved');
+  }
+  c_type(a) {
+    const l = this.args(a); if (!l.length) { this.say('Required parameter missing'); return; }
+    for (const tok of l) {
+      const n = this.dos.lookup(tok); if (!n || n.isDir) { this.say('File not found - ' + tok); continue; }
+      const d = n.data, lim = Math.min(n.size, 65536); let s = '';
+      for (let i = 0; i < lim; i++) { const b = d[i]; if (b === 13 || b === 0x1A) continue; s += b === 10 ? '\n' : String.fromCharCode(b); }
+      this.out(s); if (n.size > lim) this.say('\n[truncated: ' + this.num(n.size) + ' bytes]');
+      else if (s.length && !s.endsWith('\n')) this.out('\n');
+    }
+  }
+  c_cls() { const d = this.dos; if (this.cap) return; d.scroll(0, 0, d.rows() - 1, d.cols() - 1, 0, 7, true); d.setCurPos(0, 0); }
+  c_echo(a) {
+    if (/^[.:;,\/\\]/.test(a)) { this.say(a.slice(1)); return; }
+    const t = a.replace(/^\s/, '');
+    if (!a.trim()) { this.say('ECHO is ' + (this.echo ? 'on' : 'off')); return; }
+    if (/^off$/i.test(t.trim())) { this.echo = false; return; }
+    if (/^on$/i.test(t.trim())) { this.echo = true; return; }
+    this.say(t);
+  }
+  c_set(a) {
+    const t = a.trim(), env = this.dos.env;
+    if (!t) { for (const k of Object.keys(env)) this.say(k + '=' + env[k]); return; }
+    const i = t.indexOf('='); if (i < 0) { const k = t.toUpperCase(); if (k in env) this.say(k + '=' + env[k]); else this.say('Environment variable ' + k + ' not defined'); return; }
+    const k = t.slice(0, i).trim().toUpperCase(), v = t.slice(i + 1);
+    if (!k) { this.say('Syntax error'); return; } if (v === '') delete env[k]; else env[k] = v;
+  }
+  c_path(a) { const t = a.trim().replace(/^=/, ''); if (!t) { this.say('PATH=' + (this.dos.env.PATH || '')); return; } this.dos.env.PATH = t.replace(/^PATH=/i, ''); }
+  c_ver() { this.say(); this.say('WebDos [Version 1.2]'); this.say(); }
+  c_date() { const d = new Date(); this.say('Current date is ' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + this.fmtDate(d).replace(/-(\d\d)$/, '-' + d.getFullYear())); }
+  c_time() { const d = new Date(), p = x => String(x).padStart(2, '0'); this.say('Current time is ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())); }
+  c_vol() { this.say(' Volume in drive C is WEBDOS'); }
+  c_mem() {
+    const a = this.dos.arena, free = (a.top - a.first) * 16;
+    this.say(); this.say(this.num(655360).padStart(10) + ' bytes total conventional memory'); this.say(this.num(free).padStart(10) + ' bytes available to programs'); this.say();
+  }
+  c_pause() { this.out('Press any key to continue . . .'); this.paused = true; }
+  c_rem() { }
+  c_call(a) { const t = a.trim(); if (t) this.dispatch(t); }
+  c_exit() { this.say('This is the top-level command interpreter. Close the browser tab to quit.'); }
+  c_unsup(a, name) { this.say(name + ' is not supported in this shell.'); }
+  c_tree() {
+    const walk = (dir, pre) => {
+      const ds = this.vfs.list(dir).filter(n => n.isDir).sort((x, y) => x.alias < y.alias ? -1 : 1);
+      ds.forEach((d, i) => { const last = i === ds.length - 1; this.say(pre + (last ? '\\---' : '+---') + d.alias); walk(d, pre + (last ? '    ' : '|   ')); });
+    };
+    const dir = this.vfs.walk(this.dos.cwd); this.say(this.pathStr()); walk(dir, '');
+  }
+  c_help() {
+    [
+      'DIR [path] [/W] [/B]     List files        CD [path]        Change directory',
+      'MD path                  Make directory    RD [/S] path     Remove directory',
+      'DEL file(s)              Delete files      COPY src [dst]   Copy files',
+      'REN old new              Rename            MOVE src dst     Move files/dirs',
+      'TYPE file                Show a text file  CLS              Clear the screen',
+      'ECHO text > file         Write a text file (also >> to append, > NUL to hide)',
+      'SET [VAR=value]          Environment       PATH [list]      Program search path',
+      'TREE  VER  DATE  TIME  MEM  VOL  PAUSE  CALL file.BAT',
+      '',
+      'Type a program name (GAME, GAME.EXE, SETUP...) to run it. Tab completes names;',
+      'Up/Down recall history. Files are saved when a program ends.',
+    ].forEach(l => this.say(l));
+  }
+}
+
+window.__startUI = function () {
+  const $ = id => document.getElementById(id);
+  const machine = new Machine();
+  window.__emu = machine;
+
+  /* ------------------------------ CP437 font ------------------------------ */
+  const CP437_HI = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+  const CP437_LO = ' ☺☻♥♦♣♠•◘○◙♂♀♪♬☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼';
+  const BOX = { // arms: [up, down, left, right] 0 none 1 single 2 double
+    0xB3: [1, 1, 0, 0], 0xB4: [1, 1, 1, 0], 0xB5: [1, 1, 2, 0], 0xB6: [2, 2, 1, 0], 0xB7: [0, 2, 1, 0], 0xB8: [0, 1, 2, 0], 0xB9: [2, 2, 2, 0], 0xBA: [2, 2, 0, 0],
+    0xBB: [0, 2, 2, 0], 0xBC: [2, 0, 2, 0], 0xBD: [2, 0, 1, 0], 0xBE: [1, 0, 2, 0], 0xBF: [0, 1, 1, 0], 0xC0: [1, 0, 0, 1], 0xC1: [1, 0, 1, 1], 0xC2: [0, 1, 1, 1],
+    0xC3: [1, 1, 0, 1], 0xC4: [0, 0, 1, 1], 0xC5: [1, 1, 1, 1], 0xC6: [1, 1, 0, 2], 0xC7: [2, 2, 0, 1], 0xC8: [2, 0, 0, 2], 0xC9: [0, 2, 0, 2], 0xCA: [2, 0, 2, 2],
+    0xCB: [0, 2, 2, 2], 0xCC: [2, 2, 0, 2], 0xCD: [0, 0, 2, 2], 0xCE: [2, 2, 2, 2], 0xCF: [1, 0, 2, 2], 0xD0: [2, 0, 1, 1], 0xD1: [0, 1, 2, 2], 0xD2: [0, 2, 1, 1],
+    0xD3: [2, 0, 0, 1], 0xD4: [1, 0, 0, 2], 0xD5: [0, 1, 0, 2], 0xD6: [0, 2, 0, 1], 0xD7: [2, 2, 1, 1], 0xD8: [1, 1, 2, 2], 0xD9: [1, 0, 1, 0], 0xDA: [0, 1, 0, 1],
+  };
+  function buildFont(vga) {
+    let chars = CP437_LO;
+    for (let i = 32; i < 127; i++) chars += String.fromCharCode(i);
+    chars += '⌂' + CP437_HI;
+    const arr = Array.from(chars);
+    const cv = document.createElement('canvas'); cv.width = 16; cv.height = 16;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.font = '13px "DejaVu Sans Mono","Liberation Mono","Courier New",Consolas,monospace'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#fff';
+    const f = vga.font;
+    for (let c = 0; c < 256 && c < arr.length; c++) {
+      ctx.clearRect(0, 0, 16, 16);
+      if (c > 0 && c !== 0xFF) ctx.fillText(arr[c], 0, 12);
+      const d = ctx.getImageData(0, 0, 8, 16).data;
+      for (let y = 0; y < 16; y++) { let b = 0; for (let x = 0; x < 8; x++) if (d[(y * 8 + x) * 4 + 3] > 110) b |= 0x80 >> x; f[c * 16 + y] = b; }
+    }
+    // procedural block / box-drawing glyphs so text-mode UIs line up perfectly
+    const px = (c, x, y) => { if (x >= 0 && x < 8 && y >= 0 && y < 16) f[c * 16 + y] |= 0x80 >> x; };
+    for (let y = 0; y < 16; y++) {
+      f[0xB0 * 16 + y] = (y & 1) ? 0x88 : 0x22; f[0xB1 * 16 + y] = (y & 1) ? 0xAA : 0x55; f[0xB2 * 16 + y] = (y & 1) ? 0xDD : 0x77;
+      f[0xDB * 16 + y] = 0xFF; f[0xDC * 16 + y] = y >= 8 ? 0xFF : 0; f[0xDD * 16 + y] = 0xF0; f[0xDE * 16 + y] = 0x0F; f[0xDF * 16 + y] = y < 8 ? 0xFF : 0;
+    }
+    for (const k in BOX) {
+      const c = +k, [u, d, l, r] = BOX[k]; f.fill(0, c * 16, c * 16 + 16);
+      const vx = n => n === 1 ? [3] : [2, 4], hy = n => n === 1 ? [7] : [6, 9];
+      const vcols = [...new Set([...(u ? vx(u) : []), ...(d ? vx(d) : [])])], hrows = [...new Set([...(l ? hy(l) : []), ...(r ? hy(r) : [])])];
+      const xs = (u === 2 || d === 2) ? [2, 4] : [3], ys = (l === 2 || r === 2) ? [6, 9] : [7];
+      const x0 = xs[0], x1 = xs[xs.length - 1], y0 = ys[0], y1 = ys[ys.length - 1];
+      if (u) for (const x of vx(u)) for (let y = 0; y <= y1; y++) px(c, x, y);
+      if (d) for (const x of vx(d)) for (let y = y0; y < 16; y++) px(c, x, y);
+      if (l) for (const y of hy(l)) for (let x = 0; x <= x1; x++) px(c, x, y);
+      if (r) for (const y of hy(r)) for (let x = x0; x < 8; x++) px(c, x, y);
+    }
+  }
+  buildFont(machine.vga);
+
+  /* ------------------------------ canvas / render ------------------------------ */
+  const cv = $('screen'), ctx = cv.getContext('2d', { alpha: false });
+  let img = null, imgW = 0, imgH = 0;
+  function present() {
+    const v = machine.vga; if (v.render() === false && img) return;
+    const w = v.width, h = v.height;
+    if (!img || w !== imgW || h !== imgH) { cv.width = w; cv.height = h; img = new ImageData(new Uint8ClampedArray(v.out.buffer, 0, w * h * 4), w, h); imgW = w; imgH = h; }
+    ctx.putImageData(img, 0, 0);
+  }
+  /* ------------------------------ audio ------------------------------ */
+  let ac = null, sp = null;
+  function initAudio() {
+    if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+      sp = ac.createScriptProcessor(2048, 0, 1);
+      sp.onaudioprocess = e => { const o = e.outputBuffer.getChannelData(0); machine.mix(o, o.length, ac.sampleRate); };
+      const gain = ac.createGain(); gain.gain.value = +$('vol').value / 100; window.__gain = gain;
+      sp.connect(gain); gain.connect(ac.destination);
+    } catch (e) { console.warn('audio init failed', e); }
+  }
+  $('vol').oninput = e => { if (window.__gain) window.__gain.gain.value = +e.target.value / 100; };
+  for (const [id, k] of [['sndOpl', 'opl'], ['sndSb', 'sb'], ['sndSpk', 'speaker']]) $(id).onchange = e => { machine.soundOn[k] = e.target.checked; };
+
+  /* ------------------------------ persistence (IndexedDB) ------------------------------ */
+  const store = {
+    db: null,
+    open() { return new Promise(res => { try { const rq = indexedDB.open('dosemu', 2); rq.onupgradeneeded = () => { const db = rq.result; for (const n of ['files', 'base']) if (!db.objectStoreNames.contains(n)) db.createObjectStore(n); }; rq.onsuccess = () => { this.db = rq.result; res(true); }; rq.onerror = () => res(false); rq.onblocked = () => res(false); } catch (e) { res(false); } }); },
+    put(path, data, st = 'files') { if (!this.db) return; try { this.db.transaction(st, 'readwrite').objectStore(st).put(data, path); } catch (e) { } },
+    del(path, st = 'files') { if (!this.db) return; try { this.db.transaction(st, 'readwrite').objectStore(st).delete(path); } catch (e) { } },
+    all(st = 'files') { return new Promise(res => { if (!this.db) return res([]); try { const out = []; const rq = this.db.transaction(st).objectStore(st).openCursor(); rq.onsuccess = () => { const c = rq.result; if (c) { out.push([c.key, c.value]); c.continue(); } else res(out); }; rq.onerror = () => res([]); } catch (e) { res([]); } }); },
+    clear(st) { return new Promise(res => { if (!this.db) return res(); try { const tx = this.db.transaction(st, 'readwrite'); tx.objectStore(st).clear(); tx.oncomplete = tx.onerror = tx.onabort = () => res(); } catch (e) { res(); } }); },
+  };
+  // 프로그램이 끝날 때(중지·창 닫을 때 포함) 호출: 바뀐 파일/폴더/삭제를 브라우저에 저장
+  function flushSaves() {
+    const vfs = machine.dos.vfs; if (!vfs.dirty.size && !vfs.deleted.size) return;
+    for (const k of vfs.deleted) { store.del(k, 'files'); store.del(k, 'base'); }
+    vfs.deleted.clear();
+    for (const n of vfs.dirty) {
+      if (!n || typeof n !== 'object' || !vfs.attached(n)) continue;
+      if (n.isDir) store.put(vfs.realPath(n) + '\\', new Uint8Array(0), 'files'); else store.put(vfs.realPath(n), n.data.slice(0, n.size), 'files');
+    }
+    vfs.dirty.clear(); refreshSaves();
+  }
+  async function applySaves() {
+    const vfs = machine.dos.vfs;
+    for (const [path, data] of await store.all('files')) {
+      const parts = path.split(/[\\/]/).filter(Boolean); if (!parts.length) continue;
+      if (/[\\/]$/.test(path)) { let d = vfs.root; for (const p of parts) d = vfs.childOf(d, p) || vfs.add(d, p, true); continue; }
+      const ex = vfs.walk(parts); if (!ex) vfs.addFile(path, data); else if (!ex.isDir) { ex.data = data; ex.size = data.length; }
+    }
+  }
+  async function restoreFromStore() {
+    const vfs = machine.dos.vfs;
+    for (const [path, data] of await store.all('base')) vfs.addFile(path, data);
+    await applySaves();
+  }
+  async function refreshSaves() {
+    const [b, f] = [await store.all('base'), await store.all('files')];
+    $('saveInfo').textContent = (b.length || f.length) ? `보관된 게임 파일 ${b.length}개 · 게임이 저장/수정한 파일·폴더 ${f.length}개 (이 브라우저에 보관됨)` : '보관된 데이터 없음';
+  }
+  window.addEventListener('pagehide', flushSaves);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
+
+  /* ------------------------------ file loading ------------------------------ */
+  let loaded = []; // {path, data}
+  function stripCommonRoot(list) {
+    if (list.length < 2) return list;
+    const first = list.map(f => f.path.split('/')[0]);
+    if (list.every(f => f.path.includes('/')) && first.every(x => x === first[0])) return list.map(f => ({ path: f.path.slice(first[0].length + 1), data: f.data }));
+    return list;
+  }
+  async function inflateRaw(u8) {
+    const s = new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+  async function readZip(buf) {
+    const u = new Uint8Array(buf), dv = new DataView(buf); let e = -1;
+    for (let i = u.length - 22; i >= Math.max(0, u.length - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) throw new Error('ZIP 형식이 아닙니다');
+    const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const out = [];
+    for (let i = 0; i < n; i++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const method = dv.getUint16(p + 10, true), csz = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+      const name = new TextDecoder('utf-8').decode(u.subarray(p + 46, p + 46 + nl)); p += 46 + nl + xl + cl;
+      if (name.endsWith('/')) continue;
+      const lnl = dv.getUint16(lo + 26, true), lxl = dv.getUint16(lo + 28, true), ds = lo + 30 + lnl + lxl;
+      const comp = u.subarray(ds, ds + csz);
+      let data; if (method === 0) data = comp.slice(); else if (method === 8) data = await inflateRaw(comp); else { console.warn('unsupported zip method', method, name); continue; }
+      out.push({ path: name.replace(/\\/g, '/'), data });
+    }
+    return out;
+  }
+  async function addBlobs(files) {
+    setStatus('파일 읽는 중…');
+    const list = [];
+    for (const f of files) {
+      const rel = f.webkitRelativePath || f._path || f.name;
+      if (/\.zip$/i.test(f.name) && !f.webkitRelativePath) { try { list.push(...stripCommonRoot(await readZip(await f.arrayBuffer()))); } catch (e) { setStatus('ZIP 오류: ' + e.message, true); } }
+      else list.push({ path: rel, data: new Uint8Array(await f.arrayBuffer()) });
+    }
+    const hasDirs = list.some(f => f.path.includes('/'));
+    const fin = hasDirs ? stripCommonRoot(list) : list;
+    flushSaves();
+    const vfs = machine.dos.vfs;
+    for (const f of fin) { const nd = vfs.addFile(f.path, f.data); loaded.push(f); if (nd) store.put(vfs.realPath(nd), f.data, 'base'); }
+    await applySaves();
+    refreshPrograms(); refreshSaves();
+    shell.notice(fin.length + ' file(s) loaded. Saved progress was restored.');
+  }
+  async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) { const file = await new Promise((res, rej) => entry.file(res, rej)); file._path = prefix + entry.name; out.push(file); }
+    else if (entry.isDirectory) {
+      const rd = entry.createReader(); let all = [];
+      for (;;) { const b = await new Promise((res, rej) => rd.readEntries(res, rej)); if (!b.length) break; all = all.concat(b); }
+      for (const c of all) await walkEntry(c, prefix + entry.name + '/', out);
+    }
+  }
+  function refreshPrograms() {
+    const sel = $('prog'); const progs = machine.findPrograms(); sel.innerHTML = '';
+    let best = -1;
+    progs.forEach((p, i) => { const o = document.createElement('option'); o.value = i; o.textContent = p.path; sel.appendChild(o); if (best < 0 && !/INSTALL|SETUP|UNINST|CONFIG|SERSETUP|README/i.test(p.path)) best = i; });
+    if (best >= 0) sel.value = best;
+    machine._progs = progs;
+    const total = machine.dos.vfs.all().reduce((a, n) => a + n.size, 0);
+    $('fileInfo').textContent = `${machine.dos.vfs.all().length}개 파일 (${(total / 1048576).toFixed(1)} MB) · 실행 파일 ${progs.length}개`;
+    $('runBtn').disabled = progs.length === 0;
+    setStatus(progs.length ? '화면에 프로그램 이름을 입력하거나, 여기서 선택해 [실행]을 누르세요.' : (machine.dos.vfs.all().length ? '실행 파일(.EXE/.COM)을 찾지 못했습니다.' : '게임 파일(폴더/ZIP/개별 파일)을 끌어다 놓거나 아래 버튼으로 불러오세요.'));
+  }
+  $('fileIn').onchange = e => { addBlobs([...e.target.files]); e.target.value = ''; };
+  $('dirIn').onchange = e => { addBlobs([...e.target.files]); e.target.value = ''; };
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'dragleave' && e.relatedTarget) return; drop.classList.remove('over'); }));
+  document.addEventListener('drop', async e => {
+    e.preventDefault(); const items = [...(e.dataTransfer.items || [])], files = [];
+    const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    if (entries.length) { for (const en of entries) await walkEntry(en, '', files); const hasDirs = files.some(f => f._path.includes('/')); if (!hasDirs) files.forEach(f => delete f.webkitRelativePath); await addBlobs(files); }
+    else await addBlobs([...e.dataTransfer.files]);
+  });
+
+  /* ------------------------------ demos ------------------------------ */
+  const DEMOS = window.__DEMOS__ || {};
+  const demoBox = $('demos');
+  const DEMO_INFO = { DEMO13: ['모드 13h 데모', '320×200 256색 + 팔레트 회전'], DEMOX: ['모드 X 데모', '320×240 언체인 + 하드웨어 스크롤'], KEYTEST: ['키보드/타이머 IRQ', 'INT 9 / INT 8 후킹, 스캔코드 표시'], ADLIB: ['AdLib FM 음', 'OPL2 에뮬레이션 (소리 확인)'] };
+  const demoOrder = Object.keys(DEMO_INFO);
+  for (const name of Object.keys(DEMOS).sort((a, b) => demoOrder.indexOf(a) - demoOrder.indexOf(b))) {
+    const b = document.createElement('button'); b.className = 'chip'; const info = DEMO_INFO[name] || [name, '']; b.textContent = info[0]; b.title = info[1];
+    b.onclick = () => { const bin = Uint8Array.from(atob(DEMOS[name]), c => c.charCodeAt(0)); const node = machine.dos.vfs.addFile('DEMO/' + name + '.COM', bin); refreshPrograms(); const idx = machine._progs.findIndex(p => p.node === node); $('prog').value = idx; start(); };
+    demoBox.appendChild(b);
+  }
+
+  /* ------------------------------ run control ------------------------------ */
+  let paused = false, lastT = 0, accEmu = 0, accReal = 0, fps = 0, fpsCount = 0, fpsT = 0, lastKey = '';
+  function setStatus(t, err) { const s = $('status'); s.textContent = t; s.className = err ? 'err' : ''; if (err) openSettings(); }
+  const settingsEl = $('settings');
+  function openSettings() { settingsEl.classList.add('open'); }
+  function closeSettings() { settingsEl.classList.remove('open'); }
+  $('gear').onclick = e => { e.stopPropagation(); settingsEl.classList.toggle('open'); };
+  $('gear').onmousedown = e => e.stopPropagation();
+  $('settingsClose').onclick = () => { closeSettings(); cv.focus(); };
+  cv.addEventListener('mousedown', () => { closeSettings(); $('hint').style.display = 'none'; });
+  const shell = new Shell(machine, { launch: (n, t) => launchProgram(n, t), flush: () => flushSaves() });
+  function start() {
+    const idx = +$('prog').value, p = machine._progs[idx]; if (!p) return;
+    initAudio();
+    shell.runFromUI(p.node, $('args').value ? ' ' + $('args').value : '');
+  }
+  function launchProgram(node, tail) {
+    initAudio(); machine.ipsCap = +$('speed').value * 1e6; machine.ips = Math.min(machine.ipsCap, 30e6);
+    flushSaves();
+    const cwd = machine.dos.cwd.slice();
+    try { machine.dos.startProgram(node, tail); } catch (e) { setStatus('실행 실패: ' + e.message, true); throw e; }
+    machine.dos.cwd = cwd;
+    machine.dos.mouse.present = $('mouseOn').checked;
+    paused = false; $('pauseBtn').textContent = '일시정지'; lastT = performance.now(); machine.error = null; img = null;
+    $('stopBtn').disabled = false; $('hint').style.display = 'none'; closeSettings(); cv.focus(); setStatus('실행 중: ' + machine.dos.vfs.realPath(node));
+  }
+  $('runBtn').onclick = start;
+  $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
+  $('pauseBtn').onclick = () => { paused = !paused; $('pauseBtn').textContent = paused ? '계속' : '일시정지'; lastT = performance.now(); };
+  const speedLabel = v => (+v >= 200 ? '펜티엄급 초초고사양 · ' : +v >= 100 ? '486DX4 초고사양 · ' : +v >= 33 ? '386DX 고사양 · ' : '') + v + ' MIPS';
+  $('speed').oninput = e => { machine.ipsCap = +e.target.value * 1e6; machine.ips = Math.min(machine.ips, machine.ipsCap); $('speedVal').textContent = speedLabel(e.target.value); };
+  $('speedVal').textContent = speedLabel($('speed').value);
+  $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
+  $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
+  $('clearSaves').onclick = async () => { if (!confirm('게임이 저장한 진행상황(세이브/설정)만 삭제하고 새로고침합니다. 계속할까요?')) return; await store.clear('files'); location.reload(); };
+  $('clearAll').onclick = async () => { if (!confirm('불러온 게임 파일과 모든 저장 데이터를 삭제하고 새로고침합니다. 계속할까요?')) return; await store.clear('files'); await store.clear('base'); try { localStorage.removeItem('dosemu.meta'); } catch (e) { } location.reload(); };
+  $('keep43').onchange = e => $('stage').classList.toggle('keep43', e.target.checked);
+  $('mouseOn').onchange = e => { machine.dos.mouse.present = e.target.checked; };
+
+  function describeError() {
+    const e = machine.error, c = machine.cpu; const a = (c.sb[1] + c.ip) & 0xFFFFF; let bytes = '';
+    for (let i = -4; i < 6; i++) bytes += machine.mem[(a + i) & 0xFFFFF].toString(16).padStart(2, '0') + ' ';
+    return `${e.message}\nCS:IP=${c.seg[1].toString(16)}:${c.ip.toString(16)}  AX=${(c.r[0] >>> 0).toString(16)} BX=${(c.r[3] >>> 0).toString(16)} CX=${(c.r[1] >>> 0).toString(16)} DX=${(c.r[2] >>> 0).toString(16)}\n주변 바이트: ${bytes}`;
+  }
+  function diagReport() {
+    const c = machine.cpu, d = machine.dos, v = machine.vga, L = [];
+    const hx = n => (n >>> 0).toString(16);
+    L.push('== DOS 에뮬레이터 진단 ==');
+    L.push('프로그램: ' + ($('prog').selectedOptions[0] ? $('prog').selectedOptions[0].textContent : '-') + '  / 인수: ' + $('args').value);
+    L.push('상태: ' + (machine.running ? '실행 중' : machine.error ? '오류로 중지' : machine.exitInfo ? '종료(코드 ' + machine.exitInfo.code + ')' : '대기'));
+    if (machine.error) L.push('오류: ' + machine.error.message);
+    L.push(`CS:IP=${hx(c.seg[1])}:${hx(c.ip)} AX=${hx(c.r[0])} BX=${hx(c.r[3])} CX=${hx(c.r[1])} DX=${hx(c.r[2])} SI=${hx(c.r[6])} DI=${hx(c.r[7])} DS=${hx(c.seg[3])} ES=${hx(c.seg[0])} SS:SP=${hx(c.seg[2])}:${hx(c.r[4])}`);
+    const a = (c.sb[1] + c.ip) & 0xFFFFF; let bytes = ''; for (let i = -6; i < 10; i++) bytes += machine.mem[(a + i) & 0xFFFFF].toString(16).padStart(2, '0') + ' ';
+    L.push('명령어 주변 바이트: ' + bytes);
+    L.push(`비디오: 모드 ${v.mode.toString(16)}h ${v.width}x${v.height}  SR04=${hx(v.sr[4])} GC05=${hx(v.gc[5])} GC06=${hx(v.gc[6])}`);
+    L.push(`메모리: 최대 연속 빈 공간 ${(d.arena.largest() * 16 / 1024).toFixed(0)}KB  / CPU ${(machine.ips / 1e6).toFixed(0)}MIPS`);
+    L.push('SB: DSP 명령 응답=' + machine.sb.outq.length + ' 재생중=' + machine.sb.playing + ' / OPL 키온=' + [...machine.opl.kon].join(''));
+    L.push('-- 최근 프레임별 CS:IP (같은 값이 반복되면 그 자리에서 대기 중) --'); L.push('  ' + ipSamples.join('  '));
+    const top = arr => { const o = []; for (let p = 0; p < 65536; p++) if (arr[p]) o.push([p, arr[p]]); o.sort((a, b) => b[1] - a[1]); return o.slice(0, 8).map(x => x[0].toString(16) + '×' + x[1]).join('  ') || '(없음)'; };
+    L.push('-- 가장 많이 읽은 I/O 포트 --'); L.push('  ' + top(machine.ioR)); L.push('-- 가장 많이 쓴 I/O 포트 --'); L.push('  ' + top(machine.ioW));
+    L.push('-- 최근 인터럽트(INT) 호출 순서 (마지막 줄이 가장 최근' + (d.callDup ? ', 마지막 호출 ' + (d.callDup + 1) + '회 반복' : '') + ') --'); for (const m of d.calls.slice(-30)) L.push('  ' + m); if (!d.calls.length) L.push('  (없음)');
+    L.push('-- 처리하지 못한 BIOS/DOS 호출 --');
+    if (d.missed.size) for (const [k, n] of d.missed) L.push(`  ${k} ×${n}`); else L.push('  (없음)');
+    L.push('-- 응답이 없었던 I/O 포트 (게임이 찾은 하드웨어) --');
+    if (machine.unknownPorts.size) for (const [k, n] of machine.unknownPorts) L.push(`  ${k} ×${n}`); else L.push('  (없음)');
+    L.push('-- 최근 기록 --'); for (const m of d.log.slice(-25)) L.push('  ' + m); if (!d.log.length) L.push('  (없음)');
+    L.push('-- 불러온 파일 --'); const files = d.vfs.all(); L.push('  ' + files.length + '개: ' + files.slice(0, 40).map(f => d.vfs.fullPath(f) + '(' + f.size + ')').join(', ') + (files.length > 40 ? ' …' : ''));
+    return L.join('\n');
+  }
+  $('diagBtn').onclick = () => { const t = diagReport(); $('diag').value = t; $('diag').style.display = 'block'; const fail = () => { $('diagMsg').textContent = '자동 복사 실패 - 아래 내용을 직접 선택해 복사해 주세요'; $('diag').select(); }; try { navigator.clipboard.writeText(t).then(() => { $('diagMsg').textContent = '클립보드에 복사했습니다'; }, fail); } catch (e) { fail(); } };
+  let lastGeom = '';
+  const ipSamples = [];
+  function frame(t) {
+    requestAnimationFrame(frame);
+    const dt = Math.min(34, t - lastT || 16.7); lastT = t;
+    if (machine.running && !paused) {
+      const t0 = performance.now(); machine.runFor(dt, 11); const spent = performance.now() - t0;
+      if (machine.starved) machine.ips = Math.max(4e6, machine.ips * 0.8);                                   // 못 따라가면 즉시 낮춤
+      else if (spent < 7 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.04);  // 여유 있으면 천천히 올림
+      { const c = machine.cpu; ipSamples.push(c.seg[1].toString(16) + ':' + c.ip.toString(16)); if (ipSamples.length > 12) ipSamples.shift(); }
+      accEmu += dt; accReal += Math.max(spent, 0.001);
+      if (machine.error) { setStatus(describeError(), true); flushSaves(); }
+    } else if (machine.exitInfo && !machine._exitShown) {
+      machine._exitShown = true; setStatus('프로그램이 종료되었습니다 (종료 코드 ' + machine.exitInfo.code + ')'); flushSaves();
+    }
+    if (machine.running) machine._exitShown = false;
+    if (shell.waiting && !machine.running) shell.programExited(!!machine.error);
+    present();
+    fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0;
+      if (false) {
+        if (load > 0.85) machine.ips = Math.max(8e6, machine.ips * 0.88);
+        else if (load < 0.55 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.2);
+      } const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · ${(machine.ips / 1e6).toFixed(0)} MIPS · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
+    const g = machine.vga.geometry(); const key = g.w + 'x' + g.h + g.text;
+    if (key !== lastGeom) { lastGeom = key; machine.dos.mouseSetBounds(g.text ? (g.cols || 80) * 8 : (machine.vga.mode === 0x13 ? g.w * 2 : g.w), g.text ? (g.rows || 25) * 8 : g.h); }
+  }
+
+  /* ------------------------------ keyboard ------------------------------ */
+  let focused = false;
+  cv.addEventListener('focus', () => { focused = true; $('kbd').classList.add('on'); $('kbd').textContent = '키보드 캡처 중'; });
+  cv.addEventListener('blur', () => { focused = false; $('kbd').classList.remove('on'); $('kbd').textContent = '키보드 캡처 꺼짐 (화면 클릭)'; for (const c of [...machine.kb.down]) machine.key(c, false); });
+  const keyHandler = down => e => {
+    if (!focused) return;
+    if (e.code === 'F11') return;
+    if (!machine.running) { if (down && shell.key(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+    if (machine.key(e.code, down)) { e.preventDefault(); e.stopPropagation(); }
+  };
+  window.addEventListener('keydown', keyHandler(true), true);
+  window.addEventListener('keyup', keyHandler(false), true);
+
+  /* ------------------------------ mouse ------------------------------ */
+  let buttons = 0;
+  cv.addEventListener('mousedown', e => {
+    cv.focus();
+    if ($('mouseOn').checked && machine.running && document.pointerLockElement !== cv) { cv.requestPointerLock && cv.requestPointerLock(); }
+    buttons |= e.button === 0 ? 1 : e.button === 2 ? 2 : 4; machine.dos.mouseEvent(0, 0, buttons); e.preventDefault();
+  });
+  window.addEventListener('mouseup', e => { buttons &= ~(e.button === 0 ? 1 : e.button === 2 ? 2 : 4); machine.dos.mouseEvent(0, 0, buttons); });
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('mousemove', e => { if (document.pointerLockElement === cv) machine.dos.mouseEvent(e.movementX, e.movementY, buttons); });
+
+  /* ===================================================================
+   *  WebDos 임베드 API (iframe / 외부 페이지에서 파일 주입 + 자동 실행)
+   *   1) window.WebDos            (같은 페이지/동일 출처에서 직접 호출)
+   *   2) postMessage 프로토콜      (iframe 부모 → 이 페이지)
+   *   3) URL 파라미터              (?zip=...&run=GAME.EXE&ui=0 ...)
+   * =================================================================== */
+  const WD = (() => {
+    const VERSION = '1.0';
+    const listeners = [];
+    let readyResolve; const ready = new Promise(r => { readyResolve = r; });
+    let isReady = false;
+
+    const norm = p => String(p).replace(/\\/g, '/').replace(/^\.?\/+/, '');
+    const toU8 = async d => {
+      if (d instanceof Uint8Array) return d;
+      if (d instanceof ArrayBuffer) return new Uint8Array(d);
+      if (ArrayBuffer.isView(d)) return new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+      if (typeof Blob !== 'undefined' && d instanceof Blob) return new Uint8Array(await d.arrayBuffer());
+      if (typeof d === 'string') { // base64 (data: URL 접두사 허용)
+        const b = d.replace(/^data:[^,]*,/, '');
+        return Uint8Array.from(atob(b), c => c.charCodeAt(0));
+      }
+      throw new Error('지원하지 않는 데이터 형식');
+    };
+    const emit = (type, data) => { for (const f of listeners) { try { f(type, data || {}); } catch (e) { } } };
+
+    // 파일 목록 [{path, data}] 를 가상 디스크에 추가
+    async function loadFiles(files, opt = {}) {
+      const persist = !!opt.persist;
+      const list = [];
+      for (const f of files) list.push({ path: norm(f.path), data: await toU8(f.data) });
+      const fin = opt.stripRoot ? stripCommonRoot(list) : list;
+      flushSaves();
+      const vfs = machine.dos.vfs;
+      for (const f of fin) {
+        const nd = vfs.addFile(f.path, f.data); if (!nd) continue;
+        loaded.push(f);
+        if (persist) store.put(vfs.realPath(nd), f.data, 'base');
+      }
+      if (opt.restoreSaves !== false) await applySaves();
+      refreshPrograms(); refreshSaves();
+      emit('files', { count: fin.length });
+      return fin.length;
+    }
+    async function loadZip(src, opt = {}) {
+      let buf;
+      if (typeof src === 'string' && /^(https?:|blob:|data:|\.{0,2}\/)/i.test(src)) {
+        const r = await fetch(src); if (!r.ok) throw new Error('다운로드 실패: HTTP ' + r.status); buf = await r.arrayBuffer();
+      } else buf = (await toU8(src)).slice().buffer;
+      const list = await readZip(buf);
+      return loadFiles(list, Object.assign({ stripRoot: true }, opt));
+    }
+    async function loadUrl(url, path, opt = {}) {
+      const r = await fetch(url); if (!r.ok) throw new Error('다운로드 실패: HTTP ' + r.status);
+      const name = path || decodeURIComponent(String(url).split('?')[0].split('/').pop() || 'FILE');
+      if (!path && /\.zip$/i.test(name)) return loadZip(new Uint8Array(await r.arrayBuffer()), opt);
+      return loadFiles([{ path: name, data: await r.arrayBuffer() }], opt);
+    }
+    function listPrograms() { return machine.findPrograms().map(p => p.path); }
+    function findProgram(path) {
+      const progs = machine.findPrograms();
+      if (path == null || path === '') { // 자동 선택: 설치/설정 계열 제외
+        return (progs.find(p => !/INSTALL|SETUP|UNINST|CONFIG|SERSETUP|README/i.test(p.path)) || progs[0] || {}).node || null;
+      }
+      const want = norm(path).toUpperCase();
+      const hit = progs.find(p => machine.dos.vfs.realPath(p.node).replace(/\\/g, '/').toUpperCase() === want)
+        || progs.find(p => p.path.replace(/\\/g, '/').toUpperCase() === want)
+        || progs.find(p => p.node.name.toUpperCase() === want)
+        || progs.find(p => p.path.replace(/\\/g, '/').toUpperCase().endsWith('/' + want))
+        || progs.find(p => p.node.name.toUpperCase() === want + '.EXE' || p.node.name.toUpperCase() === want + '.COM');
+      return hit ? hit.node : null;
+    }
+    function run(path, args) {
+      const node = findProgram(path);
+      if (!node) throw new Error('실행 파일을 찾을 수 없습니다: ' + (path || '(자동)'));
+      initAudio(); hookAudioUnlock();
+      shell.runFromUI(node, args ? ' ' + String(args).replace(/^\s+/, '') : '');
+      return machine.dos.vfs.fullPath(node);
+    }
+    function stop() { machine.running = false; flushSaves(); setStatus('중지됨'); }
+    // 임베드 종료: 실행 중지 + 오디오 닫기 (iframe 을 제거하기 직전에 호출)
+    function shutdown() { execMode = false; machine.running = false; try { if (ac) ac.close(); } catch (e) { } ac = null; }
+    // 명령 줄 실행 (BAT 포함). 셸이 다시 프롬프트로 돌아오면 'exit' 이벤트
+    function exec(line) { initAudio(); hookAudioUnlock(); execMode = true; wasRunning = false; shell.submit(String(line)); return true; }
+    function pause() { paused = true; $('pauseBtn').textContent = '계속'; }
+    function resume() { paused = false; $('pauseBtn').textContent = '일시정지'; lastT = performance.now(); }
+    function setSpeed(mips) { $('speed').value = mips; $('speed').oninput({ target: $('speed') }); }
+    function setVolume(v) { $('vol').value = Math.round(v * 100); if (window.__gain) window.__gain.gain.value = v; }
+    function setUI(on) { document.documentElement.classList.toggle('embed', !on); }
+    function setKeep43(on) { $('keep43').checked = !!on; $('stage').classList.toggle('keep43', !!on); }
+    function setMouse(on) { $('mouseOn').checked = !!on; machine.dos.mouse.present = !!on; }
+    function focus() { cv.focus(); }
+    function unlockAudio() { initAudio(); const o = $('wdOverlay'); if (o) o.style.display = 'none'; }
+    function fullscreen() { $('fsBtn').click(); }
+    function screenshot() { return cv.toDataURL('image/png'); }
+    function reset() { // 가상 디스크 비우기 (저장된 세이브는 유지)
+      if (machine.running) stop();
+      machine.dos.vfs = new VFS(); loaded = [];
+      shell.vfs = machine.dos.vfs; machine.dos.cwd = [];
+      refreshPrograms(); emit('files', { count: 0 });
+    }
+    function status() {
+      return { version: VERSION, ready: isReady, running: machine.running, paused, programs: listPrograms(), error: machine.error ? machine.error.message : null };
+    }
+    // 키 입력 주입 (e.g. sendKey('Enter'), sendKey('KeyA'))
+    function sendKey(code, ms = 60) { machine.key(code, true); setTimeout(() => machine.key(code, false), ms); }
+
+    // 오디오는 브라우저 정책상 사용자 제스처가 필요 → 첫 클릭/키 입력 때 풀어줌 + 안내 오버레이
+    let unlockHooked = false;
+    function hookAudioUnlock() {
+      const ov = $('wdOverlay');
+      if (ac && ac.state === 'running' && document.hasFocus()) { ov.style.display = 'none'; return; }
+      ov.style.display = 'flex';
+      if (unlockHooked) return; unlockHooked = true;
+      const go = () => { initAudio(); cv.focus(); ov.style.display = 'none'; };
+      ov.addEventListener('pointerdown', go);
+      window.addEventListener('keydown', () => { if (ac && ac.state === 'suspended') ac.resume(); ov.style.display = 'none'; }, true);
+    }
+
+    // 실행 상태 변화를 이벤트로 알림
+    let wasRunning = false, execMode = false, idleN = 0;
+    setInterval(() => {
+      const r = machine.running;
+      if (r && !wasRunning) emit('started', {});
+      if (!r && wasRunning && !execMode) {
+        if (machine.error) emit('error', { message: machine.error.message, detail: describeError() });
+        emit('exit', { code: machine.exitInfo ? machine.exitInfo.code : null, error: !!machine.error });
+      }
+      if (execMode && !r && machine.error) { execMode = false; emit('error', { message: machine.error.message, detail: describeError() }); emit('exit', { code: null, error: true }); }
+      else if (execMode && !r && !shell.waiting && !shell.queue.length && !shell.paused && wasRunning !== null) {
+        if (wasRunning || ++idleN > 6) { execMode = false; idleN = 0; emit('exit', { code: machine.exitInfo ? machine.exitInfo.code : 0, error: false }); }
+      }
+      wasRunning = r;
+    }, 150);
+
+    const api = {
+      version: VERSION, ready, machine, shutdown, exec, unlockAudio, loadFiles, loadZip, loadUrl, listPrograms, run, stop, pause, resume,
+      setSpeed, setVolume, setUI, setKeep43, setMouse, focus, fullscreen, screenshot, reset, status, sendKey,
+      on(f) { listeners.push(f); return () => { const i = listeners.indexOf(f); if (i >= 0) listeners.splice(i, 1); }; },
+      _ready() { isReady = true; readyResolve(api); emit('ready', { version: VERSION }); },
+    };
+    return api;
+  })();
+  window.WebDos = WD;
+
+  /* ---- postMessage 프로토콜 ----
+   * 요청:  { webdos: 1, id, cmd, ...args }
+   * 응답:  { webdos: 1, id, ok: true, result } | { webdos: 1, id, ok: false, error }
+   * 이벤트(이 페이지 → 부모): { webdos: 1, event: 'ready'|'started'|'exit'|'error'|'files', ... }
+   * 허용 출처는 ?origin=https://a.com,https://b.com 로 제한 가능(기본: 모두 허용)
+   */
+  const allowOrigins = (new URLSearchParams(location.search).get('origin') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const originOk = o => !allowOrigins.length || allowOrigins.includes(o);
+  const parentTargets = new Set();
+  WD.on((type, data) => {
+    const msg = Object.assign({ webdos: 1, event: type }, data);
+    if (window.parent !== window) { try { window.parent.postMessage(msg, allowOrigins.length === 1 ? allowOrigins[0] : '*'); } catch (e) { } }
+  });
+  const handlers = {
+    ping: () => WD.status(),
+    status: () => WD.status(),
+    loadFiles: a => WD.loadFiles(a.files || [], a.options || {}),
+    loadZip: a => WD.loadZip(a.data != null ? a.data : a.url, a.options || {}),
+    loadUrl: a => WD.loadUrl(a.url, a.path, a.options || {}),
+    // 한 번에: 파일 주입 + 실행  { files|zip|url, run, args }
+    start: async a => {
+      if (a.reset) WD.reset();
+      if (a.files) await WD.loadFiles(a.files, a.options || {});
+      if (a.zip != null) await WD.loadZip(a.zip, a.options || {});
+      if (a.url) await WD.loadUrl(a.url, a.path, a.options || {});
+      if (a.speed) WD.setSpeed(a.speed);
+      if (a.volume != null) WD.setVolume(a.volume);
+      return WD.run(a.run, a.args);
+    },
+    run: a => WD.run(a.path, a.args),
+    exec: a => WD.exec(a.line),
+    unlockAudio: () => WD.unlockAudio(),
+    stop: () => WD.stop(), pause: () => WD.pause(), resume: () => WD.resume(), reset: () => WD.reset(),
+    listPrograms: () => WD.listPrograms(),
+    setSpeed: a => WD.setSpeed(a.value), setVolume: a => WD.setVolume(a.value),
+    setUI: a => WD.setUI(!!a.value), setKeep43: a => WD.setKeep43(!!a.value), setMouse: a => WD.setMouse(!!a.value),
+    focus: () => WD.focus(), fullscreen: () => WD.fullscreen(), screenshot: () => WD.screenshot(),
+    sendKey: a => WD.sendKey(a.code, a.ms),
+  };
+  window.addEventListener('message', async e => {
+    const d = e.data; if (!d || d.webdos !== 1 || !d.cmd) return;
+    if (!originOk(e.origin)) return;
+    const reply = o => { try { (e.source || window.parent).postMessage(Object.assign({ webdos: 1, id: d.id }, o), e.origin === 'null' ? '*' : e.origin); } catch (er) { } };
+    const h = handlers[d.cmd];
+    if (!h) { reply({ ok: false, error: '알 수 없는 명령: ' + d.cmd }); return; }
+    try { await WD.ready; reply({ ok: true, result: await h(d) }); }
+    catch (er) { reply({ ok: false, error: er && er.message || String(er) }); }
+  });
+
+  /* ---- URL 파라미터 ----
+   *  ui=0        설정 버튼/힌트/키보드 배지 숨김(임베드 모드)
+   *  zip=URL     ZIP 내려받아 불러옴 (CORS 허용 필요)      file=URL  개별 파일(여러 개: file=a&file=b)
+   *  run=NAME    실행할 EXE/COM (비우고 autorun=1 이면 자동 선택)  args=...  명령줄 인수
+   *  speed=MIPS  volume=0..100   keep43=1   mouse=0
+   */
+  async function applyParams() {
+    const q = new URLSearchParams(location.search);
+    if (q.get('ui') === '0' || q.get('embed') === '1') WD.setUI(false);
+    if (q.has('speed')) WD.setSpeed(+q.get('speed'));
+    if (q.has('volume')) WD.setVolume(+q.get('volume') / 100);
+    if (q.get('keep43') === '1') WD.setKeep43(true);
+    if (q.get('mouse') === '0') WD.setMouse(false);
+    try {
+      const persist = q.get('persist') === '1';
+      if (q.has('zip')) await WD.loadZip(q.get('zip'), { persist });
+      for (const u of q.getAll('file')) await WD.loadUrl(u, null, { persist });
+      if (q.has('run') || q.get('autorun') === '1') WD.run(q.get('run') || '', q.get('args') || '');
+    } catch (e) { setStatus('자동 실행 실패: ' + e.message, true); }
+  }
+
+  requestAnimationFrame(frame);
+  (async () => { await store.open(); await restoreFromStore(); refreshPrograms(); shell.boot(); refreshSaves(); cv.focus(); WD._ready(); await applyParams(); })();
+};
+if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고 접속 버튼으로 수동 시작)
