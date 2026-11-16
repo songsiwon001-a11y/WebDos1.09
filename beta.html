@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WebDos_beta</title>
+<title>DOS 에뮬레이터 v1.2</title>
 <style>
 :root{--bg:#14161a;--panel:#1d2026;--line:#2c313a;--fg:#e6e8ec;--dim:#98a0ad;--acc:#4dd0a8;--warn:#ff7b72}
 @media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--panel:#fff;--line:#d9dce2;--fg:#1c1f26;--dim:#5b6472;--acc:#0a8f6a;--warn:#c2362d}}
@@ -98,7 +98,7 @@ html.is-mobile .wrap{display:none}
       <div class="row"><span style="width:62px">볼륨</span><input id="vol" type="range" min="0" max="100" value="80"></div>
       <div class="row"><label><input id="sndOpl" type="checkbox" checked> AdLib</label><label><input id="sndSb" type="checkbox" checked> Sound Blaster</label><label><input id="sndSpk" type="checkbox" checked> 스피커</label></div>
       <div class="row"><label><input id="keep43" type="checkbox"> 화면 비율 4:3 유지 (끄면 창 전체에 꽉 채움)</label></div>
-      <div class="row"><label><input id="mouseOn" type="checkbox"> 마우스 사용 (클릭 시 포인터 잠금, Esc로 해제)</label></div>
+      <div class="row"><label><input id="mouseOn" type="checkbox" checked> 마우스 사용 (클릭 시 포인터 잠금, Esc로 해제)</label></div>
     </div>
     <div class="card">
       <h2>내장 테스트 프로그램 (게임 파일 불필요)</h2>
@@ -499,7 +499,7 @@ class CPU {
       case 0x07: this.setSeg(0, this.pop(osz) & 0xFFFF); return;
       case 0x0E: this.push(this.seg[1], osz); return;
       case 0x16: this.push(this.seg[2], osz); return;
-      case 0x17: this.setSeg(2, this.pop(osz) & 0xFFFF); this.noirq = 2; return;
+      case 0x17: this.setSeg(2, this.pop(osz) & 0xFFFF); this.noirq = 1; return;
       case 0x1E: this.push(this.seg[3], osz); return;
       case 0x1F: this.setSeg(3, this.pop(osz) & 0xFFFF); return;
       case 0x0F: this.op0F(); return;
@@ -583,7 +583,7 @@ class CPU {
         this.setG(osz, osz === 2 ? off & 0xFFFF : off >>> 0);
         return;
       }
-      case 0x8E: { this.modrm(); const v = this.getE(2); if (this.reg > 5 || this.reg === 1) throw new EmuError('invalid MOV Sreg'); this.setSeg(this.reg, v); if (this.reg === 2) this.noirq = 2; return; }
+      case 0x8E: { this.modrm(); const v = this.getE(2); if (this.reg > 5 || this.reg === 1) throw new EmuError('invalid MOV Sreg'); this.setSeg(this.reg, v); if (this.reg === 2) this.noirq = 1; return; }
       case 0x8F: { const v = this.pop(osz); this.modrm(); this.setE(osz, v); return; }
       case 0x90: return;
       case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97: {
@@ -596,7 +596,7 @@ class CPU {
       case 0x9C: this.push(this.getFlags() & (osz === 2 ? 0xFFFF : 0x3FFFFF) & ~0x30000, osz); return;
       case 0x9D: {
         const v = this.pop(osz); this.setFlags(v & 0xFFFF);
-        this.noirq = 1; return;
+        return;
       }
       case 0x9E: { const ah = (r[0] >> 8) & 0xFF; this.matFlags(); this.cfx = ah & 1; this.pfx = (ah >> 2) & 1; this.afx = (ah >> 4) & 1; this.zfx = (ah >> 6) & 1; this.sfx = (ah >> 7) & 1; return; }
       case 0x9F: r[0] = (r[0] & ~0xFF00) | ((this.getFlags() & 0xFF) << 8); return;
@@ -642,7 +642,7 @@ class CPU {
       case 0xCE: if (this.getOF()) this.intr(4); return;
       case 0xCF: {
         this.ip = this.pop(osz) & 0xFFFF; this.setSeg(1, this.pop(osz) & 0xFFFF);
-        const f = this.pop(osz); this.setFlags(f & 0xFFFF); this.noirq = 1; return;
+        const f = this.pop(osz); this.setFlags(f & 0xFFFF); return;
       }
       case 0xD4: { const b = this.fetchb(); if (b === 0) { this.ip = startIP; this.intr(0); return; } const al = r[0] & 0xFF; const q = (al / b) | 0, rem = al % b; r[0] = (r[0] & ~0xFFFF) | (q << 8) | rem; this.fop = 0; this.fres = q & 0xFF ? (r[0] & 0xFF) : r[0] & 0xFF; this.fres = r[0] & 0xFF; this.fsz = 1; this.cfx = this.ofx = this.afx = 0; return; }
       case 0xD5: { const b = this.fetchb(); const al = ((r[0] & 0xFF) + (((r[0] >> 8) & 0xFF) * b)) & 0xFF; r[0] = (r[0] & ~0xFFFF) | al; this.fop = 0; this.fres = al; this.fsz = 1; this.cfx = this.ofx = this.afx = 0; return; }
@@ -680,7 +680,7 @@ class CPU {
       case 0xF8: this.setCO(0, this.getOF()); return;
       case 0xF9: this.setCO(1, this.getOF()); return;
       case 0xFA: this.fIF = 0; return;
-      case 0xFB: this.fIF = 1; this.noirq = 2; return;
+      case 0xFB: this.fIF = 1; this.noirq = 1; return;
       case 0xFC: this.fDF = 0; return;
       case 0xFD: this.fDF = 1; return;
       case 0xFE: {
@@ -893,7 +893,7 @@ class CPU {
       case 0xB2: case 0xB4: case 0xB5: {
         this.modrm(); if (this.mod === 3) throw new EmuError('LSS/LFS/LGS reg');
         const off = this.rs(this.ea, osz), sg = this.rw(this.ea + osz);
-        this.setG(osz, off); this.setSeg(op === 0xB2 ? 2 : op === 0xB4 ? 4 : 5, sg); if (op === 0xB2) this.noirq = 2; return;
+        this.setG(osz, off); this.setSeg(op === 0xB2 ? 2 : op === 0xB4 ? 4 : 5, sg); if (op === 0xB2) this.noirq = 1; return;
       }
       case 0xB6: this.modrm(); this.setG(osz, this.getE(1)); return;
       case 0xB7: this.modrm(); this.setG(osz, this.getE(2)); return;
@@ -2701,7 +2701,7 @@ class Machine {
     this.sb = new SoundBlaster(this, 0x220, 7, 1);
     this.spk = new Speaker(this);
     this.dos = new DOS(this);
-    this.ipsCap = 120e6; this.ips = 120e6;             // emulated instructions per second (v1.2: 초고사양 486DX4급 이상, 호스트 속도에 맞춰 자동 조절)
+    this.ipsCap = 120e6; this.ips = 30e6;             // emulated instructions per second (v1.2: 초고사양 486DX4급 이상, 호스트 속도에 맞춰 자동 조절)
     this.running = false; this.exitInfo = null; this.error = null;
     this.kb61 = 0; this.refresh = 0; this.a20 = false;
     this.cmos = new Uint8Array(128); this.cmosIdx = 0;
@@ -2791,14 +2791,17 @@ class Machine {
 
   /* ------------------------------ run loop ------------------------------ */
   // Run for 'ms' of emulated time. Returns number of instructions executed.
-  runFor(ms) {
+  runFor(ms, budget) {
+    this.starved = false;
     if (!this.running) return 0;
     const total = Math.floor(this.ips * ms / 1000), CH = 256, cpu = this.cpu;
     this.ioCyc = Math.max(1, Math.round(this.ips / 1e6));   // ~1 us per ISA port access
     const start = cpu.cyc, target = start + total;
     if (this.lastCyc > cpu.cyc || this.lastCyc === 0) this.lastCyc = cpu.cyc;
+    const tEnd = budget ? performance.now() + budget : 0; let kk = 0;
     try {
       while (cpu.cyc < target && this.running) {
+        if (tEnd && (++kk & 3) === 0 && performance.now() > tEnd) { this.starved = true; break; }   // 시간 예산 초과: 화면/입력이 얼지 않도록 다음 프레임으로
         const n = cpu.run(CH);
         if (n < CH) cpu.cyc += CH - n;   // idle (HLT / waiting for input) still advances time
         this.sync();
@@ -3429,7 +3432,7 @@ window.__startUI = function () {
     shell.runFromUI(p.node, $('args').value ? ' ' + $('args').value : '');
   }
   function launchProgram(node, tail) {
-    initAudio(); machine.ips = machine.ipsCap = +$('speed').value * 1e6;
+    initAudio(); machine.ipsCap = +$('speed').value * 1e6; machine.ips = Math.min(machine.ipsCap, 30e6);
     flushSaves();
     const cwd = machine.dos.cwd.slice();
     try { machine.dos.startProgram(node, tail); } catch (e) { setStatus('실행 실패: ' + e.message, true); throw e; }
@@ -3442,7 +3445,7 @@ window.__startUI = function () {
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
   $('pauseBtn').onclick = () => { paused = !paused; $('pauseBtn').textContent = paused ? '계속' : '일시정지'; lastT = performance.now(); };
   const speedLabel = v => (+v >= 200 ? '펜티엄급 초초고사양 · ' : +v >= 100 ? '486DX4 초고사양 · ' : +v >= 33 ? '386DX 고사양 · ' : '') + v + ' MIPS';
-  $('speed').oninput = e => { machine.ips = machine.ipsCap = +e.target.value * 1e6; $('speedVal').textContent = speedLabel(e.target.value); };
+  $('speed').oninput = e => { machine.ipsCap = +e.target.value * 1e6; machine.ips = Math.min(machine.ips, machine.ipsCap); $('speedVal').textContent = speedLabel(e.target.value); };
   $('speedVal').textContent = speedLabel($('speed').value);
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
   $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
@@ -3486,9 +3489,11 @@ window.__startUI = function () {
   const ipSamples = [];
   function frame(t) {
     requestAnimationFrame(frame);
-    const dt = Math.min(50, t - lastT || 16.7); lastT = t;
+    const dt = Math.min(34, t - lastT || 16.7); lastT = t;
     if (machine.running && !paused) {
-      const t0 = performance.now(); machine.runFor(dt); const spent = performance.now() - t0;
+      const t0 = performance.now(); machine.runFor(dt, 11); const spent = performance.now() - t0;
+      if (machine.starved) machine.ips = Math.max(4e6, machine.ips * 0.8);                                   // 못 따라가면 즉시 낮춤
+      else if (spent < 7 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.04);  // 여유 있으면 천천히 올림
       { const c = machine.cpu; ipSamples.push(c.seg[1].toString(16) + ':' + c.ip.toString(16)); if (ipSamples.length > 12) ipSamples.shift(); }
       accEmu += dt; accReal += Math.max(spent, 0.001);
       if (machine.error) { setStatus(describeError(), true); flushSaves(); }
@@ -3499,7 +3504,7 @@ window.__startUI = function () {
     if (shell.waiting && !machine.running) shell.programExited(!!machine.error);
     present();
     fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0;
-      if (machine.running && !paused && machine.ipsCap) { // auto-throttle: keep real-time speed on slower devices
+      if (false) {
         if (load > 0.85) machine.ips = Math.max(8e6, machine.ips * 0.88);
         else if (load < 0.55 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.2);
       } const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · ${(machine.ips / 1e6).toFixed(0)} MIPS · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
