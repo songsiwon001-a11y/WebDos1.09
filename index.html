@@ -2801,8 +2801,20 @@ const _isNode = typeof module !== 'undefined';
 class MPU401 {
   constructor(m) { this.m = m; this.active = false; this.reset(); }
   reset() { this.q = []; this.run = 0; this.msg = []; this.sys = null; }
-  read(p) { if (p === 0x331) return this.q.length ? 0x00 : 0x40; return this.q.length ? this.q.shift() : 0xFE; }
+  // 진단용: 최근 접근 기록 (방향, 포트, 값, 게임의 CS:IP)
+  log1(dir, p, v) {
+    this.n = (this.n || 0) + 1;
+    if (!this.logs) this.logs = [];
+    const c = this.m.cpu;
+    this.logs.push(dir + ' ' + p.toString(16) + ' ' + v.toString(16).padStart(2, '0') + ' @' + c.seg[1].toString(16) + ':' + c.ip.toString(16));
+    if (this.logs.length > 200) this.logs.shift();
+  }
+  read(p) {
+    const v = this.q.length ? (p === 0x331 ? 0x00 : this.q.shift()) : (p === 0x331 ? 0x40 : 0xFE);
+    this.log1('R', p, v); return v;
+  }
   write(p, v) {
+    this.log1('W', p, v);
     if (p === 0x331) { if (v === 0xFF) this.reset(); this.q.push(0xFE); return; }   // 리셋/UART 모드 명령은 모두 ACK(0xFE)
     this.data(v);
   }
@@ -3680,6 +3692,8 @@ window.__startUI = function () {
     L.push('== DOS 에뮬레이터 진단 ==');
     L.push('프로그램: ' + ($('prog').selectedOptions[0] ? $('prog').selectedOptions[0].textContent : '-') + '  / 인수: ' + $('args').value);
     L.push('상태: ' + (machine.running ? '실행 중' : machine.error ? '오류로 중지' : machine.exitInfo ? '종료(코드 ' + machine.exitInfo.code + ')' : '대기'));
+    L.push('MPU-401: ' + (machine.mpu.active ? '활성' : '비활성') + '  접근 ' + (machine.mpu.n || 0) + '회  큐 ' + machine.mpu.q.length);
+    if (machine.mpu.logs && machine.mpu.logs.length) L.push('MPU 최근 접근: ' + machine.mpu.logs.slice(-40).join(' | '));
     if (machine.error) L.push('오류: ' + machine.error.message);
     L.push(`CS:IP=${hx(c.seg[1])}:${hx(c.ip)} AX=${hx(c.r[0])} BX=${hx(c.r[3])} CX=${hx(c.r[1])} DX=${hx(c.r[2])} SI=${hx(c.r[6])} DI=${hx(c.r[7])} DS=${hx(c.seg[3])} ES=${hx(c.seg[0])} SS:SP=${hx(c.seg[2])}:${hx(c.r[4])}`);
     const a = (c.sb[1] + c.ip) & 0xFFFFF; let bytes = ''; for (let i = -6; i < 10; i++) bytes += machine.mem[(a + i) & 0xFFFFF].toString(16).padStart(2, '0') + ' ';
