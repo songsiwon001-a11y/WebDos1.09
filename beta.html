@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DOS 에뮬레이터 v1.1</title>
+<title>WebDos_beta</title>
 <style>
 :root{--bg:#14161a;--panel:#1d2026;--line:#2c313a;--fg:#e6e8ec;--dim:#98a0ad;--acc:#4dd0a8;--warn:#ff7b72}
 @media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--panel:#fff;--line:#d9dce2;--fg:#1c1f26;--dim:#5b6472;--acc:#0a8f6a;--warn:#c2362d}}
@@ -2644,7 +2644,7 @@ class Machine {
     this.sb = new SoundBlaster(this, 0x220, 7, 1);
     this.spk = new Speaker(this);
     this.dos = new DOS(this);
-    this.ips = 40e6;               // emulated instructions per second (386DX 초고사양)
+    this.ipsCap = 40e6; this.ips = 40e6;               // emulated instructions per second (386DX 초고사양)
     this.running = false; this.exitInfo = null; this.error = null;
     this.kb61 = 0; this.refresh = 0; this.a20 = false;
     this.cmos = new Uint8Array(128); this.cmosIdx = 0;
@@ -3371,7 +3371,7 @@ window.__startUI = function () {
     shell.runFromUI(p.node, $('args').value ? ' ' + $('args').value : '');
   }
   function launchProgram(node, tail) {
-    initAudio(); machine.ips = +$('speed').value * 1e6;
+    initAudio(); machine.ips = machine.ipsCap = +$('speed').value * 1e6;
     flushSaves();
     const cwd = machine.dos.cwd.slice();
     try { machine.dos.startProgram(node, tail); } catch (e) { setStatus('실행 실패: ' + e.message, true); throw e; }
@@ -3384,7 +3384,7 @@ window.__startUI = function () {
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
   $('pauseBtn').onclick = () => { paused = !paused; $('pauseBtn').textContent = paused ? '계속' : '일시정지'; lastT = performance.now(); };
   const speedLabel = v => (+v >= 33 ? '386DX 초고사양 · ' : '') + v + ' MIPS';
-  $('speed').oninput = e => { machine.ips = +e.target.value * 1e6; $('speedVal').textContent = speedLabel(e.target.value); };
+  $('speed').oninput = e => { machine.ips = machine.ipsCap = +e.target.value * 1e6; $('speedVal').textContent = speedLabel(e.target.value); };
   $('speedVal').textContent = speedLabel($('speed').value);
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
   $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
@@ -3440,7 +3440,11 @@ window.__startUI = function () {
     if (machine.running) machine._exitShown = false;
     if (shell.waiting && !machine.running) shell.programExited(!!machine.error);
     present();
-    fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0; const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
+    fpsCount++; if (t - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = t; const load = accReal / Math.max(1, accEmu); accEmu = accReal = 0;
+      if (machine.running && !paused && machine.ipsCap) { // auto-throttle: keep real-time speed on slower devices
+        if (load > 0.92) machine.ips = Math.max(8e6, machine.ips * 0.85);
+        else if (load < 0.6 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.1);
+      } const g = machine.vga.geometry(); $('perf').textContent = `${fps} fps · ${(machine.ips / 1e6).toFixed(0)} MIPS · CPU 부하 ${(load * 100).toFixed(0)}% · ${g.text ? '텍스트' : '그래픽'} ${machine.vga.width}×${machine.vga.height}` + (machine.vga.mode ? ' · 모드 ' + machine.vga.mode.toString(16).toUpperCase() + 'h' : ''); }
     const g = machine.vga.geometry(); const key = g.w + 'x' + g.h + g.text;
     if (key !== lastGeom) { lastGeom = key; machine.dos.mouseSetBounds(g.text ? (g.cols || 80) * 8 : (machine.vga.mode === 0x13 ? g.w * 2 : g.w), g.text ? (g.rows || 25) * 8 : g.h); }
   }
