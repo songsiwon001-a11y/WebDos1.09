@@ -3610,7 +3610,7 @@ window.__startUI = function () {
   let buttons = 0;
   cv.addEventListener('mousedown', e => {
     cv.focus();
-    if ($('mouseOn').checked && machine.running && document.pointerLockElement !== cv) { cv.requestPointerLock && cv.requestPointerLock(); }
+    if ($('mouseOn').checked && machine.running && document.pointerLockElement !== cv && !((navigator.maxTouchPoints||0)>0)) { cv.requestPointerLock && cv.requestPointerLock(); }   // 터치 기기에서는 포인터 잠금을 걸지 않는다 (잠기면 가상 조이스틱 입력이 어긋남)
     buttons |= e.button === 0 ? 1 : e.button === 2 ? 2 : 4; machine.dos.mouseEvent(0, 0, buttons); e.preventDefault();
   });
   window.addEventListener('mouseup', e => { buttons &= ~(e.button === 0 ? 1 : e.button === 2 ? 2 : 4); machine.dos.mouseEvent(0, 0, buttons); });
@@ -6286,9 +6286,7 @@ if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고
                 }
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const isArcade=/\.zip$/i.test(path);
-                // MT-32 를 켠 상태의 .EXE/.COM/.BAT 은 DOSBox Pure 로 실행한다 (내장 WebDos 엔진은 MT-32 를 지원하지 않음)
-                const mtGame=tune.midi==='mt32' && !!mtSet();
-                if(!isArcade && !IMG_RE.test(base(path)) && !mtGame){   // .EXE/.COM/.BAT → 내장 WebDos 에뮬레이터
+                if(!isArcade && !IMG_RE.test(base(path))){   // .EXE/.COM/.BAT → 내장 WebDos 에뮬레이터
                     try{ return await launchNative(path,my,splashT0); }catch(e){ hideSplash(); $('game').style.display='none'; stopNativeQuiet(); out('Error: '+(e&&e.message||e),'err'); return; }
                 }
                 // DOS 코어(DOSBox Pure)는 스레드가 필수 → 교차 출처 격리가 안 되어 있으면 헛로딩하지 않고 원인을 바로 안내
