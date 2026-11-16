@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DOS 에뮬레이터 v1.2</title>
+<title>WebDosBeta</title>
 <style>
 :root{--bg:#14161a;--panel:#1d2026;--line:#2c313a;--fg:#e6e8ec;--dim:#98a0ad;--acc:#4dd0a8;--warn:#ff7b72}
 @media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--panel:#fff;--line:#d9dce2;--fg:#1c1f26;--dim:#5b6472;--acc:#0a8f6a;--warn:#c2362d}}
@@ -2873,7 +2873,7 @@ class Shell {
   reinit() { const cwd = this.dos.cwd.slice(); this.dos.initBIOS(); this.dos.cwd = cwd; this.m.resetDevices(); }
   boot() {
     this.restoreMeta(); this.reinit();
-    this.say('WEB DOS Emulator [Version 1.2]'); this.say('Type HELP for a list of commands.'); this.say();
+    this.say('WebDos[Version 1.2]'); this.say('Type HELP for a list of commands.'); this.say();
     this.booted = true; this.step();
   }
   step() {
@@ -3176,7 +3176,7 @@ class Shell {
     if (!k) { this.say('Syntax error'); return; } if (v === '') delete env[k]; else env[k] = v;
   }
   c_path(a) { const t = a.trim().replace(/^=/, ''); if (!t) { this.say('PATH=' + (this.dos.env.PATH || '')); return; } this.dos.env.PATH = t.replace(/^PATH=/i, ''); }
-  c_ver() { this.say(); this.say('Web DOS Emulator [Version 1.2]'); this.say(); }
+  c_ver() { this.say(); this.say('WebDos [Version 1.2]'); this.say(); }
   c_date() { const d = new Date(); this.say('Current date is ' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + this.fmtDate(d).replace(/-(\d\d)$/, '-' + d.getFullYear())); }
   c_time() { const d = new Date(), p = x => String(x).padStart(2, '0'); this.say('Current time is ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())); }
   c_vol() { this.say(' Volume in drive C is WEBDOS'); }
