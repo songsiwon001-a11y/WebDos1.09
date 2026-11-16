@@ -122,6 +122,7 @@ else if (typeof exports === 'object')
       <input id="args" type="text" placeholder="명령줄 인수 (선택)">
       <div class="bar" style="margin:0"><button id="runBtn" class="primary" disabled>실행</button></div>
       <div class="row" style="margin-top:10px"><span style="width:62px">CPU 속도</span><input id="speed" type="range" min="2" max="400" value="120"><span id="speedVal" class="dim" style="width:190px;text-align:right"></span></div>
+      <div class="row"><button id="pre486">486 고정 (25 MIPS)</button> <button id="preAuto">자동 조절</button></div>
       <div class="row"><span style="width:62px">볼륨</span><input id="vol" type="range" min="0" max="100" value="80"></div>
       <div class="row"><label><input id="sndOpl" type="checkbox" checked> AdLib</label><label><input id="sndSb" type="checkbox" checked> Sound Blaster</label><label><input id="sndSpk" type="checkbox" checked> 스피커</label></div>
       <div class="row"><label><input id="sndMt" type="checkbox" checked> MT-32</label><span id="mtState" class="dim"></span></div>
@@ -3577,9 +3578,12 @@ window.__startUI = function () {
   $('runBtn').onclick = start;
   $('stopBtn').onclick = () => { machine.running = false; flushSaves(); setStatus('중지됨'); };
   $('pauseBtn').onclick = () => { paused = !paused; $('pauseBtn').textContent = paused ? '계속' : '일시정지'; lastT = performance.now(); };
-  const speedLabel = v => (+v >= 200 ? '펜티엄급 초초고사양 · ' : +v >= 100 ? '486DX4 초고사양 · ' : +v >= 33 ? '386DX 고사양 · ' : '') + v + ' MIPS';
+  const speedLabel = v => (+v >= 200 ? '펜티엄급 초초고사양 · ' : +v >= 100 ? '486DX4 초고사양 · ' : +v >= 33 ? '386DX 고사양 · ' : +v >= 15 ? '486급 · ' : '') + v + ' MIPS';
   $('speed').oninput = e => { machine.ipsCap = +e.target.value * 1e6; machine.ips = Math.min(machine.ips, machine.ipsCap); $('speedVal').textContent = speedLabel(e.target.value); };
   $('speedVal').textContent = speedLabel($('speed').value);
+  // 486 고정: 호스트가 느려도 속도를 낮추지 않는다 (자동 조절은 게임을 4 MIPS까지 떨어뜨려 입력이 늦어짐)
+  $('pre486').onclick = () => { machine.fixedSpeed = true; $('speed').value = 25; $('speed').oninput({ target: $('speed') }); machine.ips = 25e6; };
+  $('preAuto').onclick = () => { machine.fixedSpeed = false; $('speed').value = 120; $('speed').oninput({ target: $('speed') }); };
   $('fsBtn').onclick = () => { const s = $('stage'); (s.requestFullscreen || s.webkitRequestFullscreen).call(s); cv.focus(); };
   $('shotBtn').onclick = () => { const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = 'screenshot.png'; a.click(); };
   $('clearSaves').onclick = async () => { if (!confirm('게임이 저장한 진행상황(세이브/설정)만 삭제하고 새로고침합니다. 계속할까요?')) return; await store.clear('files'); location.reload(); };
@@ -3625,7 +3629,7 @@ window.__startUI = function () {
     const dt = Math.min(34, t - lastT || 16.7); lastT = t;
     if (machine.running && !paused) {
       const t0 = performance.now(); machine.runFor(dt, 11); const spent = performance.now() - t0;
-      if (machine.starved) machine.ips = Math.max(4e6, machine.ips * 0.8);                                   // 못 따라가면 즉시 낮춤
+      if (machine.starved) { if (!machine.fixedSpeed) machine.ips = Math.max(4e6, machine.ips * 0.8); }                                   // 못 따라가면 즉시 낮춤
       else if (spent < 7 && machine.ips < machine.ipsCap) machine.ips = Math.min(machine.ipsCap, machine.ips * 1.04);  // 여유 있으면 천천히 올림
       { const c = machine.cpu; ipSamples.push(c.seg[1].toString(16) + ':' + c.ip.toString(16)); if (ipSamples.length > 12) ipSamples.shift(); }
       accEmu += dt; accReal += Math.max(spent, 0.001);
