@@ -11,8 +11,8 @@
          정적 호스팅은 헤더를 못 바꾸므로 같은 폴더의 coi-serviceworker.js 가 대신 헤더를 붙인다(처음 한 번 자동 새로고침). -->
     <!-- DOS 느낌의 픽셀 글꼴: Neo둥근모 Code (고정폭, 한글/영문/일부 한자·가나 지원) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/neodgm/neodgm-webfont@1.601/neodgm_code/style.css">
-    <script src="coi-serviceworker.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.js"></script>
+    <!-- coi-serviceworker.js 는 스레드 코어(DOSBox Pure)를 실제로 쓸 때만 동적으로 불러온다 (시작 시 로드하면 페이지가 반복 새로고침되어 빈 화면 깜박임) -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.js"></script>
     <style>
         html, body { height: 100%; margin: 0; background: #000; }
         #t { height: 100%; overflow-y: auto; padding: 10px 14px; box-sizing: border-box; color: #aaa; font: 16px/1.3 "NeoDunggeunmo Code", "Perfect DOS VGA 437", "Consolas", "D2Coding", monospace; -webkit-font-smoothing: none; font-smooth: never; white-space: pre-wrap; word-break: break-all; }
@@ -4900,6 +4900,8 @@ if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고
                 return null;
             }
             function mtTake(name,data){ const m=MT_RE.exec(name); if(!m) return false; const nm=m[2].toUpperCase(); mt32[nm]=data; mtSave(nm,data); return true; }
+            // ROM 이 제어+PCM 으로 모두 갖춰지면 MT-32 를 자동으로 켠다 (ROM zip 을 올리기만 하면 바로 사용 가능)
+            function mtAutoEnable(){ if(!mtSet()) return false; if(tune.midi!=='mt32'){ tune.midi='mt32'; saveSetting('tune',JSON.stringify(tune)); } return true; }
             const NUM_RE=/^(.*?)(\d+)(\D*)$/;
             // 같은 폴더에서 이름의 마지막 숫자만 다른 이미지 묶음(Disk1.img, Disk2.img ...)을 번호순으로 반환
             function diskSet(p){
@@ -5722,6 +5724,13 @@ if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고
             }catch(e){}
             let dosP=null, dosSrc={n:'EmulatorJS'};
             function ensureDos(){ return Promise.resolve(dosSrc); }
+            // 교차 출처 격리(SharedArrayBuffer)는 DOSBox Pure 같은 스레드 코어에만 필요하다. 필요할 때 한 번만 불러온다.
+            let coiLoading=null;
+            function ensureCOI(){
+                if(window.crossOriginIsolated) return Promise.resolve(true);
+                if(!coiLoading) coiLoading=new Promise(ok=>{ try{ const s=document.createElement('script'); s.src='coi-serviceworker.js'; s.onload=()=>setTimeout(()=>ok(true),300); s.onerror=()=>ok(false); document.head.appendChild(s); }catch(e){ ok(false); } });
+                return coiLoading;
+            }
 
                         // 폴더별 자동 사운드 프로필 (사용자가 TUNE 으로 직접 지정한 값이 있으면 그 값이 우선)
             // a = Wolfenstein 3D: OPL2(AdLib) 게임이라 OPL3 자동 모드에서 음악이 높게 들려 OPL2 로 고정
@@ -6277,12 +6286,19 @@ if (!window.__MOBILE__) window.__startUI(); // 모바일은 차단 (무시하고
                 }
                 const my=++launchSeq, splashT0=showSplash(); blurTerminal();
                 const isArcade=/\.zip$/i.test(path);
-                if(!isArcade && !IMG_RE.test(base(path))){   // .EXE/.COM/.BAT → 내장 WebDos 에뮬레이터
+                // MT-32 를 켠 상태의 .EXE/.COM/.BAT 은 DOSBox Pure 로 실행한다 (내장 WebDos 엔진은 MT-32 를 지원하지 않음)
+                const mtGame=tune.midi==='mt32' && !!mtSet();
+                if(!isArcade && !IMG_RE.test(base(path)) && !mtGame){   // .EXE/.COM/.BAT → 내장 WebDos 에뮬레이터
                     try{ return await launchNative(path,my,splashT0); }catch(e){ hideSplash(); $('game').style.display='none'; stopNativeQuiet(); out('Error: '+(e&&e.message||e),'err'); return; }
                 }
                 // DOS 코어(DOSBox Pure)는 스레드가 필수 → 교차 출처 격리가 안 되어 있으면 헛로딩하지 않고 원인을 바로 안내
                 if(!window.crossOriginIsolated && !isArcade){
                     blurTerminal(); I.removeAttribute('inputmode');
+                    out('Enabling thread support for the DOS core...','yellow');
+                    await ensureCOI();
+                    if(window.crossOriginIsolated){ out('Thread support is ON. Type RUN again.','cyan'); hideSplash(); return; }
+                    hideSplash();
+                    out('Thread support was just enabled. If the page does not reload by itself, press F5 and RUN again.','yellow');
                     out('This DOS core needs threads (cross-origin isolation is OFF).','err');
                     out('1) coi-serviceworker.js must be in the SAME folder as this html file (check it opens in the browser).','err');
                     out('2) Open the page over https (GitHub Pages) and reload once or twice. file:// and the Claude preview do not work.','err');
@@ -6736,7 +6752,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                             const mtEnts = ents.filter(e => MT_RE.test(e.name));
                             if (mtEnts.length) {
                                 for (const e of mtEnts) { mtTake(e.name, await e.async('uint8array')); out('  ' + e.name.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++; }
-                                out(mtSet() ? '  MT-32 ready. Type TUNE midi=mt32 to use it (off by default).' : '  Need both *_CONTROL.ROM and *_PCM.ROM.', mtSet() ? 'cyan' : 'yellow');
+                                const mtOk=mtAutoEnable(); out(mtOk ? '  MT-32 ready and enabled (TUNE midi=default turns it off).' : '  Need both *_CONTROL.ROM and *_PCM.ROM.', mtOk ? 'cyan' : 'yellow');
                                 if (mtEnts.length === ents.length) continue;
                             }
                             if (isRomZip(ents)) {
@@ -6769,7 +6785,7 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
                         if (MT_RE.test(finalPath)) {
                             mtTake(finalPath, new Uint8Array(await item.file.arrayBuffer()));
                             out('  ' + finalPath.split('/').pop().toUpperCase() + ' (MT-32 ROM)', 'ok'); n++;
-                            if (mtSet()) out('  MT-32 ready. Type TUNE midi=mt32 to use it (off by default).', 'cyan');
+                            if (mtAutoEnable()) out('  MT-32 ready and enabled (TUNE midi=default turns it off).', 'cyan');
                             continue;
                         }
                         const targetPath = pre + finalPath;
@@ -7553,11 +7569,14 @@ ${pre}${useCd&&dirp?'cd '+dirp+'\n':''}${runLine}${tail}
             T.onclick=()=>{if(!getSelection().toString() && $('editor').style.display !== 'flex')I.focus()};
 
             (async () => {
-                await langReady;
+                // 언어 조회(외부 IP)나 IndexedDB 복원이 멈춰도 시작 화면이 비지 않도록 시간 제한을 둔다
+                const limit = (p, ms, v) => Promise.race([Promise.resolve(p).catch(() => v), new Promise(r => setTimeout(() => r(v), ms))]);
+                await limit(langReady, 4000, null);
                 const sc = loadSetting('color');
                 if (sc) T.style.color = sc;
-                const restored = await vfRestore();   // 저장된 가상 디스크/마지막 위치 복원
+                const restored = await limit(vfRestore(), 3000, 0);   // 저장된 가상 디스크/마지막 위치 복원
                 updateUIForLanguage();
+                mtReady.then(() => { if (mtSet() && tune.midi === 'default') mtAutoEnable(); });   // 이전에 ROM 을 올린 사용자도 MT-32 사용
                 out(tr('intro1'),'hi');
                 out(tr('intro2'));
                 if (restored) out(bl('Restored ' + restored + ' saved file(s) from this browser. (VFS to manage)', '이전에 저장한 파일 ' + restored + '개를 복원했습니다. (관리: VFS)'), 'cyan');
