@@ -6,20 +6,55 @@
 <title>SF2 웹 실행</title>
 <link rel="stylesheet" href="https://js-dos.com/v7/build/releases/latest/js-dos/js-dos.css">
 <style>
-  :root { color-scheme: light dark; }
-  html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
-  #dos { width: 100vw; height: 100vh; height: 100dvh; }
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; background: #000; overflow: hidden; touch-action: none; }
+  #dos { position: fixed; inset: 0; }
   #msg { position: fixed; left: 0; right: 0; top: 40%; text-align: center; color: #ddd;
          font: 16px/1.5 system-ui, sans-serif; padding: 0 16px; pointer-events: none; }
+  #pad { position: fixed; left: 0; right: 0; bottom: 0; height: 42vh; pointer-events: none;
+         display: flex; justify-content: space-between; align-items: flex-end; padding: 0 12px 12px; box-sizing: border-box; }
+  .grp { display: grid; gap: 8px; pointer-events: auto; }
+  .btn { width: 64px; height: 64px; border-radius: 16px; background: rgba(255,255,255,.22);
+         border: 2px solid rgba(255,255,255,.5); color: #fff; font: 700 18px system-ui, sans-serif;
+         display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+  .btn:active, .btn.on { background: rgba(255,255,255,.5); }
+  .dpad { grid-template-columns: 64px 64px 64px; grid-template-rows: 64px 64px 64px; }
+  .atk { grid-template-columns: 80px 80px; grid-template-rows: 80px; }
+  .atk .btn { width: 80px; height: 80px; border-radius: 50%; }
+  .blank { visibility: hidden; }
 </style>
 </head>
 <body>
 <div id="dos"></div>
 <div id="msg">불러오는 중…</div>
+<div id="pad">
+  <div class="grp dpad">
+    <div class="blank"></div><div class="btn" data-key="KeyI" data-kc="73" data-k="i">↑</div><div class="blank"></div>
+    <div class="btn" data-key="KeyJ" data-kc="74" data-k="j">←</div><div class="blank"></div><div class="btn" data-key="KeyL" data-kc="76" data-k="l">→</div>
+    <div class="blank"></div><div class="btn" data-key="KeyK" data-kc="75" data-k="k">↓</div><div class="blank"></div>
+  </div>
+  <div class="grp atk">
+    <div class="btn" data-key="KeyA" data-kc="65" data-k="a">A</div>
+    <div class="btn" data-key="KeyS" data-kc="83" data-k="s">S</div>
+  </div>
+</div>
 <script src="https://js-dos.com/v7/build/releases/latest/js-dos/js-dos.js"></script>
 <script>
   (function () {
     var msg = document.getElementById('msg');
+    function send(type, b) {
+      var ev = new KeyboardEvent(type, { key: b.getAttribute('data-k'), code: b.getAttribute('data-key'), keyCode: +b.getAttribute('data-kc'), which: +b.getAttribute('data-kc'), bubbles: true, cancelable: true });
+      try { Object.defineProperty(ev, 'keyCode', { get: function () { return +b.getAttribute('data-kc'); } }); } catch (e) {}
+      var canvas = document.querySelector('#dos canvas');
+      (canvas || document).dispatchEvent(ev);
+      document.dispatchEvent(ev);
+      window.dispatchEvent(ev);
+    }
+    document.querySelectorAll('.btn').forEach(function (b) {
+      b.addEventListener('touchstart', function (e) { e.preventDefault(); b.classList.add('on'); send('keydown', b); }, { passive: false });
+      b.addEventListener('touchend', function (e) { e.preventDefault(); b.classList.remove('on'); send('keyup', b); }, { passive: false });
+      b.addEventListener('touchcancel', function (e) { b.classList.remove('on'); send('keyup', b); });
+    });
     try {
       emulators.pathPrefix = './';
       Dos(document.getElementById('dos')).run('SF2.jsdos');
