@@ -21,7 +21,7 @@
   (function () {
     var msg = document.getElementById('msg');
     try {
-      emulators.pathPrefix = 'https://js-dos.com/v7/build/releases/latest/js-dos/';
+      emulators.pathPrefix = './';
       Dos(document.getElementById('dos')).run('SF2.jsdos');
       setTimeout(function () { msg.style.display = 'none'; }, 3000);
     } catch (e) {
