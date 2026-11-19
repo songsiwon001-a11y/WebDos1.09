@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>SF2 웹 실행</title>
+<link rel="stylesheet" href="https://js-dos.com/v7/build/releases/latest/js-dos/js-dos.css">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
+  #dos { width: 100vw; height: 100vh; height: 100dvh; }
+  #msg { position: fixed; left: 0; right: 0; top: 40%; text-align: center; color: #ddd;
+         font: 16px/1.5 system-ui, sans-serif; padding: 0 16px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="dos"></div>
+<div id="msg">불러오는 중…</div>
+<script src="https://js-dos.com/v7/build/releases/latest/js-dos/js-dos.js"></script>
+<script>
+  (function () {
+    var msg = document.getElementById('msg');
+    try {
+      Dos(document.getElementById('dos')).run('SF2.jsdos');
+      setTimeout(function () { msg.style.display = 'none'; }, 3000);
+    } catch (e) {
+      msg.textContent = '실행에 실패했습니다: ' + e;
+    }
+  })();
+</script>
+</body>
+</html>
